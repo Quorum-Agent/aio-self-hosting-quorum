@@ -1,4 +1,4 @@
-import { MessageSquare, Plus, Settings2, Sparkles } from "lucide-react";
+import { MessageSquare, Plus, Sparkles } from "lucide-react";
 
 import type { ConversationRecord } from "../lib/api";
 
@@ -38,7 +38,6 @@ export function Sidebar({
       <button className="new-chat" type="button" onClick={onNew}>
         <Plus size={17} />
         New conversation
-        <kbd>⌘ K</kbd>
       </button>
 
       <div className="sidebar-label">Conversations</div>
@@ -63,11 +62,6 @@ export function Sidebar({
         )}
       </nav>
 
-      <button className="settings-link" type="button">
-        <Settings2 size={16} />
-        Settings
-        <span>Local</span>
-      </button>
     </aside>
   );
 }

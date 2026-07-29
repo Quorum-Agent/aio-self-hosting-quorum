@@ -27,8 +27,8 @@ use an OpenAI-compatible local or cloud model when configured.
 - Production build served by the API process
 
 Attachment, microphone, settings, vision, retrieval, tools, memory, and web execution
-are represented in the product shape but are not wired yet. See
-[Roadmap](#roadmap) for the intended order.
+are planned but are not exposed as controls until they are wired. See [Roadmap](#roadmap)
+for the intended order.
 
 ## Quick start
 

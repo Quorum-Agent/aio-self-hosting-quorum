@@ -1,4 +1,4 @@
-import { ArrowUp, Mic, Paperclip, Square } from "lucide-react";
+import { ArrowUp, Square } from "lucide-react";
 import { type KeyboardEvent, useRef } from "react";
 
 interface ComposerProps {
@@ -38,14 +38,6 @@ export function Composer({
           onKeyDown={handleKeyDown}
         />
         <div className="composer-actions">
-          <div>
-            <button className="icon-button" type="button" aria-label="Attach a file">
-              <Paperclip size={18} />
-            </button>
-            <button className="icon-button" type="button" aria-label="Use voice input">
-              <Mic size={18} />
-            </button>
-          </div>
           <button
             className={`send-button ${busy ? "is-stop" : ""}`}
             type="button"
