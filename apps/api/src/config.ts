@@ -1,4 +1,11 @@
-import { resolve } from "node:path";
+import { dirname, isAbsolute, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+export const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
+
+function resolveFromProjectRoot(path: string): string {
+  return isAbsolute(path) ? path : resolve(PROJECT_ROOT, path);
+}
 
 export interface AppConfig {
   host: string;
@@ -24,7 +31,7 @@ export function loadConfig(): AppConfig {
     host: process.env["HOST"] ?? "127.0.0.1",
     port: Number(process.env["PORT"] ?? 8787),
     logLevel: process.env["LOG_LEVEL"] ?? "info",
-    dataDirectory: resolve(process.env["QUORUM_DATA_DIR"] ?? "./var"),
+    dataDirectory: resolveFromProjectRoot(process.env["QUORUM_DATA_DIR"] ?? "./var"),
     local: {
       baseUrl: (process.env["QUORUM_LOCAL_BASE_URL"] ?? "http://127.0.0.1:11434/v1").replace(
         /\/$/,

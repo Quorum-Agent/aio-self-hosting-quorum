@@ -1,8 +1,12 @@
-import "dotenv/config";
+import { resolve } from "node:path";
 
-import { loadConfig } from "./config.js";
+import { config as loadEnvironment } from "dotenv";
+
+import { loadConfig, PROJECT_ROOT } from "./config.js";
 import { createRuntime } from "./runtime.js";
 import { buildServer } from "./server.js";
+
+loadEnvironment({ path: resolve(PROJECT_ROOT, ".env"), quiet: true });
 
 const config = loadConfig();
 const runtime = await createRuntime(config);
