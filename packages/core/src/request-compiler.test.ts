@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { RequestCompiler } from "./request-compiler.js";
-import type { ChatRequest } from "./types.js";
+import type { ChatMessage, ChatRequest, RequestIntent } from "./types.js";
 
 function request(content: string): ChatRequest {
   return {
@@ -28,6 +28,39 @@ function conversationRequest(contents: string[]): ChatRequest {
       content,
       createdAt: new Date(index).toISOString(),
     })),
+  };
+}
+
+function assistantWithIntent(
+  intent: RequestIntent,
+  index: number,
+): ChatMessage {
+  return {
+    id: `assistant-${index}`,
+    role: "assistant",
+    content: `Previous ${intent} response.`,
+    createdAt: new Date(index).toISOString(),
+    execution: {
+      startedAt: index,
+      completedAt: index + 1,
+      plan: {
+        id: `plan-${index}`,
+        requestId: `request-${index}`,
+        policy: "balanced",
+        verbosity: "detailed",
+        analysis: {
+          source: "local_model",
+          intent,
+          confidence: 0.94,
+          taskSummary: `Continue the ${intent} task.`,
+        },
+        route: "local",
+        modelId: `local:${intent}:test`,
+        rationale: `Selected the ${intent} route.`,
+        steps: [],
+      },
+      traces: [],
+    },
   };
 }
 
@@ -102,6 +135,9 @@ describe("RequestCompiler", () => {
     "Refactor this Go method to avoid duplication.",
     "Solve this SQL query.",
     "Analyze the runtime complexity of this algorithm.",
+    "Thank you. Could this be used easily with JS applications?",
+    "Can I call this from a TS service?",
+    "Integrate this with NodeJS.",
   ])("recognizes concrete coding work without broad keywords: %s", (prompt) => {
     expect(compiler.compile(request(prompt)).requirements.intent).toBe("coding");
   });
@@ -111,6 +147,8 @@ describe("RequestCompiler", () => {
     "Do not calculate anything; just chat.",
     "What is API pricing?",
     "Analyze how I feel about this.",
+    "Tell me about JS Bach.",
+    "Read a TS Eliot poem.",
   ])("does not route incidental keywords to an expert: %s", (prompt) => {
     expect(compiler.compile(request(prompt)).requirements.intent).toBe(
       "conversation",
@@ -151,6 +189,36 @@ describe("RequestCompiler", () => {
         "What about for ORACLE?",
       ]),
     );
+
+    expect(compiled.requirements).toMatchObject({
+      intent: "coding",
+      intentSource: "conversation",
+      intentConfidence: 0.78,
+      capabilities: ["chat", "coding"],
+    });
+  });
+
+  it("uses the previous effective intent for a courteous referential follow-up", () => {
+    const compiled = compiler.compile({
+      conversationId: "conversation-1",
+      policy: "balanced",
+      messages: [
+        {
+          id: "message-1",
+          role: "user",
+          content: "Design a backend integration.",
+          createdAt: new Date(0).toISOString(),
+        },
+        assistantWithIntent("coding", 1),
+        {
+          id: "message-2",
+          role: "user",
+          content:
+            "Thank you. Could this be used easily with desktop applications?",
+          createdAt: new Date(2).toISOString(),
+        },
+      ],
+    });
 
     expect(compiled.requirements).toMatchObject({
       intent: "coding",
@@ -217,6 +285,134 @@ describe("RequestCompiler", () => {
         "What about that?",
       ]),
     );
+
+    expect(compiled.requirements).toMatchObject({
+      intent: "conversation",
+      intentSource: "default",
+    });
+  });
+
+  it("does not carry persisted specialist intent into a courtesy-prefixed reset", () => {
+    const compiled = compiler.compile({
+      conversationId: "conversation-1",
+      policy: "balanced",
+      messages: [
+        {
+          id: "message-1",
+          role: "user",
+          content: "Design a backend integration.",
+          createdAt: new Date(0).toISOString(),
+        },
+        assistantWithIntent("coding", 1),
+        {
+          id: "message-2",
+          role: "user",
+          content: "Thank you. New topic: tell me a joke.",
+          createdAt: new Date(2).toISOString(),
+        },
+      ],
+    });
+
+    expect(compiled.requirements).toMatchObject({
+      intent: "conversation",
+      intentSource: "default",
+    });
+  });
+
+  it("does not carry persisted specialist intent across a completed conversational turn", () => {
+    const compiled = compiler.compile({
+      conversationId: "conversation-1",
+      policy: "balanced",
+      messages: [
+        {
+          id: "message-1",
+          role: "user",
+          content: "Design a backend integration.",
+          createdAt: new Date(0).toISOString(),
+        },
+        assistantWithIntent("coding", 1),
+        {
+          id: "message-2",
+          role: "user",
+          content: "New topic: let's just talk.",
+          createdAt: new Date(2).toISOString(),
+        },
+        assistantWithIntent("conversation", 3),
+        {
+          id: "message-3",
+          role: "user",
+          content: "Thanks. Could this be improved?",
+          createdAt: new Date(4).toISOString(),
+        },
+      ],
+    });
+
+    expect(compiled.requirements).toMatchObject({
+      intent: "conversation",
+      intentSource: "default",
+    });
+  });
+
+  it("recovers the coding task after a low-confidence conversational misroute", () => {
+    const misroutedConversation = assistantWithIntent("conversation", 3);
+    if (misroutedConversation.execution) {
+      misroutedConversation.execution.plan.analysis.confidence = 0.5;
+      misroutedConversation.execution.plan.analysis.source = "hybrid";
+    }
+    const compiled = compiler.compile({
+      conversationId: "conversation-1",
+      policy: "balanced",
+      messages: [
+        {
+          id: "message-1",
+          role: "user",
+          content: "Create a dynamic SQL PIVOT query.",
+          createdAt: new Date(0).toISOString(),
+        },
+        assistantWithIntent("coding", 1),
+        {
+          id: "message-2",
+          role: "user",
+          content: "Could this be used easily with JS applications?",
+          createdAt: new Date(2).toISOString(),
+        },
+        misroutedConversation,
+        {
+          id: "message-3",
+          role: "user",
+          content: "Thanks. Could this be made asynchronous?",
+          createdAt: new Date(4).toISOString(),
+        },
+      ],
+    });
+
+    expect(compiled.requirements).toMatchObject({
+      intent: "coding",
+      intentSource: "conversation",
+      capabilities: ["chat", "coding"],
+    });
+  });
+
+  it("does not treat a new what-about subject as a persisted coding follow-up", () => {
+    const compiled = compiler.compile({
+      conversationId: "conversation-1",
+      policy: "balanced",
+      messages: [
+        {
+          id: "message-1",
+          role: "user",
+          content: "Design a backend integration.",
+          createdAt: new Date(0).toISOString(),
+        },
+        assistantWithIntent("coding", 1),
+        {
+          id: "message-2",
+          role: "user",
+          content: "What about the weather?",
+          createdAt: new Date(2).toISOString(),
+        },
+      ],
+    });
 
     expect(compiled.requirements).toMatchObject({
       intent: "conversation",

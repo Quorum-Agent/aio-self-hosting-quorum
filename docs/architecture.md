@@ -55,6 +55,13 @@ deterministic freshness and sensitive-data detection cannot be cleared by model
 output. If the classifier is missing, malformed, slow, or unavailable, compilation
 continues with the deterministic result and discloses that fallback.
 
+For a normalized referential follow-up, the compiler can inherit the most recent
+persisted effective intent from the assistant execution record. Courtesy prefixes do
+not reset that state, while explicit topic resets and completed conversational turns
+stop inheritance. Common programming aliases are normalized before classification.
+Raw-turn scanning remains as a compatibility and recovery path for older history or
+an earlier low-confidence conversational misroute.
+
 The API reconstructs history from local storage before compilation, so
 client-supplied system/tool roles cannot become model instructions.
 

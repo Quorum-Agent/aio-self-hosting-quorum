@@ -17,6 +17,7 @@ use an OpenAI-compatible local or cloud model when configured.
 - Chat interface with persistent local conversations
 - Four enforced UI policies: Private, Balanced, Best quality, and Offline
 - Contextual request compilation into intents, confidence, and required capabilities
+- Persisted effective-intent handoff across referential conversation turns
 - A local 0.6B prompt expert with deterministic classification safeguards
 - Specialty-aware model routing with fail-closed handling for sensitive content
 - A live execution inspector showing steps, route, model, and cloud usage

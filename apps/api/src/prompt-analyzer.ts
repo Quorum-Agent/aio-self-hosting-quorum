@@ -72,6 +72,8 @@ const ANALYSIS_JSON_SCHEMA = {
 const SYSTEM_PROMPT = [
   "Classify the latest user request for Quorum.",
   "Choose coding for code, SQL, APIs, debugging, implementation, or software design.",
+  "Treat JS, TS, JSX, TSX, NodeJS, and PL/SQL as coding terms in software context.",
+  "Courtesy prefixes such as thanks or okay do not start a new topic.",
   "Choose reasoning for math, logic, or an explicit problem to solve.",
   "Choose document or vision only when a file or image must be inspected.",
   "Choose research only when current facts or external sources are required.",

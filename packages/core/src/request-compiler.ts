@@ -22,7 +22,10 @@ const CONTEXTUAL_CURRENT_PATTERN = new RegExp(
 const EXPLICIT_CHAT_PATTERN =
   /\b(tell me a joke|just chat|casual conversation|new topic|let'?s (?:just )?talk)\b/i;
 const CODE_DOMAIN_PATTERN =
-  /\b(typescript|javascript|python|rust|golang|sql|react|node(?:\.js)?|git|compiler|stack trace|source code|codebase|repository|api endpoint|rest endpoint|graphql|database schema|unit tests?)\b|c\+\+|c#/i;
+  /\b(typescript|javascript|jsx|tsx|python|rust|golang|sql|react|node(?:\.?js)?|git|compiler|stack trace|source code|codebase|repository|api endpoint|rest endpoint|graphql|database schema|unit tests?)\b|c\+\+|c#/i;
+const CODE_SHORTHAND_PATTERN = /\b(?:js|ts)\b/i;
+const CODE_SHORTHAND_CONTEXT_PATTERN =
+  /\b(applications?|apps?|services?|code|projects?|frontends?|backends?|servers?|clients?|runtimes?|frameworks?|librar(?:y|ies)|packages?|modules?|functions?|apis?)\b/i;
 const CODE_ACTION_PATTERN =
   /\b(write|implement|refactor|debug|fix|compile|program|code|optimi[sz]e|review|test|add|change|edit|build|design|create|analy[sz]e)\b/i;
 const CODE_TARGET_PATTERN =
@@ -44,15 +47,25 @@ const RESEARCH_PATTERN =
   /\b(research|sources?|citations?|compare interpretations|search the web)\b/i;
 const SENSITIVE_PATTERN =
   /\b(password|secret|private key|api[ _-]?key|credentials?|access[ _-]?token|bearer[ _-]?token|ssn|social security|medical|confidential|proprietary|account number)\b|AKIA[0-9A-Z]{16}|\bsk-[A-Za-z0-9_-]{10,}\b|\bgh[pousr]_[A-Za-z0-9]{20,}\b|\bauthorization\s*:\s*(?:basic|bearer)\s+[A-Za-z0-9._~+/=-]+\b|\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b|\b\d{3}-\d{2}-\d{4}\b/i;
+const COURTESY_PREFIX_PATTERN =
+  /^(?:(?:thank you|thanks(?:\s+(?:so much|a lot))?|okay|ok|great|got it|understood|makes sense|perfect)[\s.!,:;-]+)+/i;
 const FOLLOW_UP_PATTERN =
-  /^(?:(?:and|also|now|then|next|okay,?\s+now)\b|(?:what|how) about\b|(?:please\s+)?(?:make|change|fix|explain|summari[sz]e|continue|retry|redo|add|remove|update)\s+(?:it|that|this|those|them)\b|(?:why|how|are you sure)\??$)/i;
+  /^(?:(?:and|also|now|then|next|okay,?\s+now)\b|(?:what|how) about\s+(?:(?:it|that|this|those|them)\b|(?:for|in|on|with|using|doing|implementing|running)\b)|(?:please\s+)?(?:make|change|fix|explain|summari[sz]e|continue|retry|redo|add|remove|update|use|adapt|integrate|convert|port)\s+(?:it|that|this|those|them)\b|(?:why|how|are you sure)\??$)/i;
 const COMPARATIVE_FOLLOW_UP_PATTERN =
   /^(?:(?:are|is)\s+there\s+(?:(?:any|a)\s+)?(?:better|other|alternative)\s+(?:ways?|options?|approach(?:es)?|methods?|solutions?)|(?:what|any)\s+(?:other|better|alternative)\s+(?:ways?|options?|approach(?:es)?|methods?|solutions?)(?:\s+are\s+there)?|(?:any\s+)?alternatives?|what\s+else)\??$/i;
+const MODAL_REFERENTIAL_FOLLOW_UP_PATTERN =
+  /^(?:(?:can|could|would|should|will|may|might|does|do|did|is|are|was|were)\s+(?:this|that|it|these|those|they)\b|(?:can|could|would|should|may|might)\s+(?:i|we|you)\s+(?:use|apply|adapt|integrate|implement|extend|reuse|port)\s+(?:this|that|it|these|those|them)\b)/i;
+
+function normalizedFollowUpPrompt(prompt: string): string {
+  return prompt.trim().replace(COURTESY_PREFIX_PATTERN, "").trim();
+}
 
 function isContextualFollowUp(prompt: string): boolean {
+  const normalized = normalizedFollowUpPrompt(prompt);
   return (
-    FOLLOW_UP_PATTERN.test(prompt.trim()) ||
-    COMPARATIVE_FOLLOW_UP_PATTERN.test(prompt.trim())
+    FOLLOW_UP_PATTERN.test(normalized) ||
+    COMPARATIVE_FOLLOW_UP_PATTERN.test(normalized) ||
+    MODAL_REFERENTIAL_FOLLOW_UP_PATTERN.test(normalized)
   );
 }
 
@@ -108,6 +121,8 @@ function classifyPrompt(prompt: string): IntentClassification {
 
   const codingSignal =
     CODE_DOMAIN_PATTERN.test(prompt) ||
+    (CODE_SHORTHAND_PATTERN.test(prompt) &&
+      CODE_SHORTHAND_CONTEXT_PATTERN.test(prompt)) ||
     CODE_BLOCK_PATTERN.test(prompt) ||
     (CODE_ACTION_PATTERN.test(prompt) && CODE_TARGET_PATTERN.test(prompt));
   if (codingSignal) {
@@ -142,10 +157,13 @@ function classifyPrompt(prompt: string): IntentClassification {
 }
 
 function classifyConversation(
-  userMessages: ChatMessage[],
+  messages: ChatMessage[],
 ): IntentClassification & {
   source: RequestRequirements["intentSource"];
 } {
+  const userMessages = messages.filter(
+    (message) => message.role === "user" && message.content.trim(),
+  );
   const current = classifyPrompt(userMessages.at(-1)?.content ?? "");
   const latestPrompt = userMessages.at(-1)?.content.trim() ?? "";
   if (
@@ -157,6 +175,26 @@ function classifyConversation(
       ...current,
       source: current.intent === "conversation" ? "default" : "current",
     };
+  }
+
+  const latestUserIndex = messages.findLastIndex(
+    (message) => message.role === "user" && message.content.trim(),
+  );
+  const previousExecution = messages
+    .slice(0, latestUserIndex)
+    .reverse()
+    .find((message) => message.role === "assistant")
+    ?.execution?.plan.analysis;
+  if (previousExecution) {
+    if (previousExecution.intent !== "conversation") {
+      return {
+        intent: previousExecution.intent,
+        confidence: Math.min(previousExecution.confidence, 0.78),
+        requiresFreshness: previousExecution.intent === "research",
+        explicitReset: false,
+        source: "conversation",
+      };
+    }
   }
 
   for (let index = userMessages.length - 2; index >= 0; index -= 1) {
@@ -239,7 +277,7 @@ export class RequestCompiler {
       throw new Error("A non-empty user message is required.");
     }
 
-    const classification = classifyConversation(userMessages);
+    const classification = classifyConversation(input.messages);
     return {
       id: randomUUID(),
       conversationId: input.conversationId,
