@@ -293,6 +293,7 @@ button {
 }
 
 .policy-select,
+.verbosity-select,
 .inspector-button {
   display: flex;
   align-items: center;
@@ -305,7 +306,8 @@ button {
   border-radius: 8px;
 }
 
-.policy-select select {
+.policy-select select,
+.verbosity-select select {
   padding: 0;
   appearance: none;
   background: transparent;
@@ -315,7 +317,8 @@ button {
   font-weight: 600;
 }
 
-.policy-select select:disabled {
+.policy-select select:disabled,
+.verbosity-select select:disabled {
   cursor: not-allowed;
 }
 
@@ -897,6 +900,83 @@ button {
   font-size: 9px;
 }
 
+.attempt-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.attempt-item {
+  display: grid;
+  grid-template-columns: 25px minmax(0, 1fr);
+  gap: 8px;
+  padding: 7px 0;
+}
+
+.attempt-item + .attempt-item {
+  border-top: 1px solid rgba(36, 39, 34, 0.07);
+}
+
+.attempt-status {
+  display: grid;
+  width: 23px;
+  height: 23px;
+  place-items: center;
+  color: #6f756d;
+  background: #e4e5df;
+  border-radius: 7px;
+}
+
+.attempt-item.is-completed .attempt-status {
+  color: white;
+  background: #4d795d;
+}
+
+.attempt-item.is-failed .attempt-status {
+  color: white;
+  background: #9d5147;
+}
+
+.attempt-item.is-selected .attempt-status {
+  color: #355b43;
+  background: #d6e5da;
+}
+
+.attempt-item strong,
+.attempt-item span {
+  display: block;
+}
+
+.attempt-item strong {
+  overflow: hidden;
+  color: #454a43;
+  font-size: 10px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attempt-item span {
+  margin-top: 2px;
+  color: #8e938a;
+  font-size: 8px;
+  text-transform: capitalize;
+}
+
+.attempt-item p,
+.attempt-placeholder {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+  color: #8a5e58;
+  font-size: 8px;
+  line-height: 1.45;
+}
+
+.attempt-placeholder {
+  margin: 0;
+  color: #94988f;
+}
+
 .cloud-summary {
   display: flex;
   align-items: center;
@@ -1016,6 +1096,22 @@ button {
     display: none;
   }
 
+  .policy-select,
+  .verbosity-select {
+    padding: 0 7px;
+  }
+
+  .policy-select > svg:first-child,
+  .verbosity-select > svg:first-child {
+    display: none;
+  }
+
+  .policy-select select,
+  .verbosity-select select {
+    max-width: 70px;
+    font-size: 10px;
+  }
+
   .inspector-button {
     width: 34px;
     padding: 0;
@@ -1039,6 +1135,12 @@ button {
 
   .composer-wrap {
     width: calc(100% - 20px);
+  }
+}
+
+@media (max-width: 420px) {
+  .model-status {
+    display: none;
   }
 }
 

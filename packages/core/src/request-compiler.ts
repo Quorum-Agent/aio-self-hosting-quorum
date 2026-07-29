@@ -206,6 +206,7 @@ export class RequestCompiler {
       messages: input.messages,
       prompt,
       policy: input.policy,
+      verbosity: input.verbosity ?? "standard",
       requirements: deriveRequirements(input.messages, userMessages),
     };
   }

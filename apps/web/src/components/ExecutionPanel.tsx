@@ -14,10 +14,15 @@ import type {
   ExecutionTrace,
   ModelDescriptor,
   PolicyDefinition,
+  ResponseVerbosity,
   TaskPlan,
 } from "@quorum/core";
 
-import { describeCloudUsage } from "../lib/runtime-view";
+import {
+  describeCloudUsage,
+  describeModelAttempts,
+  type ModelAttemptView,
+} from "../lib/runtime-view";
 
 interface ExecutionPanelProps {
   open: boolean;
@@ -25,6 +30,7 @@ interface ExecutionPanelProps {
   models: ModelDescriptor[];
   plan: TaskPlan | undefined;
   traces: ExecutionTrace[];
+  verbosity: ResponseVerbosity;
   onClose: () => void;
 }
 
@@ -35,16 +41,25 @@ function StepIcon({ trace }: { trace: ExecutionTrace }) {
   return <Circle size={10} />;
 }
 
+function AttemptIcon({ attempt }: { attempt: ModelAttemptView }) {
+  if (attempt.status === "completed") return <Check size={13} />;
+  if (attempt.status === "failed") return <X size={13} />;
+  return <LoaderCircle className="spin" size={13} />;
+}
+
 export function ExecutionPanel({
   open,
   policy,
   models,
   plan,
   traces,
+  verbosity,
   onClose,
 }: ExecutionPanelProps) {
   const selectedModel = models.find((model) => model.id === plan?.modelId);
   const cloudUsage = describeCloudUsage(plan, models);
+  const modelAttempts = describeModelAttempts(plan, models);
+  const inspectedVerbosity = plan?.verbosity ?? verbosity;
 
   return (
     <aside
@@ -158,6 +173,47 @@ export function ExecutionPanel({
             : "Quorum will choose at runtime"}
         </span>
       </section>
+
+      {inspectedVerbosity === "detailed" && (
+        <section className="panel-section">
+          <div className="section-title">
+            <span>Model attempts</span>
+            <small>
+              {modelAttempts.swaps === 0
+                ? "No swaps"
+                : `${modelAttempts.swaps} swap${modelAttempts.swaps === 1 ? "" : "s"}`}
+            </small>
+          </div>
+          {modelAttempts.attempts.length === 0 ? (
+            <p className="attempt-placeholder">
+              Attempt and swap history will appear with the next request.
+            </p>
+          ) : (
+            <ol className="attempt-list">
+              {modelAttempts.attempts.map((attempt, index) => (
+                <li
+                  className={`attempt-item is-${attempt.status}`}
+                  key={`${attempt.modelId}-${index}`}
+                >
+                  <div className="attempt-status">
+                    <AttemptIcon attempt={attempt} />
+                  </div>
+                  <div>
+                    <strong>{attempt.label}</strong>
+                    <span>
+                      {attempt.route} · {attempt.status}
+                      {attempt.contextMayHaveBeenTransmitted
+                        ? " · context may have left device"
+                        : ""}
+                    </span>
+                    {attempt.detail && <p>{attempt.detail}</p>}
+                  </div>
+                </li>
+              ))}
+            </ol>
+          )}
+        </section>
+      )}
 
       <div
         className={`cloud-summary ${cloudUsage.activity ? "used-cloud" : ""}`}

@@ -47,6 +47,16 @@ describe("RequestCompiler", () => {
       requiresFreshness: false,
       containsSensitiveData: false,
     });
+    expect(compiled.verbosity).toBe("standard");
+  });
+
+  it("preserves an explicit response verbosity preference", () => {
+    expect(
+      compiler.compile({
+        ...request("Explain the routing decision."),
+        verbosity: "detailed",
+      }).verbosity,
+    ).toBe("detailed");
   });
 
   it.each([

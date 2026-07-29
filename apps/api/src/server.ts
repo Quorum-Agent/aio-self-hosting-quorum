@@ -23,6 +23,7 @@ const messageSchema = z.object({
 const chatRequestSchema = z.object({
   conversationId: z.string().min(1),
   policy: z.enum(["private", "balanced", "quality", "offline"]),
+  verbosity: z.enum(["concise", "standard", "detailed"]).default("standard"),
   messages: z.array(messageSchema).min(1),
 });
 const exposedPolicies = Object.values(POLICIES).filter(

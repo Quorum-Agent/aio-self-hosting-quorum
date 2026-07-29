@@ -7,6 +7,7 @@ import type {
   ModelDescriptor,
   ModelProvider,
   ModelStreamInput,
+  ResponseVerbosity,
 } from "@quorum/core";
 
 import type { InferenceScheduler } from "./inference-scheduler.js";
@@ -79,6 +80,17 @@ const PRODUCT_CONTEXT = [
   "Do not claim to have used unavailable capabilities or live data.",
 ].join(" ");
 
+const RESPONSE_GUIDANCE: Record<ResponseVerbosity, string> = {
+  concise:
+    "Give a direct, compact answer. Include only context needed for correctness or safety.",
+  standard:
+    "Use moderate detail, clear structure, and explain important conclusions when useful.",
+  detailed:
+    "Give an expanded answer with examples when useful. Include a concise reasoning summary " +
+    "of the key factors and conclusions, but never reveal hidden chain-of-thought, private " +
+    "scratch work, or token-by-token reasoning.",
+};
+
 function toProviderMessage(message: ChatMessage) {
   return {
     role: message.role,
@@ -108,6 +120,7 @@ function systemContext(
   model: ModelDescriptor,
   runtimeModels: ModelDescriptor[],
   policy: ModelStreamInput["request"]["policy"],
+  verbosity: ResponseVerbosity,
 ) {
   const policyDefinition = getPolicy(policy);
   const routedModels = runtimeModels.filter(
@@ -157,6 +170,7 @@ function systemContext(
       "capabilities, answer from this inventory and distinguish available routes from " +
       "temporarily unavailable and policy-blocked routes. " +
       `Runtime inventory: ${inventory}. ` +
+      `Response detail is ${verbosity}: ${RESPONSE_GUIDANCE[verbosity]} ` +
       "The execution inspector separately discloses the selected model and route.",
   };
 }
@@ -296,7 +310,12 @@ export class OpenAICompatibleProvider implements ModelProvider {
 
   async *stream(input: ModelStreamInput): AsyncIterable<string> {
     const messages = [
-      systemContext(this.model, input.runtimeModels, input.request.policy),
+      systemContext(
+        this.model,
+        input.runtimeModels,
+        input.request.policy,
+        input.request.verbosity,
+      ),
       ...input.messages.map(toProviderMessage),
     ];
     const estimatedInputTokens = estimateInputTokens(messages);

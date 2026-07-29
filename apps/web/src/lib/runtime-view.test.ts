@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { LocalRuntimeStatus, ModelDescriptor } from "@quorum/core";
 
 import {
+  describeModelAttempts,
   describeRuntimeStatus,
   describeCloudUsage,
   selectablePolicies,
@@ -160,6 +161,7 @@ describe("runtime view", () => {
         policy: "quality",
         route: "local",
         modelId: chatModel.id,
+        verbosity: "standard",
         rationale: "Cloud failed; local answered.",
         steps: [],
         attempts: [
@@ -186,5 +188,118 @@ describe("runtime view", () => {
       contacted: true,
       text: "Contacted Cloud test; final route local",
     });
+  });
+
+  it("preserves the attempted route while a fallback model is selected", () => {
+    const cloudModel: ModelDescriptor = {
+      ...chatModel,
+      id: "cloud:test",
+      label: "Cloud test",
+      location: "cloud",
+      transport: "remote",
+    };
+    const attempts = describeModelAttempts(
+      {
+        id: "plan",
+        requestId: "request",
+        policy: "balanced",
+        route: "local",
+        modelId: chatModel.id,
+        verbosity: "detailed",
+        rationale: "Cloud failed; local selected.",
+        steps: [],
+        attempts: [
+          {
+            modelId: cloudModel.id,
+            route: "cloud",
+            status: "failed",
+            detail: "Cloud endpoint unavailable",
+            contextMayHaveBeenTransmitted: true,
+          },
+        ],
+      },
+      [chatModel, cloudModel],
+    );
+
+    expect(attempts).toEqual({
+      swaps: 1,
+      attempts: [
+        {
+          modelId: cloudModel.id,
+          label: "Cloud test",
+          route: "cloud",
+          status: "failed",
+          detail: "Cloud endpoint unavailable",
+          contextMayHaveBeenTransmitted: true,
+        },
+        {
+          modelId: chatModel.id,
+          label: "Scaffold",
+          route: "local",
+          status: "selected",
+          contextMayHaveBeenTransmitted: false,
+        },
+      ],
+    });
+  });
+
+  it("reports no swap for a single completed model attempt", () => {
+    const attempts = describeModelAttempts(
+      {
+        id: "plan",
+        requestId: "request",
+        policy: "offline",
+        route: "local",
+        modelId: chatModel.id,
+        verbosity: "detailed",
+        rationale: "Local model completed the request.",
+        steps: [],
+        attempts: [
+          {
+            modelId: chatModel.id,
+            route: "local",
+            status: "completed",
+            contextMayHaveBeenTransmitted: false,
+          },
+        ],
+      },
+      [chatModel],
+    );
+
+    expect(attempts.swaps).toBe(0);
+    expect(attempts.attempts).toHaveLength(1);
+    expect(attempts.attempts[0]?.status).toBe("completed");
+  });
+
+  it("does not mislabel a retry of the same model as a swap", () => {
+    const attempts = describeModelAttempts(
+      {
+        id: "plan",
+        requestId: "request",
+        policy: "balanced",
+        route: "local",
+        modelId: chatModel.id,
+        verbosity: "detailed",
+        rationale: "The local model completed after a retry.",
+        steps: [],
+        attempts: [
+          {
+            modelId: chatModel.id,
+            route: "local",
+            status: "failed",
+            contextMayHaveBeenTransmitted: false,
+          },
+          {
+            modelId: chatModel.id,
+            route: "local",
+            status: "completed",
+            contextMayHaveBeenTransmitted: false,
+          },
+        ],
+      },
+      [chatModel],
+    );
+
+    expect(attempts.swaps).toBe(0);
   });
 });

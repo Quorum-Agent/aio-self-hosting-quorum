@@ -138,6 +138,7 @@ export class RoutePlanner {
       id: randomUUID(),
       requestId: request.id,
       policy: request.policy,
+      verbosity: request.verbosity,
       route,
       modelId: selected.id,
       rationale,

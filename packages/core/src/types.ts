@@ -16,6 +16,8 @@ export type PolicyMode =
   | "offline"
   | "cost_controlled";
 
+export type ResponseVerbosity = "concise" | "standard" | "detailed";
+
 export type ExecutionLocation = "device" | "local" | "cloud";
 
 export type Capability =
@@ -97,6 +99,7 @@ export interface CompiledRequest {
   messages: ChatMessage[];
   prompt: string;
   policy: PolicyMode;
+  verbosity: ResponseVerbosity;
   requirements: RequestRequirements;
 }
 
@@ -120,6 +123,7 @@ export interface TaskPlan {
   id: Id;
   requestId: Id;
   policy: PolicyMode;
+  verbosity: ResponseVerbosity;
   route: "local" | "cloud";
   modelId: Id;
   rationale: string;
@@ -150,6 +154,7 @@ export interface ChatRequest {
   conversationId: Id;
   messages: ChatMessage[];
   policy: PolicyMode;
+  verbosity?: ResponseVerbosity;
 }
 
 export interface ChatResult {

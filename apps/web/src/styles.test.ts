@@ -36,3 +36,17 @@ describe("conversation layout", () => {
     expect(declarations(".message p")).toContain("overflow-wrap: anywhere;");
   });
 });
+
+describe("response transparency controls", () => {
+  it("styles the verbosity selector as a first-class control", () => {
+    expect(styles).toContain(".verbosity-select");
+  });
+
+  it("visually distinguishes failed model attempts", () => {
+    expect(declarations(".attempt-list")).toContain("list-style: none;");
+    expect(declarations(".attempt-item")).toContain("display: grid;");
+    expect(declarations(".attempt-item.is-failed .attempt-status")).toContain(
+      "background: #9d5147;",
+    );
+  });
+});

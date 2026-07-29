@@ -10,6 +10,7 @@ import type { ModelDescriptor, ModelStreamInput } from "@quorum/core";
 function modelInput(
   runtimeModels: ModelDescriptor[] = [],
   policy: ModelStreamInput["request"]["policy"] = "balanced",
+  verbosity: ModelStreamInput["request"]["verbosity"] = "standard",
 ): ModelStreamInput {
   return {
     messages: [
@@ -26,6 +27,7 @@ function modelInput(
       messages: [],
       prompt: "What are your current capabilities?",
       policy,
+      verbosity,
       requirements: {
         intent: "conversation",
         intentConfidence: 0.5,
@@ -118,6 +120,7 @@ describe("OpenAICompatibleProvider", () => {
           policyBlockedCloudModel,
         ],
         "private",
+        "detailed",
       ),
     )) {
       chunks.push(chunk);
@@ -145,6 +148,9 @@ describe("OpenAICompatibleProvider", () => {
     expect(systemMessage).toContain('"model":"qwen3.5:2b"');
     expect(systemMessage).toContain('"policy":"private"');
     expect(systemMessage).toContain('"policyBlockedRoutes":[{"model":"cloud-test"');
+    expect(systemMessage).toContain("Response detail is detailed");
+    expect(systemMessage).toContain("concise reasoning summary");
+    expect(systemMessage).toContain("never reveal hidden chain-of-thought");
     expect(systemMessage).toContain(
       "Do not claim the active route is Quorum's only model",
     );

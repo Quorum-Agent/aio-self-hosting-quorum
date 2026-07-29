@@ -1,4 +1,5 @@
 import {
+  AlignLeft,
   Braces,
   BrainCircuit,
   ChevronDown,
@@ -16,6 +17,7 @@ import type {
   ChatMessage,
   ExecutionTrace,
   PolicyMode,
+  ResponseVerbosity,
   TaskPlan,
 } from "@quorum/core";
 
@@ -64,6 +66,17 @@ const STARTERS: Array<{
   },
 ];
 
+const VERBOSITY_STORAGE_KEY = "quorum:response-verbosity";
+
+function savedVerbosity(): ResponseVerbosity {
+  const saved = window.localStorage.getItem(VERBOSITY_STORAGE_KEY);
+  return saved === "concise" ||
+    saved === "standard" ||
+    saved === "detailed"
+    ? saved
+    : "standard";
+}
+
 function createConversationId() {
   return crypto.randomUUID();
 }
@@ -86,6 +99,8 @@ export default function App() {
   const [draft, setDraft] = useState("");
   const [streamingContent, setStreamingContent] = useState("");
   const [policy, setPolicy] = useState<PolicyMode>("balanced");
+  const [verbosity, setVerbosity] =
+    useState<ResponseVerbosity>(savedVerbosity);
   const [plan, setPlan] = useState<TaskPlan>();
   const [traces, setTraces] = useState<ExecutionTrace[]>([]);
   const [busy, setBusy] = useState(false);
@@ -132,6 +147,10 @@ export default function App() {
   useEffect(() => {
     void loadApplication();
   }, [loadApplication]);
+
+  useEffect(() => {
+    window.localStorage.setItem(VERBOSITY_STORAGE_KEY, verbosity);
+  }, [verbosity]);
 
   useEffect(() => {
     const interval = window.setInterval(() => {
@@ -217,7 +236,12 @@ export default function App() {
 
     try {
       await streamChat(
-        { conversationId, messages: nextMessages, policy },
+        {
+          conversationId,
+          messages: nextMessages,
+          policy,
+          verbosity,
+        },
         (event) => {
           if (event.type === "delta") {
             setStreamingContent((current) => current + event.content);
@@ -287,6 +311,22 @@ export default function App() {
           </div>
 
           <div className="topbar-actions">
+            <label className="verbosity-select" title="Response detail">
+              <AlignLeft size={15} />
+              <select
+                value={verbosity}
+                aria-label="Response detail"
+                disabled={busy}
+                onChange={(event) =>
+                  setVerbosity(event.target.value as ResponseVerbosity)
+                }
+              >
+                <option value="concise">Concise</option>
+                <option value="standard">Standard</option>
+                <option value="detailed">Detailed</option>
+              </select>
+              <ChevronDown size={14} />
+            </label>
             <label className="policy-select">
               {policy === "offline" ? <WifiOff size={15} /> : <Shield size={15} />}
               <select
@@ -407,6 +447,7 @@ export default function App() {
         models={runtime?.models ?? []}
         plan={plan}
         traces={traces}
+        verbosity={verbosity}
         onClose={() => setExecutionOpen(false)}
       />
 

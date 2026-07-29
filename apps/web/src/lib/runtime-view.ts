@@ -1,5 +1,6 @@
 import type {
   Capability,
+  ExecutionAttempt,
   LocalRuntimeStatus,
   ModelDescriptor,
   PolicyDefinition,
@@ -17,6 +18,20 @@ export interface CloudUsageView {
   selected: boolean;
   contacted: boolean;
   text: string;
+}
+
+export interface ModelAttemptView {
+  modelId: string;
+  label: string;
+  route: ExecutionAttempt["route"];
+  status: ExecutionAttempt["status"] | "selected";
+  detail?: string;
+  contextMayHaveBeenTransmitted: boolean;
+}
+
+export interface ModelAttemptsView {
+  attempts: ModelAttemptView[];
+  swaps: number;
 }
 
 export function describeRuntimeStatus(
@@ -135,5 +150,50 @@ export function describeCloudUsage(
         : plan
           ? "None"
           : "No request yet",
+  };
+}
+
+export function describeModelAttempts(
+  plan: TaskPlan | undefined,
+  models: ModelDescriptor[],
+): ModelAttemptsView {
+  if (!plan) return { attempts: [], swaps: 0 };
+
+  const attempts: ModelAttemptView[] = (plan.attempts ?? []).map(
+    (attempt) => ({
+      modelId: attempt.modelId,
+      label:
+        models.find((model) => model.id === attempt.modelId)?.label ??
+        attempt.modelId,
+      route: attempt.route,
+      status: attempt.status,
+      ...(attempt.detail ? { detail: attempt.detail } : {}),
+      contextMayHaveBeenTransmitted:
+        attempt.contextMayHaveBeenTransmitted,
+    }),
+  );
+  const lastAttempt = attempts.at(-1);
+  if (!lastAttempt || lastAttempt.modelId !== plan.modelId) {
+    const selected = models.find((model) => model.id === plan.modelId);
+    attempts.push({
+      modelId: plan.modelId,
+      label: selected?.label ?? plan.modelId,
+      route: plan.route,
+      status: "selected",
+      contextMayHaveBeenTransmitted: plan.route === "cloud",
+    });
+  }
+
+  const swaps = attempts.reduce(
+    (total, attempt, index) =>
+      index > 0 && attempts[index - 1]?.modelId !== attempt.modelId
+        ? total + 1
+        : total,
+    0,
+  );
+
+  return {
+    attempts,
+    swaps,
   };
 }

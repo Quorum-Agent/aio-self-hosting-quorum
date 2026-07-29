@@ -5,6 +5,7 @@ import type {
   OrchestrationEvent,
   PolicyDefinition,
   PolicyMode,
+  ResponseVerbosity,
 } from "@quorum/core";
 
 export interface ConversationRecord {
@@ -60,6 +61,7 @@ export async function streamChat(
     conversationId: string;
     messages: ChatMessage[];
     policy: PolicyMode;
+    verbosity: ResponseVerbosity;
   },
   onEvent: (event: OrchestrationEvent) => void,
   signal?: AbortSignal,
