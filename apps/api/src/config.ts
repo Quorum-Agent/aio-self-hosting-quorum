@@ -24,6 +24,11 @@ export interface LocalModelConfig {
   reasoningEffort?: "none" | "low" | "medium" | "high";
 }
 
+export interface PromptAnalyzerConfig {
+  name: string;
+  contextWindow: number;
+}
+
 function positiveInteger(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
@@ -38,6 +43,8 @@ export interface AppConfig {
     baseUrl: string;
     apiKey: string;
     models: LocalModelConfig[];
+    promptAnalyzer: PromptAnalyzerConfig;
+    warmOnStartup: boolean;
   };
   cloud?: {
     baseUrl: string;
@@ -60,6 +67,7 @@ export function loadConfig(): AppConfig {
         16_384,
       ),
       qualityRating: 60,
+      reasoningEffort: "none",
     },
     {
       role: "coding",
@@ -102,6 +110,17 @@ export function loadConfig(): AppConfig {
       ),
       apiKey: process.env["QUORUM_LOCAL_API_KEY"] ?? "ollama",
       models: localModels,
+      promptAnalyzer: {
+        name:
+          process.env["QUORUM_LOCAL_PROMPT_MODEL"] ??
+          "qwen3:0.6b",
+        contextWindow: positiveInteger(
+          process.env["QUORUM_LOCAL_PROMPT_CONTEXT_WINDOW"],
+          4_096,
+        ),
+      },
+      warmOnStartup:
+        process.env["QUORUM_LOCAL_WARMUP"]?.trim().toLowerCase() !== "false",
     },
     ...(cloudApiKey
       ? {

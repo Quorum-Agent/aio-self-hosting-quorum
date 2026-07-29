@@ -211,6 +211,30 @@ describe("RoutePlanner", () => {
     expect(plan.modelId).toBe(stronger.id);
   });
 
+  it("lets a matching specialist overcome a small static quality gap", () => {
+    const codingExpert: ModelDescriptor = {
+      ...localModel,
+      id: "local:coding:qwen2.5-coder",
+      label: "Coding expert",
+      capabilities: ["chat", "coding"],
+      specialties: ["coding"],
+      qualityRating: 50,
+    };
+
+    const plan = planner.plan(
+      compiler.compile(
+        request(
+          "quality",
+          "Create a SQL PIVOT query whose columns are dynamic.",
+        ),
+      ),
+      [localModel, codingExpert],
+    );
+
+    expect(plan.modelId).toBe(codingExpert.id);
+    expect(plan.rationale).toContain("coding specialist");
+  });
+
   it("uses the in-process scaffold transparently when no model has the capability", () => {
     const scaffold = new DemoProvider().model;
     const plan = planner.plan(

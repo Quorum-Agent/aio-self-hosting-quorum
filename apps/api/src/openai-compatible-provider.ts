@@ -36,6 +36,7 @@ interface OpenAICompatibleOptions {
   specialties?: Capability[];
   reasoningEffort?: "none" | "low" | "medium" | "high";
   maxOutputTokens?: number;
+  nativeOllama?: boolean;
   scheduler?: InferenceScheduler;
   timeouts?: Partial<ProviderTimeouts>;
   capabilities: Capability[];
@@ -56,6 +57,14 @@ interface CompletionResponse {
       content?: string;
     };
   }>;
+}
+
+interface OllamaStreamChunk {
+  message?: {
+    content?: string;
+  };
+  done?: boolean;
+  error?: string;
 }
 
 const DEFAULT_TIMEOUTS: ProviderTimeouts = {
@@ -86,9 +95,9 @@ const RESPONSE_GUIDANCE: Record<ResponseVerbosity, string> = {
   standard:
     "Use moderate detail, clear structure, and explain important conclusions when useful.",
   detailed:
-    "Give an expanded answer with examples when useful. Include a concise reasoning summary " +
-    "of the key factors and conclusions, but never reveal hidden chain-of-thought, private " +
-    "scratch work, or token-by-token reasoning.",
+    "Lead with the answer, then develop it with useful examples or implementation detail. " +
+    "End with a short 'Reasoning summary' that states the decisive factors and conclusion. " +
+    "Never reveal hidden chain-of-thought, private scratch work, or token-by-token reasoning.",
 };
 
 function toProviderMessage(message: ChatMessage) {
@@ -121,6 +130,7 @@ function systemContext(
   runtimeModels: ModelDescriptor[],
   policy: ModelStreamInput["request"]["policy"],
   verbosity: ResponseVerbosity,
+  requestAnalysis: ModelStreamInput["request"]["analysis"],
 ) {
   const policyDefinition = getPolicy(policy);
   const routedModels = runtimeModels.filter(
@@ -170,6 +180,8 @@ function systemContext(
       "capabilities, answer from this inventory and distinguish available routes from " +
       "temporarily unavailable and policy-blocked routes. " +
       `Runtime inventory: ${inventory}. ` +
+      `Quorum's request compiler classified this as ${requestAnalysis.intent} with ` +
+      `${Math.round(requestAnalysis.confidence * 100)}% confidence. ` +
       `Response detail is ${verbosity}: ${RESPONSE_GUIDANCE[verbosity]} ` +
       "The execution inspector separately discloses the selected model and route.",
   };
@@ -217,6 +229,92 @@ function parseCompletionFrame(frame: string): {
   return { contents, terminal };
 }
 
+function nativeOllamaChatUrl(baseUrl: string): string | undefined {
+  const url = new URL(baseUrl);
+  if (!/\/v1\/?$/.test(url.pathname)) return undefined;
+  url.pathname = `${url.pathname.replace(/\/v1\/?$/, "")}/api/chat`;
+  return url.toString();
+}
+
+async function* streamOllamaResponse(
+  response: Response,
+  modelLabel: string,
+  maximumOutputBytes: number,
+  noteOutput: () => void,
+): AsyncIterable<string> {
+  if (!response.body) {
+    throw new ModelExecutionError(
+      `${modelLabel} returned an empty response.`,
+      "provider",
+    );
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let emittedContent = false;
+  let terminal = false;
+  let outputBytes = 0;
+
+  while (!terminal) {
+    const { value, done } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done });
+    if (Buffer.byteLength(buffer, "utf8") > MAX_STREAM_FRAME_BYTES) {
+      await reader.cancel();
+      throw new ModelExecutionError(
+        `${modelLabel} streamed a frame larger than ${MAX_STREAM_FRAME_BYTES} bytes.`,
+        "provider",
+      );
+    }
+    const lines = buffer.split(/\r?\n/);
+    buffer = lines.pop() ?? "";
+    if (done && buffer.trim()) {
+      lines.push(buffer);
+      buffer = "";
+    }
+
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      const chunk = JSON.parse(line) as OllamaStreamChunk;
+      if (chunk.error) {
+        throw new ModelExecutionError(
+          `${modelLabel} returned an error: ${chunk.error.slice(0, 500)}`,
+          "provider",
+        );
+      }
+      terminal ||= chunk.done === true;
+      const content = chunk.message?.content;
+      if (!content) continue;
+      outputBytes += Buffer.byteLength(content, "utf8");
+      if (outputBytes > maximumOutputBytes) {
+        await reader.cancel();
+        throw new ModelExecutionError(
+          `${modelLabel} exceeded its local output safety limit.`,
+          "provider",
+        );
+      }
+      emittedContent = true;
+      noteOutput();
+      yield content;
+    }
+
+    if (done) break;
+  }
+
+  if (!emittedContent) {
+    throw new ModelExecutionError(
+      `${modelLabel} returned no response content.`,
+      "provider",
+    );
+  }
+  if (!terminal) {
+    throw new ModelExecutionError(
+      `${modelLabel} stream ended before a terminal marker.`,
+      "provider",
+    );
+  }
+}
+
 async function readLimitedText(
   response: Response,
   maximumBytes: number,
@@ -262,6 +360,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
   readonly #baseUrl: string;
   readonly #apiKey: string;
   readonly #modelName: string;
+  readonly #nativeOllamaUrl: string | undefined;
   #reasoningEffort:
     | "none"
     | "low"
@@ -300,6 +399,9 @@ export class OpenAICompatibleProvider implements ModelProvider {
         : normalizeCloudBaseUrl(options.baseUrl);
     this.#apiKey = options.apiKey;
     this.#modelName = options.model;
+    this.#nativeOllamaUrl = options.nativeOllama
+      ? nativeOllamaChatUrl(this.#baseUrl)
+      : undefined;
     this.#reasoningEffort = options.reasoningEffort;
     this.#maxOutputTokens =
       options.maxOutputTokens ??
@@ -315,6 +417,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
         input.runtimeModels,
         input.request.policy,
         input.request.verbosity,
+        input.request.analysis,
       ),
       ...input.messages.map(toProviderMessage),
     ];
@@ -369,6 +472,60 @@ export class OpenAICompatibleProvider implements ModelProvider {
     };
 
     try {
+      if (this.#nativeOllamaUrl) {
+        const nativeResponse = await fetch(this.#nativeOllamaUrl, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: `Bearer ${this.#apiKey}`,
+          },
+          body: JSON.stringify({
+            model: this.#modelName,
+            messages,
+            stream: true,
+            // Older Qwen3 Ollama templates always emit a thinking block.
+            // Requesting it explicitly makes Ollama separate it into
+            // message.thinking, which this provider intentionally ignores.
+            think: this.#reasoningEffort !== undefined,
+            keep_alive: "30m",
+            options: {
+              num_predict: this.#maxOutputTokens,
+              temperature: 0,
+            },
+          }),
+          signal: controller.signal,
+          redirect: "error",
+        });
+        if (nativeResponse.ok) {
+          yield* streamOllamaResponse(
+            nativeResponse,
+            this.model.label,
+            this.#maxOutputTokens * 16,
+            noteOutput,
+          );
+          return;
+        }
+        const nativeDetail = (
+          await readLimitedText(
+            nativeResponse,
+            MAX_ERROR_BODY_BYTES,
+            this.model.label,
+          )
+        ).slice(0, 500);
+        if (
+          nativeResponse.status !== 404 &&
+          nativeResponse.status !== 405
+        ) {
+          throw new ModelExecutionError(
+            `${this.model.label} returned ${nativeResponse.status}${nativeDetail ? `: ${nativeDetail}` : "."}`,
+            nativeResponse.status >= 500 ||
+              PROVIDER_HTTP_FAILURES.has(nativeResponse.status)
+              ? "provider"
+              : "request",
+          );
+        }
+      }
+
       const dispatch = () =>
         fetch(`${this.#baseUrl}/chat/completions`, {
           method: "POST",

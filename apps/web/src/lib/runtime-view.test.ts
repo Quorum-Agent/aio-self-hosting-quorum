@@ -48,6 +48,13 @@ const offlinePolicy = {
   preferLocal: true,
 };
 
+const requestAnalysis = {
+  source: "heuristic" as const,
+  intent: "conversation" as const,
+  confidence: 0.5,
+  taskSummary: "Test request",
+};
+
 describe("runtime view", () => {
   it("does not call optional experts a ready runtime", () => {
     expect(
@@ -86,6 +93,29 @@ describe("runtime view", () => {
       state: "ready",
       title: "Local roles discovered",
       detail: "general, coding, reasoning configured",
+    });
+  });
+
+  it("shows the model currently warming before claiming readiness", () => {
+    expect(
+      describeRuntimeStatus(
+        status("ready", true, ["general", "coding", "reasoning"]),
+        false,
+        {
+          state: "warming",
+          models: [
+            {
+              model: "qwen3:4b",
+              role: "general",
+              status: "warming",
+            },
+          ],
+        },
+      ),
+    ).toEqual({
+      state: "loading",
+      title: "Warming local models",
+      detail: "Loading qwen3:4b for general work",
     });
   });
 
@@ -159,6 +189,7 @@ describe("runtime view", () => {
         id: "plan",
         requestId: "request",
         policy: "quality",
+        analysis: requestAnalysis,
         route: "local",
         modelId: chatModel.id,
         verbosity: "standard",
@@ -203,6 +234,7 @@ describe("runtime view", () => {
         id: "plan",
         requestId: "request",
         policy: "balanced",
+        analysis: requestAnalysis,
         route: "local",
         modelId: chatModel.id,
         verbosity: "detailed",
@@ -249,6 +281,7 @@ describe("runtime view", () => {
         id: "plan",
         requestId: "request",
         policy: "offline",
+        analysis: requestAnalysis,
         route: "local",
         modelId: chatModel.id,
         verbosity: "detailed",
@@ -277,6 +310,7 @@ describe("runtime view", () => {
         id: "plan",
         requestId: "request",
         policy: "balanced",
+        analysis: requestAnalysis,
         route: "local",
         modelId: chatModel.id,
         verbosity: "detailed",

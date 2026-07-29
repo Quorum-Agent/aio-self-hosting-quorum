@@ -83,11 +83,11 @@ export class RoutePlanner {
       if (policy.preferLocal) {
         return localScore(right, request) - localScore(left, request);
       }
-      const qualityDifference = right.qualityRating - left.qualityRating;
+      const qualityDifference =
+        right.qualityRating +
+        specialtyScore(right, request) -
+        (left.qualityRating + specialtyScore(left, request));
       if (qualityDifference !== 0) return qualityDifference;
-      const specialtyDifference =
-        specialtyScore(right, request) - specialtyScore(left, request);
-      if (specialtyDifference !== 0) return specialtyDifference;
       return right.contextWindow - left.contextWindow;
     });
     const selected = sorted[0];
@@ -139,6 +139,7 @@ export class RoutePlanner {
       requestId: request.id,
       policy: request.policy,
       verbosity: request.verbosity,
+      analysis: request.analysis,
       route,
       modelId: selected.id,
       rationale,

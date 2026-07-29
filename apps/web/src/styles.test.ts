@@ -49,4 +49,11 @@ describe("response transparency controls", () => {
       "background: #9d5147;",
     );
   });
+
+  it("gives detailed requests an expandable in-conversation activity rail", () => {
+    expect(declarations(".execution-activity")).toContain(
+      "border-bottom: 1px solid var(--line);",
+    );
+    expect(declarations(".activity-traces")).toContain("list-style: none;");
+  });
 });

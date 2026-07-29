@@ -88,6 +88,100 @@ async function* failBeforeOutput(): AsyncIterable<string> {
 }
 
 describe("Orchestrator resilience", () => {
+  it("uses the local prompt analyzer before selecting a specialist", async () => {
+    const orchestrator = new Orchestrator(
+      [
+        provider(generalModel, () => answer("general response")),
+        provider(codingModel, () => answer("coding response")),
+      ],
+      undefined,
+      undefined,
+      {
+        id: "local:classifier:test",
+        label: "Tiny classifier",
+        async analyze() {
+          return {
+            intent: "coding",
+            confidence: 0.93,
+            taskSummary: "Continue the current coding task.",
+          };
+        },
+      },
+    );
+
+    const events = await collect(
+      orchestrator,
+      chatRequest("Can you help me with this?"),
+    );
+    const firstPlan = events.find((event) => event.type === "plan");
+    const analysisTrace = events.find(
+      (event) =>
+        event.type === "trace" &&
+        event.trace.kind === "classification" &&
+        event.trace.status === "completed",
+    );
+
+    expect(firstPlan?.type === "plan" && firstPlan.plan).toMatchObject({
+      modelId: codingModel.id,
+      analysis: {
+        source: "local_model",
+        intent: "coding",
+        analyzer: {
+          modelId: "local:classifier:test",
+        },
+      },
+    });
+    expect(
+      analysisTrace?.type === "trace" && analysisTrace.trace.detail,
+    ).toContain("coding · 93% confidence");
+  });
+
+  it("discloses a tiny-model disagreement while preserving explicit coding intent", async () => {
+    const orchestrator = new Orchestrator(
+      [
+        provider(generalModel, () => answer("general response")),
+        provider(codingModel, () => answer("coding response")),
+      ],
+      undefined,
+      undefined,
+      {
+        id: "local:classifier:test",
+        label: "Tiny classifier",
+        async analyze() {
+          return {
+            intent: "conversation",
+            confidence: 1,
+            taskSummary: "Discuss a table.",
+          };
+        },
+      },
+    );
+
+    const events = await collect(orchestrator, {
+      ...chatRequest("Create a SQL PIVOT query with dynamic columns."),
+      policy: "quality",
+    });
+    const firstPlan = events.find((event) => event.type === "plan");
+    const analysisTrace = events.find(
+      (event) =>
+        event.type === "trace" &&
+        event.trace.kind === "classification" &&
+        event.trace.status === "completed",
+    );
+
+    expect(firstPlan?.type === "plan" && firstPlan.plan).toMatchObject({
+      modelId: codingModel.id,
+      analysis: {
+        source: "hybrid",
+        intent: "coding",
+        analyzer: { intent: "conversation" },
+      },
+    });
+    expect(
+      analysisTrace?.type === "trace" && analysisTrace.trace.detail,
+    ).toBe("conversation proposed · deterministic coding retained");
+  });
+
   it("passes the live circuit-aware model inventory to the selected provider", async () => {
     let receivedModels: ModelDescriptor[] = [];
     const observingProvider = provider(generalModel, (input) => {

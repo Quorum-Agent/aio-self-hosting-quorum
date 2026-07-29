@@ -48,6 +48,12 @@ describe("RequestCompiler", () => {
       containsSensitiveData: false,
     });
     expect(compiled.verbosity).toBe("standard");
+    expect(compiled.analysis).toEqual({
+      source: "heuristic",
+      intent: "conversation",
+      confidence: 0.5,
+      taskSummary: "What are your current capabilities?",
+    });
   });
 
   it("preserves an explicit response verbosity preference", () => {
@@ -180,6 +186,77 @@ describe("RequestCompiler", () => {
         "My private key is in the earlier message.",
         "Now summarize that.",
       ]),
+    );
+
+    expect(compiled.requirements.containsSensitiveData).toBe(true);
+  });
+
+  it("uses a confident local prompt analysis for an ambiguous request", () => {
+    const baseline = compiler.compile(request("Can you help me with this?"));
+    const compiled = compiler.applyPromptAnalysis(
+      baseline,
+      { id: "local:classifier:test", label: "Tiny classifier" },
+      {
+        intent: "coding",
+        confidence: 0.91,
+        taskSummary: "Help with the current coding task.",
+      },
+    );
+
+    expect(compiled.requirements).toMatchObject({
+      intent: "coding",
+      intentConfidence: 0.91,
+      intentSource: "classifier",
+      capabilities: ["chat", "coding"],
+    });
+    expect(compiled.analysis).toMatchObject({
+      source: "local_model",
+      intent: "coding",
+      taskSummary: "Help with the current coding task.",
+      analyzer: {
+        modelId: "local:classifier:test",
+        modelLabel: "Tiny classifier",
+      },
+    });
+  });
+
+  it("keeps a strong deterministic signal when the tiny model conflicts", () => {
+    const baseline = compiler.compile(
+      request("Write a SQL query for dynamic pivot columns."),
+    );
+    const compiled = compiler.applyPromptAnalysis(
+      baseline,
+      { id: "local:classifier:test", label: "Tiny classifier" },
+      {
+        intent: "conversation",
+        confidence: 0.9,
+        taskSummary: "Discuss database tables.",
+      },
+    );
+
+    expect(compiled.requirements.intent).toBe("coding");
+    expect(compiled.analysis).toMatchObject({
+      source: "hybrid",
+      intent: "coding",
+      analyzer: {
+        intent: "conversation",
+        confidence: 0.9,
+      },
+    });
+  });
+
+  it("never lets prompt analysis clear deterministic sensitive-data detection", () => {
+    const baseline = compiler.compile(
+      request("Use API key sk-exampleSecret12345 to help with this."),
+    );
+    const compiled = compiler.applyPromptAnalysis(
+      baseline,
+      { id: "local:classifier:test", label: "Tiny classifier" },
+      {
+        intent: "conversation",
+        confidence: 0.95,
+        taskSummary: "Help with a request.",
+      },
     );
 
     expect(compiled.requirements.containsSensitiveData).toBe(true);

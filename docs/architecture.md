@@ -47,12 +47,16 @@ The compiler converts a conversational request into explicit requirements:
 - freshness requirement;
 - sensitive-data signal across the complete context that can be dispatched.
 
-The current classifier uses deterministic, contextual signals and keeps an established
-coding or reasoning route for referential follow-ups. The API reconstructs history
-from local storage before compilation, so client-supplied system/tool roles cannot
-become model instructions. A later compiler can combine these rules with a local
-classifier, attachment metadata, workspace policy, and user overrides without changing
-providers.
+The compiler combines deterministic, contextual signals with a configurable local
+prompt expert. The tiny model emits only a bounded intent, confidence, and faithful
+task summary; it does not rewrite the original conversation or expose private
+chain-of-thought. Strong explicit signals remain authoritative on conflict, and
+deterministic freshness and sensitive-data detection cannot be cleared by model
+output. If the classifier is missing, malformed, slow, or unavailable, compilation
+continues with the deterministic result and discloses that fallback.
+
+The API reconstructs history from local storage before compilation, so
+client-supplied system/tool roles cannot become model instructions.
 
 ### Route planner
 
@@ -65,7 +69,8 @@ Selection is constrained before ranking:
 4. in Offline mode, remove every provider not running in-process;
 5. for sensitive requests, remove every cloud model;
 6. rank remaining models according to policy, including a bounded, deduplicated bonus
-   for declared specialties that match the request.
+   for declared specialties that match the request. Best quality combines this bonus
+   with quality rather than ignoring a specialist for a small static rating gap.
 
 If the constrained set is empty, the planner may select only Quorum's in-process
 scaffold to explain the unavailable capability. It does not call an ineligible model
@@ -89,6 +94,10 @@ provider health. Automatic fallback never crosses from a local attempt into clou
 the final plan retains an append-only attempt ledger so failed cloud contact cannot be
 erased by a later local result.
 
+Detailed UI mode renders these authoritative events as an expandable in-conversation
+activity rail with elapsed time, request classification, task steps, and model swaps.
+This is execution evidence, not model-authored chain-of-thought.
+
 ### Providers
 
 Providers implement:
@@ -111,6 +120,16 @@ dispatch enforces its declared input/output budget, response/frame/output memory
 limits, terminal stream markers, and first-output, idle, and end-to-end timeouts.
 Optional reasoning settings are retried without the extension only if a compatible
 server identifies that exact field as unsupported. Cloud endpoints require HTTPS.
+
+On process startup, Quorum warms the local classifier followed by the default general
+model. Ollama's native keep-alive route is used when available, with a bounded
+OpenAI-compatible fallback for other loopback runtimes. Warmup shares the local
+inference scheduler so it cannot race a user request.
+
+For local Ollama generation, Quorum uses the native chat stream and discards the
+separate private-thinking field. Only visible answer content becomes a delta or a
+stored message. This avoids both empty answers caused by thinking-only token budgets
+and accidental exposure of hidden model scratch work.
 
 The model descriptor declares location, role, transport, capabilities, optional
 specialties, executable context budget, inference settings, and a provisional quality

@@ -165,7 +165,9 @@ export function ExecutionPanel({
                 selectedModel.provider,
                 selectedModel.role ? `${selectedModel.role} role` : undefined,
                 selectedModel.inference?.reasoningEffort
-                  ? `reasoning ${selectedModel.inference.reasoningEffort}`
+                  ? selectedModel.inference.reasoningEffort === "none"
+                    ? "private reasoning filtered"
+                    : `reasoning ${selectedModel.inference.reasoningEffort}`
                   : undefined,
               ]
                 .filter(Boolean)

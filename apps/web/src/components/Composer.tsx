@@ -4,6 +4,8 @@ import { type KeyboardEvent, useRef } from "react";
 interface ComposerProps {
   value: string;
   busy: boolean;
+  disabled?: boolean;
+  disabledReason?: string;
   onChange: (value: string) => void;
   onSend: () => void;
   onStop: () => void;
@@ -12,6 +14,8 @@ interface ComposerProps {
 export function Composer({
   value,
   busy,
+  disabled = false,
+  disabledReason = "Preparing local models…",
   onChange,
   onSend,
   onStop,
@@ -21,7 +25,7 @@ export function Composer({
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
-      if (!busy && value.trim()) onSend();
+      if (!busy && !disabled && value.trim()) onSend();
     }
   };
 
@@ -32,8 +36,13 @@ export function Composer({
           ref={textarea}
           rows={1}
           value={value}
+          disabled={disabled}
           aria-label="Message Quorum"
-          placeholder="Ask anything. Quorum routes it privately."
+          placeholder={
+            disabled
+              ? disabledReason
+              : "Ask anything. Quorum routes it privately."
+          }
           onChange={(event) => onChange(event.target.value)}
           onKeyDown={handleKeyDown}
         />
@@ -41,9 +50,15 @@ export function Composer({
           <button
             className={`send-button ${busy ? "is-stop" : ""}`}
             type="button"
-            disabled={!busy && !value.trim()}
+            disabled={disabled || (!busy && !value.trim())}
             onClick={busy ? onStop : onSend}
-            aria-label={busy ? "Stop generating" : "Send message"}
+            aria-label={
+              disabled
+                ? disabledReason
+                : busy
+                  ? "Stop generating"
+                  : "Send message"
+            }
           >
             {busy ? <Square size={13} fill="currentColor" /> : <ArrowUp size={18} />}
           </button>

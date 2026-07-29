@@ -4,6 +4,9 @@ import type {
   ChatMessage,
   ChatRequest,
   CompiledRequest,
+  PromptAnalyzer,
+  PromptAnalyzerResult,
+  RequestAnalysis,
   RequestIntent,
   RequestRequirements,
 } from "./types.js";
@@ -165,9 +168,10 @@ function classifyConversation(
 
 function deriveRequirements(
   messages: ChatMessage[],
-  userMessages: ChatMessage[],
+  classification: IntentClassification & {
+    source: RequestRequirements["intentSource"];
+  },
 ): RequestRequirements {
-  const classification = classifyConversation(userMessages);
   const intent = classification.intent;
   const capabilities: RequestRequirements["capabilities"] = ["chat"];
 
@@ -189,6 +193,30 @@ function deriveRequirements(
   };
 }
 
+function compactSummary(prompt: string): string {
+  const singleLine = prompt.replace(/\s+/g, " ").trim();
+  return singleLine.length > 240
+    ? `${singleLine.slice(0, 239)}…`
+    : singleLine;
+}
+
+function validAnalyzerResult(
+  analysis: PromptAnalyzerResult,
+): PromptAnalyzerResult {
+  if (
+    !Number.isFinite(analysis.confidence) ||
+    analysis.confidence < 0 ||
+    analysis.confidence > 1
+  ) {
+    throw new Error("Prompt analyzer returned an invalid confidence.");
+  }
+  const taskSummary = compactSummary(analysis.taskSummary);
+  if (!taskSummary) {
+    throw new Error("Prompt analyzer returned an empty task summary.");
+  }
+  return { ...analysis, taskSummary };
+}
+
 export class RequestCompiler {
   compile(input: ChatRequest): CompiledRequest {
     const userMessages = input.messages.filter(
@@ -200,6 +228,7 @@ export class RequestCompiler {
       throw new Error("A non-empty user message is required.");
     }
 
+    const classification = classifyConversation(userMessages);
     return {
       id: randomUUID(),
       conversationId: input.conversationId,
@@ -207,7 +236,63 @@ export class RequestCompiler {
       prompt,
       policy: input.policy,
       verbosity: input.verbosity ?? "standard",
-      requirements: deriveRequirements(input.messages, userMessages),
+      analysis: {
+        source: "heuristic",
+        intent: classification.intent,
+        confidence: classification.confidence,
+        taskSummary: compactSummary(prompt),
+      },
+      requirements: deriveRequirements(input.messages, classification),
+    };
+  }
+
+  applyPromptAnalysis(
+    request: CompiledRequest,
+    analyzer: Pick<PromptAnalyzer, "id" | "label">,
+    incoming: PromptAnalyzerResult,
+  ): CompiledRequest {
+    const analysis = validAnalyzerResult(incoming);
+    const heuristic = request.analysis;
+    const conflictingStrongHeuristic =
+      heuristic.intent !== analysis.intent && heuristic.confidence >= 0.84;
+    const analyzerIsUsable = analysis.confidence >= 0.65;
+    const useAnalyzer = analyzerIsUsable && !conflictingStrongHeuristic;
+    const selected = useAnalyzer
+      ? {
+          intent: analysis.intent,
+          confidence: analysis.confidence,
+          source: "classifier" as const,
+        }
+      : {
+          intent: heuristic.intent,
+          confidence: heuristic.confidence,
+          source: request.requirements.intentSource,
+        };
+    const mergedAnalysis: RequestAnalysis = {
+      source: useAnalyzer ? "local_model" : "hybrid",
+      intent: selected.intent,
+      confidence: selected.confidence,
+      taskSummary: useAnalyzer
+        ? analysis.taskSummary
+        : heuristic.taskSummary,
+      analyzer: {
+        modelId: analyzer.id,
+        modelLabel: analyzer.label,
+        intent: analysis.intent,
+        confidence: analysis.confidence,
+      },
+    };
+
+    return {
+      ...request,
+      analysis: mergedAnalysis,
+      requirements: deriveRequirements(request.messages, {
+        intent: selected.intent,
+        confidence: selected.confidence,
+        requiresFreshness: request.requirements.requiresFreshness,
+        explicitReset: false,
+        source: selected.source,
+      }),
     };
   }
 }

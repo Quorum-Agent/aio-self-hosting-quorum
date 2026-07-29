@@ -19,6 +19,15 @@ export interface RuntimeInfo {
   policies: PolicyDefinition[];
   models: ModelDescriptor[];
   localRuntime: LocalRuntimeStatus;
+  warmup: {
+    state: "disabled" | "idle" | "warming" | "ready" | "degraded";
+    models: Array<{
+      model: string;
+      role: "classifier" | "general";
+      status: "pending" | "warming" | "ready" | "failed";
+      detail?: string;
+    }>;
+  };
   cloudConfigured: boolean;
 }
 

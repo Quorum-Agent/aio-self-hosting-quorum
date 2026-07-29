@@ -11,6 +11,7 @@ import type {
   ModelProvider,
   OrchestrationEvent,
   PlanStep,
+  PromptAnalyzer,
   TaskPlan,
 } from "./types.js";
 
@@ -40,6 +41,7 @@ export class Orchestrator {
   readonly #compiler: RequestCompiler;
   readonly #planner: RoutePlanner;
   readonly #providers: Map<string, ModelProvider>;
+  readonly #promptAnalyzer: PromptAnalyzer | undefined;
   readonly #failures = new Map<
     string,
     { consecutive: number; unavailableUntil: number }
@@ -51,10 +53,12 @@ export class Orchestrator {
     providers: ModelProvider[],
     compiler = new RequestCompiler(),
     planner = new RoutePlanner(),
+    promptAnalyzer?: PromptAnalyzer,
   ) {
     this.#providers = new Map(providers.map((provider) => [provider.model.id, provider]));
     this.#compiler = compiler;
     this.#planner = planner;
+    this.#promptAnalyzer = promptAnalyzer;
   }
 
   get models() {
@@ -116,6 +120,58 @@ export class Orchestrator {
         recoverable: true,
       };
       return;
+    }
+
+    if (this.#promptAnalyzer && input.policy !== "offline") {
+      const analyzerStep: PlanStep = {
+        id: randomUUID(),
+        label: `Extract request intent with ${this.#promptAnalyzer.label}`,
+        kind: "classification",
+        location: "local",
+        modelId: this.#promptAnalyzer.id,
+      };
+      yield {
+        type: "trace",
+        trace: traceFor(request.id, analyzerStep, "running"),
+      };
+      try {
+        const analysis = await this.#promptAnalyzer.analyze(
+          {
+            messages: request.messages,
+            baseline: request.analysis,
+          },
+          signal,
+        );
+        request = this.#compiler.applyPromptAnalysis(
+          request,
+          this.#promptAnalyzer,
+          analysis,
+        );
+        const analysisDetail =
+          request.analysis.source === "hybrid" &&
+          request.analysis.analyzer
+            ? `${request.analysis.analyzer.intent} proposed · deterministic ${request.analysis.intent} retained`
+            : `${request.analysis.intent} · ${Math.round(request.analysis.confidence * 100)}% confidence`;
+        yield {
+          type: "trace",
+          trace: traceFor(
+            request.id,
+            analyzerStep,
+            "completed",
+            analysisDetail,
+          ),
+        };
+      } catch (error) {
+        yield {
+          type: "trace",
+          trace: traceFor(
+            request.id,
+            analyzerStep,
+            "failed",
+            `${error instanceof Error ? error.message : "Prompt analysis failed."} Deterministic classification retained.`,
+          ),
+        };
+      }
     }
 
     let plan: TaskPlan;

@@ -28,6 +28,12 @@ function modelInput(
       prompt: "What are your current capabilities?",
       policy,
       verbosity,
+      analysis: {
+        source: "heuristic",
+        intent: "conversation",
+        confidence: 0.5,
+        taskSummary: "What are your current capabilities?",
+      },
       requirements: {
         intent: "conversation",
         intentConfidence: 0.5,
@@ -149,8 +155,11 @@ describe("OpenAICompatibleProvider", () => {
     expect(systemMessage).toContain('"policy":"private"');
     expect(systemMessage).toContain('"policyBlockedRoutes":[{"model":"cloud-test"');
     expect(systemMessage).toContain("Response detail is detailed");
-    expect(systemMessage).toContain("concise reasoning summary");
-    expect(systemMessage).toContain("never reveal hidden chain-of-thought");
+    expect(systemMessage).toContain("Reasoning summary");
+    expect(systemMessage).toContain("Never reveal hidden chain-of-thought");
+    expect(systemMessage).toContain(
+      "request compiler classified this as conversation",
+    );
     expect(systemMessage).toContain(
       "Do not claim the active route is Quorum's only model",
     );
@@ -167,6 +176,100 @@ describe("OpenAICompatibleProvider", () => {
   it("budgets multibyte text more conservatively than ASCII", () => {
     expect(estimateInputTokens([{ content: "😀".repeat(12) }])).toBeGreaterThan(
       estimateInputTokens([{ content: "a".repeat(12) }]),
+    );
+  });
+
+  it("uses Ollama's native stream with hidden thinking disabled", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        [
+          JSON.stringify({
+            message: {
+              thinking: "private scratch work",
+              content: "Visible ",
+            },
+            done: false,
+          }),
+          JSON.stringify({
+            message: { content: "answer." },
+            done: true,
+          }),
+          "",
+        ].join("\n"),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const provider = new OpenAICompatibleProvider({
+      id: "local:qwen3:4b",
+      label: "qwen3:4b",
+      provider: "openai-compatible",
+      location: "local",
+      baseUrl: "http://127.0.0.1:11434/v1",
+      apiKey: "ollama",
+      model: "qwen3:4b",
+      contextWindow: 16_384,
+      qualityRating: 60,
+      capabilities: ["chat"],
+      reasoningEffort: "none",
+      nativeOllama: true,
+    });
+
+    const chunks: string[] = [];
+    for await (const chunk of provider.stream(modelInput())) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks.join("")).toBe("Visible answer.");
+    expect(chunks.join("")).not.toContain("private scratch work");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "http://127.0.0.1:11434/api/chat",
+    );
+    const body = JSON.parse(
+      String((fetchMock.mock.calls[0]?.[1] as RequestInit).body),
+    );
+    expect(body).toMatchObject({
+      model: "qwen3:4b",
+      stream: true,
+      think: true,
+      keep_alive: "30m",
+    });
+  });
+
+  it("falls back to OpenAI-compatible generation when the native route is absent", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("not found", { status: 404 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: "Fallback answer." } }],
+          }),
+          { headers: { "content-type": "application/json" } },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const provider = new OpenAICompatibleProvider({
+      id: "local:compatible",
+      label: "Compatible model",
+      provider: "openai-compatible",
+      location: "local",
+      baseUrl: "http://127.0.0.1:11434/v1",
+      apiKey: "local",
+      model: "compatible",
+      contextWindow: 16_384,
+      qualityRating: 50,
+      capabilities: ["chat"],
+      nativeOllama: true,
+    });
+
+    const chunks: string[] = [];
+    for await (const chunk of provider.stream(modelInput())) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks.join("")).toBe("Fallback answer.");
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(
+      "http://127.0.0.1:11434/v1/chat/completions",
     );
   });
 

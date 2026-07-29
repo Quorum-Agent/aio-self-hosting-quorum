@@ -22,6 +22,7 @@ import type {
 } from "@quorum/core";
 
 import { Composer } from "./components/Composer";
+import { ExecutionActivity } from "./components/ExecutionActivity";
 import { ExecutionPanel } from "./components/ExecutionPanel";
 import { Sidebar } from "./components/Sidebar";
 import {
@@ -104,6 +105,9 @@ export default function App() {
   const [plan, setPlan] = useState<TaskPlan>();
   const [traces, setTraces] = useState<ExecutionTrace[]>([]);
   const [busy, setBusy] = useState(false);
+  const [activityStartedAt, setActivityStartedAt] = useState<number>();
+  const [activityCompletedAt, setActivityCompletedAt] = useState<number>();
+  const [activityMessageId, setActivityMessageId] = useState<string>();
   const [error, setError] = useState<string>();
   const [executionOpen, setExecutionOpen] = useState(() =>
     window.matchMedia("(min-width: 841px)").matches,
@@ -155,9 +159,9 @@ export default function App() {
   useEffect(() => {
     const interval = window.setInterval(() => {
       void refreshRuntime().catch(() => setRuntimeFailed(true));
-    }, 5_000);
+    }, runtime?.warmup.state === "warming" ? 1_000 : 5_000);
     return () => window.clearInterval(interval);
-  }, [refreshRuntime]);
+  }, [refreshRuntime, runtime?.warmup.state]);
 
   const activePolicy = useMemo(
     () => runtime?.policies.find((candidate) => candidate.id === policy),
@@ -171,7 +175,12 @@ export default function App() {
     [plan?.policy, policy, runtime],
   );
   const runtimeStatus = useMemo(
-    () => describeRuntimeStatus(runtime?.localRuntime, runtimeFailed),
+    () =>
+      describeRuntimeStatus(
+        runtime?.localRuntime,
+        runtimeFailed,
+        runtime?.warmup,
+      ),
     [runtime, runtimeFailed],
   );
   const availableStarters = useMemo(
@@ -188,6 +197,8 @@ export default function App() {
         : [],
     [activePolicy, runtime],
   );
+  const runtimeWarming = runtime?.warmup.state === "warming";
+  const runtimePreparing = !runtime || runtimeWarming;
 
   const selectConversation = async (id: string) => {
     if (busy) return;
@@ -196,6 +207,9 @@ export default function App() {
     setStreamingContent("");
     setPlan(undefined);
     setTraces([]);
+    setActivityStartedAt(undefined);
+    setActivityCompletedAt(undefined);
+    setActivityMessageId(undefined);
     setSidebarOpen(false);
   };
 
@@ -207,13 +221,16 @@ export default function App() {
     setDraft("");
     setPlan(undefined);
     setTraces([]);
+    setActivityStartedAt(undefined);
+    setActivityCompletedAt(undefined);
+    setActivityMessageId(undefined);
     setError(undefined);
     setSidebarOpen(false);
   };
 
   const send = async (prompt = draft) => {
     const content = prompt.trim();
-    if (!content || busy) return;
+    if (!content || busy || runtimePreparing) return;
 
     const userMessage: ChatMessage = {
       id: crypto.randomUUID(),
@@ -230,6 +247,9 @@ export default function App() {
     setStreamingContent("");
     setPlan(undefined);
     setTraces([]);
+    setActivityStartedAt(Date.now());
+    setActivityCompletedAt(undefined);
+    setActivityMessageId(undefined);
     setError(undefined);
     setBusy(true);
     setExecutionOpen(true);
@@ -252,9 +272,12 @@ export default function App() {
           } else if (event.type === "result") {
             setMessages((current) => [...current, event.result.message]);
             setStreamingContent("");
+            setActivityCompletedAt(Date.now());
+            setActivityMessageId(event.result.message.id);
           } else if (event.type === "error") {
             setStreamingContent("");
             setError(event.message);
+            setActivityCompletedAt(Date.now());
           }
         },
         controller.signal,
@@ -265,6 +288,7 @@ export default function App() {
         setError(reason instanceof Error ? reason.message : "The request failed.");
       }
       setStreamingContent("");
+      setActivityCompletedAt(Date.now());
     } finally {
       try {
         await refreshRuntime();
@@ -275,6 +299,20 @@ export default function App() {
       abortController.current = undefined;
     }
   };
+
+  const detailedActivity =
+    activityStartedAt !== undefined &&
+    (plan?.verbosity ?? verbosity) === "detailed" ? (
+      <ExecutionActivity
+        key={activityStartedAt}
+        plan={plan}
+        traces={traces}
+        models={runtime?.models ?? []}
+        busy={busy}
+        startedAt={activityStartedAt}
+        completedAt={activityCompletedAt}
+      />
+    ) : null;
 
   return (
     <div
@@ -388,6 +426,7 @@ export default function App() {
                   <button
                     key={starter.title}
                     type="button"
+                    disabled={runtimePreparing}
                     onClick={() => void send(starter.prompt)}
                   >
                     <starter.icon size={18} />
@@ -402,16 +441,20 @@ export default function App() {
           ) : (
             <div className="message-list">
               {messages.map((message) => (
-                <article className={`message message-${message.role}`} key={message.id}>
-                  <div className="message-avatar">
-                    {message.role === "user" ? "You" : <Sparkles size={15} />}
-                  </div>
-                  <div>
-                    <span>{message.role === "user" ? "You" : "Quorum"}</span>
-                    <p>{message.content}</p>
-                  </div>
-                </article>
+                <div className="message-entry" key={message.id}>
+                  {message.id === activityMessageId && detailedActivity}
+                  <article className={`message message-${message.role}`}>
+                    <div className="message-avatar">
+                      {message.role === "user" ? "You" : <Sparkles size={15} />}
+                    </div>
+                    <div>
+                      <span>{message.role === "user" ? "You" : "Quorum"}</span>
+                      <p>{message.content}</p>
+                    </div>
+                  </article>
+                </div>
               ))}
+              {!activityMessageId && detailedActivity}
               {streamingContent && (
                 <article className="message message-assistant is-streaming">
                   <div className="message-avatar">
@@ -435,6 +478,12 @@ export default function App() {
         <Composer
           value={draft}
           busy={busy}
+          disabled={runtimePreparing}
+          disabledReason={
+            runtime
+              ? "Warming local models…"
+              : "Connecting to Quorum…"
+          }
           onChange={setDraft}
           onSend={() => void send()}
           onStop={() => abortController.current?.abort()}

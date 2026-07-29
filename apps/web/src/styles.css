@@ -438,6 +438,12 @@ button {
   transform: translateY(-2px);
 }
 
+.starter-grid button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+  transform: none;
+}
+
 .starter-grid svg {
   flex: 0 0 auto;
   margin-top: 1px;
@@ -515,6 +521,158 @@ button {
   white-space: pre-wrap;
 }
 
+.execution-activity {
+  margin: 0 0 24px 46px;
+  color: #555b53;
+  border-bottom: 1px solid var(--line);
+}
+
+.execution-activity > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 0 9px;
+  color: #6d726a;
+  cursor: pointer;
+  font-size: 11px;
+  list-style: none;
+}
+
+.execution-activity > summary::-webkit-details-marker {
+  display: none;
+}
+
+.execution-activity > summary svg {
+  transition: transform 160ms ease;
+}
+
+.execution-activity:not([open]) > summary svg {
+  transform: rotate(-90deg);
+}
+
+.activity-body {
+  padding: 3px 0 13px;
+}
+
+.activity-analysis {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 12px;
+  padding: 9px 10px;
+  background: rgba(255, 255, 255, 0.48);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.activity-analysis strong,
+.activity-route strong {
+  color: #464c44;
+  font-size: 10px;
+}
+
+.activity-analysis span,
+.activity-route span {
+  color: #8c9188;
+  font-size: 9px;
+}
+
+.activity-analysis p {
+  grid-column: 1 / -1;
+  margin: 4px 0 0;
+  color: #686e65;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.activity-traces {
+  margin: 9px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.activity-traces li {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  gap: 7px;
+  align-items: start;
+  padding: 5px 0;
+}
+
+.activity-traces i {
+  display: grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  color: #80867d;
+  background: #e7e8e2;
+  border-radius: 5px;
+}
+
+.activity-traces li.is-completed i {
+  color: white;
+  background: #4d795d;
+}
+
+.activity-traces li.is-running i {
+  color: #355b43;
+  background: #d6e5da;
+}
+
+.activity-traces li.is-failed i {
+  color: white;
+  background: #9d5147;
+}
+
+.activity-traces strong,
+.activity-traces span {
+  display: block;
+}
+
+.activity-traces strong {
+  color: #51574f;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.activity-traces span {
+  margin-top: 2px;
+  overflow-wrap: anywhere;
+  color: #92978f;
+  font-size: 8px;
+  line-height: 1.45;
+  text-transform: capitalize;
+}
+
+.activity-route {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 7px;
+  align-items: start;
+  padding-top: 3px;
+}
+
+.activity-route svg {
+  margin-top: 1px;
+  color: #64806b;
+}
+
+.activity-route strong,
+.activity-route span {
+  display: block;
+}
+
+.activity-route span {
+  margin-top: 2px;
+  line-height: 1.45;
+}
+
+.activity-boundary {
+  margin: 10px 0 0;
+  color: #a0a49c;
+  font-size: 8px;
+  line-height: 1.4;
+}
+
 .message-user p {
   color: #242722;
 }
@@ -581,6 +739,10 @@ button {
 
 .composer textarea::placeholder {
   color: #9a9e96;
+}
+
+.composer textarea:disabled {
+  cursor: wait;
 }
 
 .composer-actions {
@@ -1131,6 +1293,10 @@ button {
 
   .message-list {
     width: calc(100% - 28px);
+  }
+
+  .execution-activity {
+    margin-left: 42px;
   }
 
   .composer-wrap {

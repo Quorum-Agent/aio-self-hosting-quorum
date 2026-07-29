@@ -13,6 +13,16 @@ export interface RuntimeStatusView {
   detail: string;
 }
 
+export interface RuntimeWarmupView {
+  state: "disabled" | "idle" | "warming" | "ready" | "degraded";
+  models: Array<{
+    model: string;
+    role: "classifier" | "general";
+    status: "pending" | "warming" | "ready" | "failed";
+    detail?: string;
+  }>;
+}
+
 export interface CloudUsageView {
   activity: boolean;
   selected: boolean;
@@ -37,6 +47,7 @@ export interface ModelAttemptsView {
 export function describeRuntimeStatus(
   runtime: LocalRuntimeStatus | undefined,
   failed = false,
+  warmup?: RuntimeWarmupView,
 ): RuntimeStatusView {
   if (failed) {
     return {
@@ -61,6 +72,17 @@ export function describeRuntimeStatus(
     };
   }
 
+  if (warmup?.state === "warming") {
+    const active = warmup.models.find((model) => model.status === "warming");
+    return {
+      state: "loading",
+      title: "Warming local models",
+      detail: active
+        ? `Loading ${active.model} for ${active.role} work`
+        : "Preparing local inference",
+    };
+  }
+
   const available = runtime.roles
     .filter((role) => role.available)
     .map((role) => role.role);
@@ -72,7 +94,7 @@ export function describeRuntimeStatus(
     return {
       state: "ready",
       title: "Local roles discovered",
-      detail: `${available.join(", ")} configured`,
+      detail: `${available.join(", ")}${runtime.promptAnalyzer?.available ? ", classifier" : ""} configured`,
     };
   }
 
@@ -85,11 +107,14 @@ export function describeRuntimeStatus(
   }
 
   const generalMissing = missing.includes("general");
+  const analyzerMissing = runtime.promptAnalyzer?.available === false;
   return {
     state: "degraded",
     title: "Local runtime degraded",
     detail: generalMissing
       ? `General model missing; ${available.join(", ")} available`
+      : analyzerMissing
+        ? `Prompt analyzer ${runtime.promptAnalyzer?.configuredModel} missing`
       : `Missing optional ${missing.join(", ")} expert${missing.length === 1 ? "" : "s"}`,
   };
 }

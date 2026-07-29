@@ -17,8 +17,10 @@ use an OpenAI-compatible local or cloud model when configured.
 - Chat interface with persistent local conversations
 - Four enforced UI policies: Private, Balanced, Best quality, and Offline
 - Contextual request compilation into intents, confidence, and required capabilities
+- A local 0.6B prompt expert with deterministic classification safeguards
 - Specialty-aware model routing with fail-closed handling for sensitive content
 - A live execution inspector showing steps, route, model, and cloud usage
+- Detailed-mode in-conversation activity with timing, classification, steps, and swaps
 - Server-sent event streaming from orchestrator to UI
 - Local SQLite storage under `./var`
 - OpenAI-compatible model adapter
@@ -29,6 +31,8 @@ use an OpenAI-compatible local or cloud model when configured.
 - Append-only execution attempts so failed cloud contact remains disclosed
 - A deterministic in-process responder when no configured model is available
 - Production build served by the API process
+- Startup warmup for the prompt expert and default general model
+- Native Ollama generation that keeps private thinking separate from visible answers
 
 Attachment, microphone, settings, vision, retrieval, tools, memory, and web execution
 are planned but are not exposed as controls until they are wired. See [Roadmap](#roadmap)
@@ -54,11 +58,12 @@ responder and exposes that decision in the execution panel.
 
 ### Connect Ollama
 
-The minimum default configuration expects Ollama's OpenAI-compatible endpoint and a
-`qwen3:4b` general model:
+The default configuration expects Ollama's OpenAI-compatible endpoint, a `qwen3:4b`
+general model, and a small `qwen3:0.6b` prompt-analysis expert:
 
 ```bash
 ollama pull qwen3:4b
+ollama pull qwen3:0.6b
 ```
 
 Two optional text experts can be installed before Quorum starts:
@@ -68,10 +73,17 @@ ollama pull qwen2.5-coder:1.5b
 ollama pull qwen3.5:2b
 ```
 
-Balanced and Private modes route coding work to the coding expert,
-math and logic work to the reasoning expert, and ordinary conversation to the general
-model. A missing expert is not registered or selectable, and the runtime reports the
-missing role as degraded rather than ready.
+The prompt expert extracts a faithful task summary and intent before routing. Strong
+deterministic signals and sensitive-data detection remain authoritative if the tiny
+model conflicts or fails. Coding work routes to the coding expert, math and logic work
+to the reasoning expert, and ordinary conversation to the general model. Best quality
+still accounts for model quality, but a matching specialist can overcome a small
+static quality gap.
+
+At startup, Quorum warms the prompt expert first and the default general model last,
+keeping both alive through Ollama for 30 minutes. This moves the initial model-load
+latency to `npm run dev` instead of the first chat turn. Set
+`QUORUM_LOCAL_WARMUP=false` to disable this behavior.
 
 Restart Quorum after installing models. To change any model role:
 
@@ -79,16 +91,18 @@ Restart Quorum after installing models. To change any model role:
 copy .env.example .env
 ```
 
-Then change `QUORUM_LOCAL_MODEL`, `QUORUM_LOCAL_CODING_MODEL`, or
-`QUORUM_LOCAL_REASONING_MODEL` in `.env`. Quorum only registers a provider after the
-configured model appears in the endpoint's `/models` response. This proves discovery,
-not that a model is warm; execution failures feed the runtime circuit breaker.
+Then change `QUORUM_LOCAL_MODEL`, `QUORUM_LOCAL_PROMPT_MODEL`,
+`QUORUM_LOCAL_CODING_MODEL`, or `QUORUM_LOCAL_REASONING_MODEL` in `.env`. Quorum only
+registers a role after the configured model appears in the endpoint's `/models`
+response. Runtime status distinguishes discovery from startup warmup, and execution
+failures feed the runtime circuit breaker.
 
 Quorum enforces a conservative 16,384-token dispatch budget for each default role.
 Override it only when the endpoint is configured to execute a different budget:
 
 ```dotenv
 QUORUM_LOCAL_CONTEXT_WINDOW=16384
+QUORUM_LOCAL_PROMPT_CONTEXT_WINDOW=4096
 QUORUM_LOCAL_CODING_CONTEXT_WINDOW=16384
 QUORUM_LOCAL_REASONING_CONTEXT_WINDOW=16384
 ```
@@ -187,7 +201,7 @@ npm start          # serve built UI and API on port 8787
 | --- | --- |
 | Private | Local models only |
 | Balanced | Prefer the strongest suitable local model |
-| Best quality | Select the highest-rated eligible model, including cloud |
+| Best quality | Select the strongest eligible route using quality plus matched specialization |
 | Offline | In-process providers only; no loopback or remote model calls |
 
 The core policy type reserves Cost controlled for the usage-ledger milestone, but the

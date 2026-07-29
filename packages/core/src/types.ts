@@ -64,6 +64,11 @@ export interface LocalRuntimeStatus {
   state: "ready" | "degraded" | "unavailable";
   endpointConnected: boolean;
   roles: LocalModelRoleStatus[];
+  promptAnalyzer?: {
+    configuredModel: string;
+    modelId?: Id;
+    available: boolean;
+  };
 }
 
 export interface PolicyDefinition {
@@ -87,10 +92,43 @@ export type RequestIntent =
 export interface RequestRequirements {
   intent: RequestIntent;
   intentConfidence: number;
-  intentSource: "current" | "conversation" | "default";
+  intentSource: "current" | "conversation" | "default" | "classifier";
   capabilities: Capability[];
   requiresFreshness: boolean;
   containsSensitiveData: boolean;
+}
+
+export interface PromptAnalyzerResult {
+  intent: RequestIntent;
+  confidence: number;
+  taskSummary: string;
+}
+
+export interface PromptAnalyzerInput {
+  messages: ChatMessage[];
+  baseline: RequestAnalysis;
+}
+
+export interface PromptAnalyzer {
+  readonly id: Id;
+  readonly label: string;
+  analyze(
+    input: PromptAnalyzerInput,
+    signal?: AbortSignal,
+  ): Promise<PromptAnalyzerResult>;
+}
+
+export interface RequestAnalysis {
+  source: "heuristic" | "local_model" | "hybrid";
+  intent: RequestIntent;
+  confidence: number;
+  taskSummary: string;
+  analyzer?: {
+    modelId: Id;
+    modelLabel: string;
+    intent: RequestIntent;
+    confidence: number;
+  };
 }
 
 export interface CompiledRequest {
@@ -100,13 +138,20 @@ export interface CompiledRequest {
   prompt: string;
   policy: PolicyMode;
   verbosity: ResponseVerbosity;
+  analysis: RequestAnalysis;
   requirements: RequestRequirements;
 }
 
 export interface PlanStep {
   id: Id;
   label: string;
-  kind: "compile" | "policy" | "retrieval" | "model" | "synthesis";
+  kind:
+    | "compile"
+    | "classification"
+    | "policy"
+    | "retrieval"
+    | "model"
+    | "synthesis";
   location: ExecutionLocation;
   modelId?: Id;
 }
@@ -124,6 +169,7 @@ export interface TaskPlan {
   requestId: Id;
   policy: PolicyMode;
   verbosity: ResponseVerbosity;
+  analysis: RequestAnalysis;
   route: "local" | "cloud";
   modelId: Id;
   rationale: string;

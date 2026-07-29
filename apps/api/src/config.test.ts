@@ -8,6 +8,9 @@ const originalDataDirectory = process.env["QUORUM_DATA_DIR"];
 const originalLocalModel = process.env["QUORUM_LOCAL_MODEL"];
 const originalCodingModel = process.env["QUORUM_LOCAL_CODING_MODEL"];
 const originalReasoningModel = process.env["QUORUM_LOCAL_REASONING_MODEL"];
+const originalPromptModel = process.env["QUORUM_LOCAL_PROMPT_MODEL"];
+const originalPromptContext = process.env["QUORUM_LOCAL_PROMPT_CONTEXT_WINDOW"];
+const originalWarmup = process.env["QUORUM_LOCAL_WARMUP"];
 const originalGeneralContext = process.env["QUORUM_LOCAL_CONTEXT_WINDOW"];
 const originalLocalBaseUrl = process.env["QUORUM_LOCAL_BASE_URL"];
 const originalCloudBaseUrl = process.env["QUORUM_CLOUD_BASE_URL"];
@@ -19,6 +22,9 @@ afterEach(() => {
     ["QUORUM_LOCAL_MODEL", originalLocalModel],
     ["QUORUM_LOCAL_CODING_MODEL", originalCodingModel],
     ["QUORUM_LOCAL_REASONING_MODEL", originalReasoningModel],
+    ["QUORUM_LOCAL_PROMPT_MODEL", originalPromptModel],
+    ["QUORUM_LOCAL_PROMPT_CONTEXT_WINDOW", originalPromptContext],
+    ["QUORUM_LOCAL_WARMUP", originalWarmup],
     ["QUORUM_LOCAL_CONTEXT_WINDOW", originalGeneralContext],
     ["QUORUM_LOCAL_BASE_URL", originalLocalBaseUrl],
     ["QUORUM_CLOUD_BASE_URL", originalCloudBaseUrl],
@@ -45,6 +51,9 @@ describe("loadConfig", () => {
     delete process.env["QUORUM_LOCAL_MODEL"];
     delete process.env["QUORUM_LOCAL_CODING_MODEL"];
     delete process.env["QUORUM_LOCAL_REASONING_MODEL"];
+    delete process.env["QUORUM_LOCAL_PROMPT_MODEL"];
+    delete process.env["QUORUM_LOCAL_PROMPT_CONTEXT_WINDOW"];
+    delete process.env["QUORUM_LOCAL_WARMUP"];
 
     const config = loadConfig();
 
@@ -54,6 +63,7 @@ describe("loadConfig", () => {
         name: "qwen3:4b",
         specialties: [],
         contextWindow: 16_384,
+        reasoningEffort: "none",
       }),
       expect.objectContaining({
         role: "coding",
@@ -67,6 +77,11 @@ describe("loadConfig", () => {
         reasoningEffort: "none",
       }),
     ]);
+    expect(config.local.promptAnalyzer).toEqual({
+      name: "qwen3:0.6b",
+      contextWindow: 4_096,
+    });
+    expect(config.local.warmOnStartup).toBe(true);
   });
 
   it("keeps role settings separate when roles use the same physical model", () => {
@@ -100,6 +115,20 @@ describe("loadConfig", () => {
     process.env["QUORUM_LOCAL_CONTEXT_WINDOW"] = "8192";
 
     expect(loadConfig().local.models[0]?.contextWindow).toBe(8_192);
+  });
+
+  it("allows prompt analysis and startup warmup to be configured", () => {
+    process.env["QUORUM_LOCAL_PROMPT_MODEL"] = "small-classifier";
+    process.env["QUORUM_LOCAL_PROMPT_CONTEXT_WINDOW"] = "2048";
+    process.env["QUORUM_LOCAL_WARMUP"] = "false";
+
+    expect(loadConfig().local).toMatchObject({
+      promptAnalyzer: {
+        name: "small-classifier",
+        contextWindow: 2_048,
+      },
+      warmOnStartup: false,
+    });
   });
 
   it("rejects a remote endpoint configured as local", () => {

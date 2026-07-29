@@ -50,6 +50,7 @@ export async function buildServer(config: AppConfig, runtime: QuorumRuntime) {
   app.get("/api/health", async () => ({
     status: "ok",
     localRuntime: runtime.localRuntime,
+    warmup: runtime.warmupStatus,
     cloudConfigured: runtime.cloudConfigured,
   }));
 
@@ -57,6 +58,7 @@ export async function buildServer(config: AppConfig, runtime: QuorumRuntime) {
     policies: exposedPolicies,
     models: runtime.orchestrator.models,
     localRuntime: runtime.localRuntime,
+    warmup: runtime.warmupStatus,
     cloudConfigured: runtime.cloudConfigured,
   }));
 

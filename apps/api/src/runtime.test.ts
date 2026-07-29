@@ -15,6 +15,11 @@ const config: AppConfig = {
   local: {
     baseUrl: "http://127.0.0.1:11434/v1",
     apiKey: "ollama",
+    promptAnalyzer: {
+      name: "classifier",
+      contextWindow: 4_096,
+    },
+    warmOnStartup: true,
     models: [
       {
         role: "general",
@@ -71,7 +76,7 @@ describe("createLocalProviders", () => {
   it("is ready only when every configured role is available", () => {
     const providers = createLocalProviders(config, ["general", "code", "reasoning"]);
 
-    expect(describeLocalRuntime(config, true, providers)).toMatchObject({
+    expect(describeLocalRuntime(config, true, providers, true)).toMatchObject({
       state: "ready",
       endpointConnected: true,
       roles: [
@@ -79,13 +84,17 @@ describe("createLocalProviders", () => {
         { role: "coding", required: false, available: true },
         { role: "reasoning", required: false, available: true },
       ],
+      promptAnalyzer: {
+        configuredModel: "classifier",
+        available: true,
+      },
     });
   });
 
   it("reports degraded instead of ready when the general role is missing", () => {
     const providers = createLocalProviders(config, ["code", "reasoning"]);
 
-    expect(describeLocalRuntime(config, true, providers)).toMatchObject({
+    expect(describeLocalRuntime(config, true, providers, true)).toMatchObject({
       state: "degraded",
       endpointConnected: true,
       roles: [
@@ -97,7 +106,7 @@ describe("createLocalProviders", () => {
   });
 
   it("reports an unavailable endpoint separately from missing models", () => {
-    expect(describeLocalRuntime(config, false, [])).toMatchObject({
+    expect(describeLocalRuntime(config, false, [], false)).toMatchObject({
       state: "unavailable",
       endpointConnected: false,
     });
@@ -105,7 +114,7 @@ describe("createLocalProviders", () => {
 
   it("derives current role health from circuit-aware model availability", () => {
     const providers = createLocalProviders(config, ["general", "code", "reasoning"]);
-    const discovered = describeLocalRuntime(config, true, providers);
+    const discovered = describeLocalRuntime(config, true, providers, true);
     const current = currentLocalRuntime(
       discovered,
       providers.map((provider) =>
@@ -122,6 +131,22 @@ describe("createLocalProviders", () => {
         { role: "coding", available: false },
         { role: "reasoning", available: true },
       ],
+    });
+  });
+
+  it("reports a missing prompt analyzer as degraded without inventing a provider", () => {
+    const providers = createLocalProviders(config, [
+      "general",
+      "code",
+      "reasoning",
+    ]);
+
+    expect(describeLocalRuntime(config, true, providers, false)).toMatchObject({
+      state: "degraded",
+      promptAnalyzer: {
+        configuredModel: "classifier",
+        available: false,
+      },
     });
   });
 });
