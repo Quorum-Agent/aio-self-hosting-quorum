@@ -17,12 +17,12 @@ use an OpenAI-compatible local or cloud model when configured.
 - Chat interface with persistent local conversations
 - Five execution policies: Private, Balanced, Best quality, Offline, and Cost controlled
 - Request compilation into intents and required capabilities
-- Model routing with fail-closed handling for sensitive content
+- Specialty-aware model routing with fail-closed handling for sensitive content
 - A live execution inspector showing steps, route, model, and cloud usage
 - Server-sent event streaming from orchestrator to UI
 - Local SQLite storage under `./var`
 - OpenAI-compatible model adapter
-- Automatic discovery of the configured local model
+- Automatic discovery of configured local models and experts
 - A deterministic in-process responder when no configured model is available
 - Production build served by the API process
 
@@ -50,22 +50,34 @@ responder and exposes that decision in the execution panel.
 
 ### Connect Ollama
 
-The default configuration expects Ollama's OpenAI-compatible endpoint and a
-`qwen3:4b` model:
+The minimum default configuration expects Ollama's OpenAI-compatible endpoint and a
+`qwen3:4b` general model:
 
 ```bash
 ollama pull qwen3:4b
 ```
 
-Restart Quorum after installing the model. To use a different local model:
+Two optional text experts can be installed before Quorum starts:
+
+```bash
+ollama pull qwen2.5-coder:1.5b
+ollama pull qwen3.5:2b
+```
+
+Balanced, Private, and Cost controlled modes route coding work to the coding expert,
+math and logic work to the reasoning expert, and ordinary conversation to the general
+model. A missing expert is not registered and cannot be selected.
+
+Restart Quorum after installing models. To change any model role:
 
 ```bash
 copy .env.example .env
 ```
 
-Then change `QUORUM_LOCAL_MODEL` in `.env`. Quorum only registers the provider after
-the configured model appears in the endpoint's `/models` response, so a reachable
-server cannot be mistaken for a ready model.
+Then change `QUORUM_LOCAL_MODEL`, `QUORUM_LOCAL_CODING_MODEL`, or
+`QUORUM_LOCAL_REASONING_MODEL` in `.env`. Quorum only registers a provider after the
+configured model appears in the endpoint's `/models` response, so a reachable server
+cannot be mistaken for a ready model.
 
 ### Optional cloud fallback
 

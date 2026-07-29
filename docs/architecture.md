@@ -41,7 +41,7 @@ packages/core
 
 The compiler converts a conversational request into explicit requirements:
 
-- intent: conversation, coding, document, vision, or research;
+- intent: conversation, reasoning, coding, document, vision, or research;
 - required model capabilities;
 - freshness requirement;
 - sensitive-data signal.
@@ -60,7 +60,8 @@ Selection is constrained before ranking:
 3. remove cloud models forbidden by policy;
 4. in Offline mode, remove every provider not running in-process;
 5. for sensitive requests, remove every cloud model;
-6. rank remaining models according to policy.
+6. rank remaining models according to policy, including a bonus for declared
+   specialties that match the request.
 
 If the constrained set is empty, planning fails. It does not quietly weaken the policy.
 
@@ -93,9 +94,11 @@ The current adapters are:
 - `OpenAICompatibleProvider` for local loopback or remote cloud endpoints;
 - `DemoProvider` for an offline, deterministic, in-process runnable experience.
 
-The model descriptor declares location, transport, capabilities, context window, and a
-provisional quality rating. Benchmarks and user preferences should eventually replace
-the static quality rating.
+The model descriptor declares location, transport, capabilities, optional specialties,
+context window, and a provisional quality rating. Capabilities are hard eligibility
+requirements; specialties influence ranking only after a model is eligible. Benchmarks
+and user preferences should eventually replace the static quality rating and specialty
+bonus.
 
 ### Persistence
 

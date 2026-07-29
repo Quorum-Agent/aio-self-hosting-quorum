@@ -2,11 +2,14 @@ import { randomUUID } from "node:crypto";
 
 import { getPolicy } from "./policies.js";
 import type {
+  Capability,
   CompiledRequest,
   ModelDescriptor,
   PlanStep,
   TaskPlan,
 } from "./types.js";
+
+const SPECIALTY_BONUS = 30;
 
 function supports(model: ModelDescriptor, request: CompiledRequest): boolean {
   return request.requirements.capabilities.every((capability) =>
@@ -14,15 +17,35 @@ function supports(model: ModelDescriptor, request: CompiledRequest): boolean {
   );
 }
 
+function matchedSpecialties(
+  model: ModelDescriptor,
+  request: CompiledRequest,
+): Capability[] {
+  return (model.specialties ?? []).filter(
+    (capability) =>
+      capability !== "chat" &&
+      request.requirements.capabilities.includes(capability),
+  );
+}
+
+function specialtyScore(model: ModelDescriptor, request: CompiledRequest): number {
+  return matchedSpecialties(model, request).length * SPECIALTY_BONUS;
+}
+
 function localScore(model: ModelDescriptor, request: CompiledRequest): number {
   let score = model.location === "local" ? 100 : 0;
   score += model.qualityRating;
+  score += specialtyScore(model, request);
   if (request.requirements.requiresFreshness && model.capabilities.includes("web")) score += 20;
   return score;
 }
 
-function qualityScore(model: ModelDescriptor): number {
-  return model.qualityRating * 10 + model.contextWindow / 10_000;
+function qualityScore(model: ModelDescriptor, request: CompiledRequest): number {
+  return (
+    model.qualityRating * 10 +
+    specialtyScore(model, request) * 10 +
+    model.contextWindow / 10_000
+  );
 }
 
 export class RoutePlanner {
@@ -49,10 +72,10 @@ export class RoutePlanner {
     const sorted = [...candidates].sort((left, right) => {
       const leftScore = policy.preferLocal
         ? localScore(left, request)
-        : qualityScore(left);
+        : qualityScore(left, request);
       const rightScore = policy.preferLocal
         ? localScore(right, request)
-        : qualityScore(right);
+        : qualityScore(right, request);
       return rightScore - leftScore;
     });
     const selected = sorted[0];
@@ -62,9 +85,12 @@ export class RoutePlanner {
     }
 
     const route = selected.location;
+    const selectedSpecialties = matchedSpecialties(selected, request);
     const rationale =
       route === "local"
-        ? `${policy.label} mode selected an available local model with the required capabilities.`
+        ? selectedSpecialties.length > 0
+          ? `${policy.label} mode selected a local ${selectedSpecialties.join(" and ")} specialist.`
+          : `${policy.label} mode selected an available local model with the required capabilities.`
         : `${policy.label} mode selected a cloud model because it best matches the request requirements.`;
     const steps: PlanStep[] = [
       {

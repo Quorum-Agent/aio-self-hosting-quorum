@@ -50,4 +50,19 @@ describe("RequestCompiler", () => {
       "web",
     ]);
   });
+
+  it.each([
+    "Solve this equation: 2x + 4 = 12.",
+    "Analyze the logic of this argument.",
+    "Calculate the area of a circle with radius 5.",
+  ])("classifies explicit reasoning work: %s", (prompt) => {
+    const compiled = compiler.compile(request(prompt));
+
+    expect(compiled.requirements.intent).toBe("reasoning");
+    expect(compiled.requirements.capabilities).toEqual([
+      "chat",
+      "reasoning",
+    ]);
+    expect(compiled.requirements.requiresFreshness).toBe(false);
+  });
 });

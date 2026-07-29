@@ -17,6 +17,8 @@ const CONTEXTUAL_CURRENT_PATTERN = new RegExp(
 );
 const CODE_PATTERN =
   /\b(code|function|class|typescript|javascript|python|rust|compile|repository|bug|api)\b/i;
+const REASONING_PATTERN =
+  /\b(calculate|calculation|solve|equation|proof|math|mathematics|logic|reason|reasoning|analy[sz]e)\b/i;
 const DOCUMENT_PATTERN =
   /\b(pdf|document|invoice|contract|spreadsheet|attachment|file)\b/i;
 const VISION_PATTERN =
@@ -38,6 +40,7 @@ function detectIntent(prompt: string, freshInformationRequired: boolean): Reques
   if (VISION_PATTERN.test(prompt)) return "vision";
   if (DOCUMENT_PATTERN.test(prompt)) return "document";
   if (CODE_PATTERN.test(prompt)) return "coding";
+  if (REASONING_PATTERN.test(prompt)) return "reasoning";
   return "conversation";
 }
 
@@ -47,6 +50,7 @@ function deriveRequirements(prompt: string): RequestRequirements {
   const capabilities: RequestRequirements["capabilities"] = ["chat"];
 
   if (intent === "coding") capabilities.push("coding");
+  if (intent === "reasoning") capabilities.push("reasoning");
   if (intent === "document") capabilities.push("documents");
   if (intent === "vision") capabilities.push("vision");
   if (intent === "research") capabilities.push("reasoning", "web");

@@ -36,6 +36,7 @@ export interface ModelDescriptor {
   capabilities: Capability[];
   contextWindow: number;
   qualityRating: number;
+  specialties?: Capability[];
   available: boolean;
   costPerMillionTokens?: number;
 }
@@ -52,6 +53,7 @@ export interface PolicyDefinition {
 
 export type RequestIntent =
   | "conversation"
+  | "reasoning"
   | "coding"
   | "document"
   | "vision"

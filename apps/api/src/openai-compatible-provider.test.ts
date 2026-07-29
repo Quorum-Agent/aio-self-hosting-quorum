@@ -56,6 +56,7 @@ describe("OpenAICompatibleProvider", () => {
       contextWindow: 32_000,
       qualityRating: 60,
       capabilities: ["chat", "reasoning", "coding", "documents"],
+      reasoningEffort: "none",
     });
 
     const chunks: string[] = [];
@@ -82,6 +83,9 @@ describe("OpenAICompatibleProvider", () => {
     expect(body.messages[1]).toMatchObject({
       role: "user",
       content: "What are your current capabilities?",
+    });
+    expect(JSON.parse(String(request.body))).toMatchObject({
+      reasoning_effort: "none",
     });
   });
 });

@@ -11,7 +11,7 @@ const localModel: ModelDescriptor = {
   provider: "test",
   location: "local",
   transport: "loopback",
-  capabilities: ["chat", "reasoning", "web", "documents"],
+  capabilities: ["chat", "reasoning", "coding", "web", "documents"],
   contextWindow: 32_000,
   qualityRating: 60,
   available: true,
@@ -112,6 +112,55 @@ describe("RoutePlanner", () => {
     );
 
     expect(scaffoldModel.capabilities).toEqual(["chat"]);
+    expect(plan.modelId).toBe(localModel.id);
+  });
+
+  it.each([
+    {
+      prompt: "Write a TypeScript function that adds two numbers.",
+      capability: "coding" as const,
+      modelId: "local:code-expert",
+    },
+    {
+      prompt: "Solve this logic proof step by step.",
+      capability: "reasoning" as const,
+      modelId: "local:reasoning-expert",
+    },
+  ])("prefers the $capability specialist", ({ prompt, capability, modelId }) => {
+    const expert: ModelDescriptor = {
+      id: modelId,
+      label: `${capability} expert`,
+      provider: "test",
+      location: "local",
+      transport: "loopback",
+      capabilities: ["chat", capability],
+      specialties: [capability],
+      contextWindow: 32_000,
+      qualityRating: 50,
+      available: true,
+    };
+    const plan = planner.plan(
+      compiler.compile(request("balanced", prompt)),
+      [localModel, expert],
+    );
+
+    expect(plan.modelId).toBe(expert.id);
+    expect(plan.rationale).toContain(`${capability} specialist`);
+  });
+
+  it("does not route ordinary conversation to a specialist", () => {
+    const codingExpert: ModelDescriptor = {
+      ...localModel,
+      id: "local:code-expert",
+      label: "Code expert",
+      specialties: ["coding"],
+      qualityRating: 50,
+    };
+    const plan = planner.plan(
+      compiler.compile(request("balanced", "Help me think through an idea.")),
+      [localModel, codingExpert],
+    );
+
     expect(plan.modelId).toBe(localModel.id);
   });
 });

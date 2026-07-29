@@ -12,31 +12,44 @@ export interface QuorumRuntime {
   cloudConfigured: boolean;
 }
 
+export function createLocalProviders(
+  config: AppConfig,
+  installedModelIds: string[],
+): ModelProvider[] {
+  return config.local.models
+    .filter((model) => installedModelIds.includes(model.name))
+    .map(
+      (model) =>
+        new OpenAICompatibleProvider({
+          id: `local:${model.name}`,
+          label: model.name,
+          provider: "openai-compatible",
+          location: "local",
+          baseUrl: config.local.baseUrl,
+          apiKey: config.local.apiKey,
+          model: model.name,
+          contextWindow: model.contextWindow,
+          qualityRating: model.qualityRating,
+          capabilities: model.capabilities,
+          specialties: model.specialties,
+          ...(model.reasoningEffort
+            ? { reasoningEffort: model.reasoningEffort }
+            : {}),
+        }),
+    );
+}
+
 export async function createRuntime(config: AppConfig): Promise<QuorumRuntime> {
-  const providers: ModelProvider[] = [];
   const localDiscovery = await discoverModels(
     config.local.baseUrl,
     config.local.apiKey,
   );
+  const providers = createLocalProviders(
+    config,
+    localDiscovery.connected ? localDiscovery.modelIds : [],
+  );
   const localEndpointConnected =
-    localDiscovery.connected && localDiscovery.modelIds.includes(config.local.model);
-
-  if (localEndpointConnected) {
-    providers.push(
-      new OpenAICompatibleProvider({
-        id: `local:${config.local.model}`,
-        label: config.local.model,
-        provider: "openai-compatible",
-        location: "local",
-        baseUrl: config.local.baseUrl,
-        apiKey: config.local.apiKey,
-        model: config.local.model,
-        contextWindow: 32_000,
-        qualityRating: 60,
-        capabilities: ["chat", "reasoning", "coding", "documents"],
-      }),
-    );
-  }
+    localDiscovery.connected && providers.length > 0;
 
   if (config.cloud) {
     providers.push(

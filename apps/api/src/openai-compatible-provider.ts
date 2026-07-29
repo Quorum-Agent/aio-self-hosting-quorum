@@ -17,6 +17,8 @@ interface OpenAICompatibleOptions {
   model: string;
   contextWindow: number;
   qualityRating: number;
+  specialties?: Capability[];
+  reasoningEffort?: "none" | "low" | "medium" | "high";
   capabilities: Capability[];
 }
 
@@ -68,6 +70,12 @@ export class OpenAICompatibleProvider implements ModelProvider {
   readonly #baseUrl: string;
   readonly #apiKey: string;
   readonly #modelName: string;
+  readonly #reasoningEffort:
+    | "none"
+    | "low"
+    | "medium"
+    | "high"
+    | undefined;
 
   constructor(options: OpenAICompatibleOptions) {
     this.model = {
@@ -79,11 +87,13 @@ export class OpenAICompatibleProvider implements ModelProvider {
       capabilities: options.capabilities,
       contextWindow: options.contextWindow,
       qualityRating: options.qualityRating,
+      ...(options.specialties ? { specialties: options.specialties } : {}),
       available: true,
     };
     this.#baseUrl = options.baseUrl;
     this.#apiKey = options.apiKey;
     this.#modelName = options.model;
+    this.#reasoningEffort = options.reasoningEffort;
   }
 
   async *stream(input: ModelStreamInput): AsyncIterable<string> {
@@ -100,6 +110,9 @@ export class OpenAICompatibleProvider implements ModelProvider {
           ...input.messages.map(toProviderMessage),
         ],
         stream: true,
+        ...(this.#reasoningEffort
+          ? { reasoning_effort: this.#reasoningEffort }
+          : {}),
       }),
       ...(input.signal ? { signal: input.signal } : {}),
     });
