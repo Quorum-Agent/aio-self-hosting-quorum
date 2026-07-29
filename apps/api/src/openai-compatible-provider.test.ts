@@ -5,9 +5,12 @@ import {
   estimateInputTokens,
   OpenAICompatibleProvider,
 } from "./openai-compatible-provider.js";
-import type { ModelStreamInput } from "@quorum/core";
+import type { ModelDescriptor, ModelStreamInput } from "@quorum/core";
 
-function modelInput(): ModelStreamInput {
+function modelInput(
+  runtimeModels: ModelDescriptor[] = [],
+  policy: ModelStreamInput["request"]["policy"] = "balanced",
+): ModelStreamInput {
   return {
     messages: [
       {
@@ -22,7 +25,7 @@ function modelInput(): ModelStreamInput {
       conversationId: "conversation-1",
       messages: [],
       prompt: "What are your current capabilities?",
-      policy: "balanced",
+      policy,
       requirements: {
         intent: "conversation",
         intentConfidence: 0.5,
@@ -32,6 +35,7 @@ function modelInput(): ModelStreamInput {
         containsSensitiveData: false,
       },
     },
+    runtimeModels,
   };
 }
 
@@ -67,7 +71,55 @@ describe("OpenAICompatibleProvider", () => {
     });
 
     const chunks: string[] = [];
-    for await (const chunk of provider.stream(modelInput())) {
+    const codingModel: ModelDescriptor = {
+      id: "local:coding:qwen2.5-coder:1.5b",
+      label: "qwen2.5-coder:1.5b",
+      provider: "openai-compatible",
+      role: "coding",
+      location: "local",
+      transport: "loopback",
+      capabilities: ["chat", "coding"],
+      specialties: ["coding"],
+      contextWindow: 16_384,
+      qualityRating: 50,
+      available: true,
+    };
+    const unavailableReasoningModel: ModelDescriptor = {
+      id: "local:reasoning:qwen3.5:2b",
+      label: "qwen3.5:2b",
+      provider: "openai-compatible",
+      role: "reasoning",
+      location: "local",
+      transport: "loopback",
+      capabilities: ["chat", "reasoning"],
+      specialties: ["reasoning"],
+      contextWindow: 16_384,
+      qualityRating: 55,
+      available: false,
+    };
+    const policyBlockedCloudModel: ModelDescriptor = {
+      id: "cloud:test",
+      label: "cloud-test",
+      provider: "openai-compatible",
+      location: "cloud",
+      transport: "remote",
+      capabilities: ["chat", "coding", "reasoning"],
+      contextWindow: 128_000,
+      qualityRating: 90,
+      available: true,
+    };
+
+    for await (const chunk of provider.stream(
+      modelInput(
+        [
+          provider.model,
+          codingModel,
+          unavailableReasoningModel,
+          policyBlockedCloudModel,
+        ],
+        "private",
+      ),
+    )) {
       chunks.push(chunk);
     }
 
@@ -84,8 +136,17 @@ describe("OpenAICompatibleProvider", () => {
     expect(body.messages[0]?.content).toContain(
       "web browsing, external tools, project memory, and device control are not available yet",
     );
-    expect(body.messages[0]?.content).toContain(
-      "declared model capabilities: chat, reasoning, coding, documents",
+    const systemMessage = body.messages[0]?.content ?? "";
+    expect(systemMessage).toContain('"activeRoute"');
+    expect(systemMessage).toContain('"model":"qwen3:4b"');
+    expect(systemMessage).toContain('"role":"coding"');
+    expect(systemMessage).toContain('"model":"qwen2.5-coder:1.5b"');
+    expect(systemMessage).toContain('"unavailableRoutes"');
+    expect(systemMessage).toContain('"model":"qwen3.5:2b"');
+    expect(systemMessage).toContain('"policy":"private"');
+    expect(systemMessage).toContain('"policyBlockedRoutes":[{"model":"cloud-test"');
+    expect(systemMessage).toContain(
+      "Do not claim the active route is Quorum's only model",
     );
     expect(body.messages[1]).toMatchObject({
       role: "user",

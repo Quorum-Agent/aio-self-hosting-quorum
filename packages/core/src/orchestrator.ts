@@ -161,6 +161,11 @@ export class Orchestrator {
         for await (const delta of provider.stream({
           messages: request.messages,
           request,
+          runtimeModels: this.models.map((model) =>
+            excludedModelIds.has(model.id)
+              ? { ...model, available: false }
+              : model,
+          ),
           ...(signal ? { signal } : {}),
         })) {
           attemptContent += delta;

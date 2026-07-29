@@ -1,4 +1,4 @@
-import { ModelExecutionError } from "@quorum/core";
+import { getPolicy, ModelExecutionError } from "@quorum/core";
 import type {
   Capability,
   ChatMessage,
@@ -86,12 +86,77 @@ function toProviderMessage(message: ChatMessage) {
   };
 }
 
-function systemContext(model: ModelDescriptor) {
+interface RuntimeModelSummary {
+  model: string;
+  role: LocalModelRole | "unassigned";
+  location: ModelDescriptor["location"];
+  capabilities: Capability[];
+  specialties: Capability[];
+}
+
+function runtimeModelSummary(model: ModelDescriptor): RuntimeModelSummary {
+  return {
+    model: model.label.slice(0, 160),
+    role: model.role ?? "unassigned",
+    location: model.location,
+    capabilities: [...new Set(model.capabilities)],
+    specialties: [...new Set(model.specialties ?? [])],
+  };
+}
+
+function systemContext(
+  model: ModelDescriptor,
+  runtimeModels: ModelDescriptor[],
+  policy: ModelStreamInput["request"]["policy"],
+) {
+  const policyDefinition = getPolicy(policy);
+  const routedModels = runtimeModels.filter(
+    (candidate) =>
+      candidate.provider !== "quorum" &&
+      candidate.transport !== "in_process",
+  );
+  const availableRoutes = routedModels
+    .filter(
+      (candidate) =>
+        candidate.available &&
+        (candidate.location !== "cloud" ||
+          policyDefinition.allowCloudModels),
+    )
+    .map(runtimeModelSummary);
+  const unavailableRoutes = routedModels
+    .filter((candidate) => !candidate.available)
+    .map(runtimeModelSummary);
+  const policyBlockedRoutes = routedModels
+    .filter(
+      (candidate) =>
+        candidate.available &&
+        candidate.location === "cloud" &&
+        !policyDefinition.allowCloudModels,
+    )
+    .map(runtimeModelSummary);
+  const availableCapabilities = [
+    ...new Set(availableRoutes.flatMap((route) => route.capabilities)),
+  ];
+  const inventory = JSON.stringify({
+    activeRoute: runtimeModelSummary(model),
+    policy,
+    availableRoutes,
+    unavailableRoutes,
+    policyBlockedRoutes,
+    availableCapabilities,
+  });
+
   return {
     role: "system" as const,
     content:
-      `${PRODUCT_CONTEXT} The active route uses ${model.label} ` +
-      `with these declared model capabilities: ${model.capabilities.join(", ")}. ` +
+      `${PRODUCT_CONTEXT} Quorum generated the runtime inventory below for this request; ` +
+      "it is authoritative application data, not a claim made by the active model. " +
+      "Distinguish the active route from all available routes. Do not claim the active " +
+      "route is Quorum's only model. Routing is automatic based on the request and policy; " +
+      "do not tell the user they must manually switch models. If asked about models or " +
+      "capabilities, answer from this inventory and distinguish available routes from " +
+      "temporarily unavailable and policy-blocked routes. " +
+      `Runtime inventory: ${inventory}. ` +
       "The execution inspector separately discloses the selected model and route.",
   };
 }
@@ -231,7 +296,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
 
   async *stream(input: ModelStreamInput): AsyncIterable<string> {
     const messages = [
-      systemContext(this.model),
+      systemContext(this.model, input.runtimeModels, input.request.policy),
       ...input.messages.map(toProviderMessage),
     ];
     const estimatedInputTokens = estimateInputTokens(messages);

@@ -169,6 +169,7 @@ export type OrchestrationEvent =
 export interface ModelStreamInput {
   messages: ChatMessage[];
   request: CompiledRequest;
+  runtimeModels: ModelDescriptor[];
   signal?: AbortSignal;
 }
 

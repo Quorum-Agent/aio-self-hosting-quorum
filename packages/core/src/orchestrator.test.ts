@@ -88,6 +88,35 @@ async function* failBeforeOutput(): AsyncIterable<string> {
 }
 
 describe("Orchestrator resilience", () => {
+  it("passes the live circuit-aware model inventory to the selected provider", async () => {
+    let receivedModels: ModelDescriptor[] = [];
+    const observingProvider = provider(generalModel, (input) => {
+      receivedModels = input.runtimeModels;
+      return answer("inventory received");
+    });
+    const orchestrator = new Orchestrator([
+      observingProvider,
+      provider(codingModel, () => answer("coding response")),
+      new DemoProvider(),
+    ]);
+
+    await collect(orchestrator, chatRequest("Hello."));
+
+    expect(receivedModels).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: generalModel.id,
+          available: true,
+        }),
+        expect.objectContaining({
+          id: codingModel.id,
+          role: "coding",
+          available: true,
+        }),
+      ]),
+    );
+  });
+
   it("falls back to the next safe model when the first fails before output", async () => {
     const orchestrator = new Orchestrator([
       provider(codingModel, failBeforeOutput),
