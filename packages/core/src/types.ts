@@ -27,18 +27,41 @@ export type Capability =
   | "web"
   | "tools";
 
+export type LocalModelRole = "general" | "coding" | "reasoning";
+
+export interface ModelInferenceSettings {
+  reasoningEffort?: "none" | "low" | "medium" | "high";
+  maxOutputTokens?: number;
+}
+
 export interface ModelDescriptor {
   id: Id;
   label: string;
   provider: string;
+  role?: LocalModelRole;
   location: Exclude<ExecutionLocation, "device">;
   transport: "in_process" | "loopback" | "remote";
   capabilities: Capability[];
   contextWindow: number;
   qualityRating: number;
   specialties?: Capability[];
+  inference?: ModelInferenceSettings;
   available: boolean;
   costPerMillionTokens?: number;
+}
+
+export interface LocalModelRoleStatus {
+  role: LocalModelRole;
+  configuredModel: string;
+  modelId?: Id;
+  required: boolean;
+  available: boolean;
+}
+
+export interface LocalRuntimeStatus {
+  state: "ready" | "degraded" | "unavailable";
+  endpointConnected: boolean;
+  roles: LocalModelRoleStatus[];
 }
 
 export interface PolicyDefinition {
@@ -61,6 +84,8 @@ export type RequestIntent =
 
 export interface RequestRequirements {
   intent: RequestIntent;
+  intentConfidence: number;
+  intentSource: "current" | "conversation" | "default";
   capabilities: Capability[];
   requiresFreshness: boolean;
   containsSensitiveData: boolean;
@@ -83,13 +108,25 @@ export interface PlanStep {
   modelId?: Id;
 }
 
+export interface ExecutionAttempt {
+  modelId: Id;
+  route: "local" | "cloud";
+  status: "completed" | "failed";
+  contextMayHaveBeenTransmitted: boolean;
+  detail?: string;
+}
+
 export interface TaskPlan {
   id: Id;
   requestId: Id;
+  policy: PolicyMode;
   route: "local" | "cloud";
   modelId: Id;
   rationale: string;
   steps: PlanStep[];
+  degraded?: boolean;
+  fallbackFromModelId?: Id;
+  attempts?: ExecutionAttempt[];
   cloudDisclosure?: string;
 }
 

@@ -1,7 +1,12 @@
 import { dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import type { Capability } from "@quorum/core";
+import type { Capability, LocalModelRole } from "@quorum/core";
+
+import {
+  normalizeCloudBaseUrl,
+  normalizeLoopbackBaseUrl,
+} from "./loopback-url.js";
 
 export const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 
@@ -10,12 +15,18 @@ function resolveFromProjectRoot(path: string): string {
 }
 
 export interface LocalModelConfig {
+  role: LocalModelRole;
   name: string;
   capabilities: Capability[];
   specialties: Capability[];
   contextWindow: number;
   qualityRating: number;
   reasoningEffort?: "none" | "low" | "medium" | "high";
+}
+
+function positiveInteger(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 export interface AppConfig {
@@ -35,62 +46,49 @@ export interface AppConfig {
   };
 }
 
-function mergeLocalModels(models: LocalModelConfig[]): LocalModelConfig[] {
-  const merged = new Map<string, LocalModelConfig>();
-
-  for (const model of models) {
-    const existing = merged.get(model.name);
-    if (!existing) {
-      merged.set(model.name, model);
-      continue;
-    }
-
-    const reasoningEffort =
-      model.reasoningEffort ?? existing.reasoningEffort;
-    merged.set(model.name, {
-      name: model.name,
-      capabilities: [...new Set([...existing.capabilities, ...model.capabilities])],
-      specialties: [...new Set([...existing.specialties, ...model.specialties])],
-      contextWindow: Math.max(existing.contextWindow, model.contextWindow),
-      qualityRating: Math.max(existing.qualityRating, model.qualityRating),
-      ...(reasoningEffort ? { reasoningEffort } : {}),
-    });
-  }
-
-  return [...merged.values()];
-}
-
 export function loadConfig(): AppConfig {
   const cloudApiKey = process.env["QUORUM_CLOUD_API_KEY"]?.trim();
   const primaryModel = process.env["QUORUM_LOCAL_MODEL"] ?? "qwen3:4b";
-  const localModels = mergeLocalModels([
+  const localModels: LocalModelConfig[] = [
     {
+      role: "general",
       name: primaryModel,
       capabilities: ["chat", "reasoning", "coding", "documents"],
       specialties: [],
-      contextWindow: 32_000,
+      contextWindow: positiveInteger(
+        process.env["QUORUM_LOCAL_CONTEXT_WINDOW"],
+        16_384,
+      ),
       qualityRating: 60,
     },
     {
+      role: "coding",
       name:
         process.env["QUORUM_LOCAL_CODING_MODEL"] ??
         "qwen2.5-coder:1.5b",
       capabilities: ["chat", "coding"],
       specialties: ["coding"],
-      contextWindow: 32_000,
+      contextWindow: positiveInteger(
+        process.env["QUORUM_LOCAL_CODING_CONTEXT_WINDOW"],
+        16_384,
+      ),
       qualityRating: 50,
     },
     {
+      role: "reasoning",
       name:
         process.env["QUORUM_LOCAL_REASONING_MODEL"] ??
         "qwen3.5:2b",
       capabilities: ["chat", "reasoning"],
       specialties: ["reasoning"],
-      contextWindow: 256_000,
+      contextWindow: positiveInteger(
+        process.env["QUORUM_LOCAL_REASONING_CONTEXT_WINDOW"],
+        16_384,
+      ),
       qualityRating: 55,
       reasoningEffort: "none",
     },
-  ]);
+  ];
 
   return {
     host: process.env["HOST"] ?? "127.0.0.1",
@@ -98,9 +96,9 @@ export function loadConfig(): AppConfig {
     logLevel: process.env["LOG_LEVEL"] ?? "info",
     dataDirectory: resolveFromProjectRoot(process.env["QUORUM_DATA_DIR"] ?? "./var"),
     local: {
-      baseUrl: (process.env["QUORUM_LOCAL_BASE_URL"] ?? "http://127.0.0.1:11434/v1").replace(
-        /\/$/,
-        "",
+      baseUrl: normalizeLoopbackBaseUrl(
+        process.env["QUORUM_LOCAL_BASE_URL"] ??
+          "http://127.0.0.1:11434/v1",
       ),
       apiKey: process.env["QUORUM_LOCAL_API_KEY"] ?? "ollama",
       models: localModels,
@@ -108,9 +106,9 @@ export function loadConfig(): AppConfig {
     ...(cloudApiKey
       ? {
           cloud: {
-            baseUrl: (process.env["QUORUM_CLOUD_BASE_URL"] ?? "https://api.openai.com/v1").replace(
-              /\/$/,
-              "",
+            baseUrl: normalizeCloudBaseUrl(
+              process.env["QUORUM_CLOUD_BASE_URL"] ??
+                "https://api.openai.com/v1",
             ),
             model: process.env["QUORUM_CLOUD_MODEL"] ?? "gpt-4.1-mini",
             apiKey: cloudApiKey,

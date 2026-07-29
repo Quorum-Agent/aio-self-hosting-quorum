@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import type {
+  ChatMessage,
   ChatRequest,
   CompiledRequest,
   RequestIntent,
@@ -15,18 +16,40 @@ const CONTEXTUAL_CURRENT_PATTERN = new RegExp(
   String.raw`(?:\bcurrent(?:ly)?\b[^.!?\n]{0,60}\b${TIME_SENSITIVE_SUBJECT}\b|\b${TIME_SENSITIVE_SUBJECT}\b[^.!?\n]{0,60}\bcurrent(?:ly)?\b)`,
   "i",
 );
-const CODE_PATTERN =
-  /\b(code|function|class|typescript|javascript|python|rust|compile|repository|bug|api)\b/i;
-const REASONING_PATTERN =
-  /\b(calculate|calculation|solve|equation|proof|math|mathematics|logic|reason|reasoning|analy[sz]e)\b/i;
+const EXPLICIT_CHAT_PATTERN =
+  /\b(tell me a joke|just chat|casual conversation|new topic|let'?s (?:just )?talk)\b/i;
+const CODE_DOMAIN_PATTERN =
+  /\b(typescript|javascript|python|rust|golang|sql|react|node(?:\.js)?|git|compiler|stack trace|source code|codebase|repository|api endpoint|rest endpoint|graphql|database schema|unit tests?)\b|c\+\+|c#/i;
+const CODE_ACTION_PATTERN =
+  /\b(write|implement|refactor|debug|fix|compile|program|code|optimi[sz]e|review|test|add|change|edit|build|design|create|analy[sz]e)\b/i;
+const CODE_TARGET_PATTERN =
+  /\b(code|function|method|class|interface|type|script|service|endpoint|query|component|tests?|bug|error|repository|module|package|algorithm)\b/i;
+const CODE_BLOCK_PATTERN = /```[\s\S]*```|(?:^|\n)\s*(?:const|let|var|def|fn|class|interface)\s+/i;
+const REASONING_DOMAIN_PATTERN =
+  /\b(equation|theorem|proof|prove|square root|sqrt|integral|derivative|probability|statistics|combinatorics|algebra|geometry|arithmetic|syllogism|logical|logic puzzle)\b/i;
+const REASONING_ACTION_PATTERN =
+  /\b(calculate|solve|derive|reason|analy[sz]e|evaluate|determine)\b/i;
+const REASONING_TARGET_PATTERN =
+  /\b(problem|equation|math(?:ematics)?|logic|argument|proof|puzzle|probability|claim|area|circle|radius|volume|distance|percentage)\b/i;
+const MATH_EXPRESSION_PATTERN =
+  /(?:\d|\bx\b)\s*(?:[+\-*/^=]|\b(?:plus|minus|times|divided by)\b)\s*(?:\d|\bx\b)/i;
 const DOCUMENT_PATTERN =
-  /\b(pdf|document|invoice|contract|spreadsheet|attachment|file)\b/i;
+  /\b(?:attached|this|the)\s+(?:pdf|document|invoice|contract|spreadsheet|attachment|file)\b|\b(?:summari[sz]e|extract|parse|review|read)\b[^.!?\n]{0,40}\b(?:pdf|document|invoice|contract|spreadsheet|attachment|file)\b/i;
 const VISION_PATTERN =
   /\b(image|photo|picture|diagram|screenshot|visual|pcb)\b/i;
 const RESEARCH_PATTERN =
   /\b(research|sources?|citations?|compare interpretations|search the web)\b/i;
 const SENSITIVE_PATTERN =
-  /\b(password|secret|private key|ssn|social security|medical|confidential|proprietary)\b/i;
+  /\b(password|secret|private key|api[ _-]?key|credentials?|access[ _-]?token|bearer[ _-]?token|ssn|social security|medical|confidential|proprietary|account number)\b|AKIA[0-9A-Z]{16}|\bsk-[A-Za-z0-9_-]{10,}\b|\bgh[pousr]_[A-Za-z0-9]{20,}\b|\bauthorization\s*:\s*(?:basic|bearer)\s+[A-Za-z0-9._~+/=-]+\b|\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b|\b\d{3}-\d{2}-\d{4}\b/i;
+const FOLLOW_UP_PATTERN =
+  /^(?:(?:and|also|now|then|next|okay,?\s+now)\b|(?:what|how) about\b|(?:please\s+)?(?:make|change|fix|explain|summari[sz]e|continue|retry|redo|add|remove|update)\s+(?:it|that|this|those|them)\b|(?:why|how|are you sure)\??$)/i;
+
+interface IntentClassification {
+  intent: RequestIntent;
+  confidence: number;
+  requiresFreshness: boolean;
+  explicitReset: boolean;
+}
 
 function requiresFreshness(prompt: string): boolean {
   return (
@@ -35,18 +58,117 @@ function requiresFreshness(prompt: string): boolean {
   );
 }
 
-function detectIntent(prompt: string, freshInformationRequired: boolean): RequestIntent {
-  if (RESEARCH_PATTERN.test(prompt) || freshInformationRequired) return "research";
-  if (VISION_PATTERN.test(prompt)) return "vision";
-  if (DOCUMENT_PATTERN.test(prompt)) return "document";
-  if (CODE_PATTERN.test(prompt)) return "coding";
-  if (REASONING_PATTERN.test(prompt)) return "reasoning";
-  return "conversation";
+function classifyPrompt(prompt: string): IntentClassification {
+  const freshInformationRequired = requiresFreshness(prompt);
+
+  if (EXPLICIT_CHAT_PATTERN.test(prompt)) {
+    return {
+      intent: "conversation",
+      confidence: 0.98,
+      requiresFreshness: false,
+      explicitReset: true,
+    };
+  }
+  if (RESEARCH_PATTERN.test(prompt) || freshInformationRequired) {
+    return {
+      intent: "research",
+      confidence: 0.98,
+      requiresFreshness: freshInformationRequired,
+      explicitReset: false,
+    };
+  }
+  if (VISION_PATTERN.test(prompt)) {
+    return {
+      intent: "vision",
+      confidence: 0.94,
+      requiresFreshness: false,
+      explicitReset: false,
+    };
+  }
+  if (DOCUMENT_PATTERN.test(prompt)) {
+    return {
+      intent: "document",
+      confidence: 0.9,
+      requiresFreshness: false,
+      explicitReset: false,
+    };
+  }
+
+  const codingSignal =
+    CODE_DOMAIN_PATTERN.test(prompt) ||
+    CODE_BLOCK_PATTERN.test(prompt) ||
+    (CODE_ACTION_PATTERN.test(prompt) && CODE_TARGET_PATTERN.test(prompt));
+  if (codingSignal) {
+    return {
+      intent: "coding",
+      confidence: CODE_DOMAIN_PATTERN.test(prompt) ? 0.94 : 0.86,
+      requiresFreshness: false,
+      explicitReset: false,
+    };
+  }
+
+  const reasoningSignal =
+    REASONING_DOMAIN_PATTERN.test(prompt) ||
+    MATH_EXPRESSION_PATTERN.test(prompt) ||
+    (REASONING_ACTION_PATTERN.test(prompt) &&
+      REASONING_TARGET_PATTERN.test(prompt));
+  if (reasoningSignal) {
+    return {
+      intent: "reasoning",
+      confidence: REASONING_DOMAIN_PATTERN.test(prompt) ? 0.92 : 0.84,
+      requiresFreshness: false,
+      explicitReset: false,
+    };
+  }
+
+  return {
+    intent: "conversation",
+    confidence: 0.5,
+    requiresFreshness: false,
+    explicitReset: false,
+  };
 }
 
-function deriveRequirements(prompt: string): RequestRequirements {
-  const freshInformationRequired = requiresFreshness(prompt);
-  const intent = detectIntent(prompt, freshInformationRequired);
+function classifyConversation(
+  userMessages: ChatMessage[],
+): IntentClassification & {
+  source: RequestRequirements["intentSource"];
+} {
+  const current = classifyPrompt(userMessages.at(-1)?.content ?? "");
+  if (
+    current.intent !== "conversation" ||
+    current.explicitReset ||
+    !FOLLOW_UP_PATTERN.test(userMessages.at(-1)?.content.trim() ?? "")
+  ) {
+    return {
+      ...current,
+      source: current.intent === "conversation" ? "default" : "current",
+    };
+  }
+
+  const previous = userMessages.at(-2);
+  if (!previous) return { ...current, source: "default" };
+  const classification = classifyPrompt(previous.content);
+  if (
+    !classification.explicitReset &&
+    classification.intent !== "conversation"
+  ) {
+    return {
+      ...classification,
+      confidence: Math.min(classification.confidence, 0.78),
+      source: "conversation",
+    };
+  }
+
+  return { ...current, source: "default" };
+}
+
+function deriveRequirements(
+  messages: ChatMessage[],
+  userMessages: ChatMessage[],
+): RequestRequirements {
+  const classification = classifyConversation(userMessages);
+  const intent = classification.intent;
   const capabilities: RequestRequirements["capabilities"] = ["chat"];
 
   if (intent === "coding") capabilities.push("coding");
@@ -57,17 +179,22 @@ function deriveRequirements(prompt: string): RequestRequirements {
 
   return {
     intent,
+    intentConfidence: classification.confidence,
+    intentSource: classification.source,
     capabilities,
-    requiresFreshness: freshInformationRequired,
-    containsSensitiveData: SENSITIVE_PATTERN.test(prompt),
+    requiresFreshness: classification.requiresFreshness,
+    containsSensitiveData: messages.some((message) =>
+      SENSITIVE_PATTERN.test(message.content),
+    ),
   };
 }
 
 export class RequestCompiler {
   compile(input: ChatRequest): CompiledRequest {
-    const prompt =
-      [...input.messages].reverse().find((message) => message.role === "user")?.content.trim() ??
-      "";
+    const userMessages = input.messages.filter(
+      (message) => message.role === "user" && message.content.trim(),
+    );
+    const prompt = userMessages.at(-1)?.content.trim() ?? "";
 
     if (!prompt) {
       throw new Error("A non-empty user message is required.");
@@ -79,7 +206,7 @@ export class RequestCompiler {
       messages: input.messages,
       prompt,
       policy: input.policy,
-      requirements: deriveRequirements(prompt),
+      requirements: deriveRequirements(input.messages, userMessages),
     };
   }
 }

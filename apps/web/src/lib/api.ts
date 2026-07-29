@@ -1,5 +1,6 @@
 import type {
   ChatMessage,
+  LocalRuntimeStatus,
   ModelDescriptor,
   OrchestrationEvent,
   PolicyDefinition,
@@ -16,7 +17,7 @@ export interface ConversationRecord {
 export interface RuntimeInfo {
   policies: PolicyDefinition[];
   models: ModelDescriptor[];
-  localEndpointConnected: boolean;
+  localRuntime: LocalRuntimeStatus;
   cloudConfigured: boolean;
 }
 

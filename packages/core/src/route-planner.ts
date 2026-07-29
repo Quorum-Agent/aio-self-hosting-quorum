@@ -9,7 +9,7 @@ import type {
   TaskPlan,
 } from "./types.js";
 
-const SPECIALTY_BONUS = 30;
+const SPECIALTY_BONUS = 12;
 
 function supports(model: ModelDescriptor, request: CompiledRequest): boolean {
   return request.requirements.capabilities.every((capability) =>
@@ -21,7 +21,7 @@ function matchedSpecialties(
   model: ModelDescriptor,
   request: CompiledRequest,
 ): Capability[] {
-  return (model.specialties ?? []).filter(
+  return [...new Set(model.specialties ?? [])].filter(
     (capability) =>
       capability !== "chat" &&
       request.requirements.capabilities.includes(capability),
@@ -40,18 +40,15 @@ function localScore(model: ModelDescriptor, request: CompiledRequest): number {
   return score;
 }
 
-function qualityScore(model: ModelDescriptor, request: CompiledRequest): number {
-  return (
-    model.qualityRating * 10 +
-    specialtyScore(model, request) * 10 +
-    model.contextWindow / 10_000
-  );
-}
-
 export class RoutePlanner {
-  plan(request: CompiledRequest, models: ModelDescriptor[]): TaskPlan {
+  plan(
+    request: CompiledRequest,
+    models: ModelDescriptor[],
+    excludedModelIds: ReadonlySet<string> = new Set(),
+  ): TaskPlan {
     const policy = getPolicy(request.policy);
     const eligible = models.filter((model) => {
+      if (excludedModelIds.has(model.id)) return false;
       if (!model.available || !supports(model, request)) return false;
       if (model.location === "cloud" && !policy.allowCloudModels) return false;
       if (request.policy === "offline" && model.transport !== "in_process") return false;
@@ -62,7 +59,20 @@ export class RoutePlanner {
       ? eligible.filter((model) => model.location === "local")
       : eligible;
 
-    const candidates = request.requirements.containsSensitiveData ? safeEligible : eligible;
+    let candidates = request.requirements.containsSensitiveData ? safeEligible : eligible;
+    let degraded = false;
+    if (candidates.length === 0) {
+      candidates = models.filter(
+        (model) =>
+          !excludedModelIds.has(model.id) &&
+          model.available &&
+          model.location === "local" &&
+          model.transport === "in_process" &&
+          model.provider === "quorum" &&
+          model.capabilities.includes("chat"),
+      );
+      degraded = candidates.length > 0;
+    }
     if (candidates.length === 0) {
       throw new Error(
         `No available model satisfies the ${request.policy} policy and required capabilities.`,
@@ -70,24 +80,28 @@ export class RoutePlanner {
     }
 
     const sorted = [...candidates].sort((left, right) => {
-      const leftScore = policy.preferLocal
-        ? localScore(left, request)
-        : qualityScore(left, request);
-      const rightScore = policy.preferLocal
-        ? localScore(right, request)
-        : qualityScore(right, request);
-      return rightScore - leftScore;
+      if (policy.preferLocal) {
+        return localScore(right, request) - localScore(left, request);
+      }
+      const qualityDifference = right.qualityRating - left.qualityRating;
+      if (qualityDifference !== 0) return qualityDifference;
+      const specialtyDifference =
+        specialtyScore(right, request) - specialtyScore(left, request);
+      if (specialtyDifference !== 0) return specialtyDifference;
+      return right.contextWindow - left.contextWindow;
     });
     const selected = sorted[0];
 
     if (!selected) {
       throw new Error("The route planner could not select a model.");
     }
+    degraded ||= selected.id === "local:scaffold";
 
     const route = selected.location;
     const selectedSpecialties = matchedSpecialties(selected, request);
-    const rationale =
-      route === "local"
+    const rationale = degraded
+      ? `${policy.label} mode found no model with every required capability; the local scaffold will explain the limitation.`
+      : route === "local"
         ? selectedSpecialties.length > 0
           ? `${policy.label} mode selected a local ${selectedSpecialties.join(" and ")} specialist.`
           : `${policy.label} mode selected an available local model with the required capabilities.`
@@ -123,10 +137,12 @@ export class RoutePlanner {
     return {
       id: randomUUID(),
       requestId: request.id,
+      policy: request.policy,
       route,
       modelId: selected.id,
       rationale,
       steps,
+      ...(degraded ? { degraded: true } : {}),
       ...(route === "cloud"
         ? {
             cloudDisclosure:

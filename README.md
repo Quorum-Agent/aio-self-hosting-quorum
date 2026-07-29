@@ -15,14 +15,18 @@ use an OpenAI-compatible local or cloud model when configured.
 ## What works today
 
 - Chat interface with persistent local conversations
-- Five execution policies: Private, Balanced, Best quality, Offline, and Cost controlled
-- Request compilation into intents and required capabilities
+- Four enforced UI policies: Private, Balanced, Best quality, and Offline
+- Contextual request compilation into intents, confidence, and required capabilities
 - Specialty-aware model routing with fail-closed handling for sensitive content
 - A live execution inspector showing steps, route, model, and cloud usage
 - Server-sent event streaming from orchestrator to UI
 - Local SQLite storage under `./var`
 - OpenAI-compatible model adapter
 - Automatic discovery of configured local models and experts
+- Role-aware ready, degraded, and unavailable runtime status
+- Serialized local inference, bounded execution time, circuit breaking, and safe fallback
+- Loopback-only local endpoints with redirects disabled
+- Append-only execution attempts so failed cloud contact remains disclosed
 - A deterministic in-process responder when no configured model is available
 - Production build served by the API process
 
@@ -64,9 +68,10 @@ ollama pull qwen2.5-coder:1.5b
 ollama pull qwen3.5:2b
 ```
 
-Balanced, Private, and Cost controlled modes route coding work to the coding expert,
+Balanced and Private modes route coding work to the coding expert,
 math and logic work to the reasoning expert, and ordinary conversation to the general
-model. A missing expert is not registered and cannot be selected.
+model. A missing expert is not registered or selectable, and the runtime reports the
+missing role as degraded rather than ready.
 
 Restart Quorum after installing models. To change any model role:
 
@@ -76,8 +81,17 @@ copy .env.example .env
 
 Then change `QUORUM_LOCAL_MODEL`, `QUORUM_LOCAL_CODING_MODEL`, or
 `QUORUM_LOCAL_REASONING_MODEL` in `.env`. Quorum only registers a provider after the
-configured model appears in the endpoint's `/models` response, so a reachable server
-cannot be mistaken for a ready model.
+configured model appears in the endpoint's `/models` response. This proves discovery,
+not that a model is warm; execution failures feed the runtime circuit breaker.
+
+Quorum enforces a conservative 16,384-token dispatch budget for each default role.
+Override it only when the endpoint is configured to execute a different budget:
+
+```dotenv
+QUORUM_LOCAL_CONTEXT_WINDOW=16384
+QUORUM_LOCAL_CODING_CONTEXT_WINDOW=16384
+QUORUM_LOCAL_REASONING_CONTEXT_WINDOW=16384
+```
 
 ### Optional cloud fallback
 
@@ -90,8 +104,8 @@ QUORUM_CLOUD_API_KEY=your-key
 ```
 
 The cloud provider is not registered when the key is blank. Private and Offline modes
-never select a cloud model. Requests detected as sensitive fail closed if no suitable
-local route exists.
+never select a cloud model. Requests detected as sensitive never use cloud; when no
+capable local model exists, the in-process scaffold reports the limitation.
 
 ## Architecture
 
@@ -175,10 +189,9 @@ npm start          # serve built UI and API on port 8787
 | Balanced | Prefer the strongest suitable local model |
 | Best quality | Select the highest-rated eligible model, including cloud |
 | Offline | In-process providers only; no loopback or remote model calls |
-| Cost controlled | Prefer local models; cloud budgeting is reserved for the usage ledger milestone |
 
-The policy types deliberately include future tool/network controls even where the
-first slice only routes models.
+The core policy type reserves Cost controlled for the usage-ledger milestone, but the
+API and UI do not expose it until a real cap can be enforced.
 
 ## Roadmap
 

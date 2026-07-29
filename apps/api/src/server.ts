@@ -9,6 +9,7 @@ import Fastify from "fastify";
 import { z } from "zod";
 
 import type { AppConfig } from "./config.js";
+import { buildAuthoritativeContext } from "./conversation-context.js";
 import { QuorumDatabase } from "./database.js";
 import type { QuorumRuntime } from "./runtime.js";
 
@@ -21,9 +22,12 @@ const messageSchema = z.object({
 
 const chatRequestSchema = z.object({
   conversationId: z.string().min(1),
-  policy: z.enum(["private", "balanced", "quality", "offline", "cost_controlled"]),
+  policy: z.enum(["private", "balanced", "quality", "offline"]),
   messages: z.array(messageSchema).min(1),
 });
+const exposedPolicies = Object.values(POLICIES).filter(
+  (policy) => policy.id !== "cost_controlled",
+);
 
 function titleFromMessage(message: ChatMessage): string {
   const oneLine = message.content.replace(/\s+/g, " ").trim();
@@ -44,14 +48,14 @@ export async function buildServer(config: AppConfig, runtime: QuorumRuntime) {
 
   app.get("/api/health", async () => ({
     status: "ok",
-    localEndpointConnected: runtime.localEndpointConnected,
+    localRuntime: runtime.localRuntime,
     cloudConfigured: runtime.cloudConfigured,
   }));
 
   app.get("/api/runtime", async () => ({
-    policies: Object.values(POLICIES),
+    policies: exposedPolicies,
     models: runtime.orchestrator.models,
-    localEndpointConnected: runtime.localEndpointConnected,
+    localRuntime: runtime.localRuntime,
     cloudConfigured: runtime.cloudConfigured,
   }));
 
@@ -96,10 +100,19 @@ export async function buildServer(config: AppConfig, runtime: QuorumRuntime) {
       return reply.code(400).send({ message: "A user message is required." });
     }
 
-    if (!database.getConversation(body.conversationId)) {
+    const existingConversation = database.getConversation(body.conversationId);
+    const storedMessages = existingConversation
+      ? database.listMessages(body.conversationId)
+      : [];
+    if (!existingConversation) {
       database.createConversation(body.conversationId, titleFromMessage(latestUserMessage));
     }
-    database.saveMessage(body.conversationId, latestUserMessage);
+    const messages = buildAuthoritativeContext(
+      storedMessages,
+      latestUserMessage,
+    );
+    const authoritativeUserMessage = messages.at(-1)!;
+    database.saveMessage(body.conversationId, authoritativeUserMessage);
 
     reply.hijack();
     reply.raw.writeHead(200, {
@@ -113,7 +126,10 @@ export async function buildServer(config: AppConfig, runtime: QuorumRuntime) {
     reply.raw.on("close", () => controller.abort());
 
     try {
-      for await (const event of runtime.orchestrator.run(body, controller.signal)) {
+      for await (const event of runtime.orchestrator.run(
+        { ...body, messages },
+        controller.signal,
+      )) {
         if (event.type === "result") {
           database.saveMessage(body.conversationId, event.result.message);
         }

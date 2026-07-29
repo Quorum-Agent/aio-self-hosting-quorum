@@ -18,6 +18,19 @@ function request(content: string): ChatRequest {
   };
 }
 
+function conversationRequest(contents: string[]): ChatRequest {
+  return {
+    conversationId: "conversation-1",
+    policy: "balanced",
+    messages: contents.map((content, index) => ({
+      id: `message-${index}`,
+      role: "user",
+      content,
+      createdAt: new Date(index).toISOString(),
+    })),
+  };
+}
+
 describe("RequestCompiler", () => {
   const compiler = new RequestCompiler();
 
@@ -28,6 +41,8 @@ describe("RequestCompiler", () => {
 
     expect(compiled.requirements).toEqual({
       intent: "conversation",
+      intentConfidence: 0.5,
+      intentSource: "default",
       capabilities: ["chat"],
       requiresFreshness: false,
       containsSensitiveData: false,
@@ -64,5 +79,114 @@ describe("RequestCompiler", () => {
       "reasoning",
     ]);
     expect(compiled.requirements.requiresFreshness).toBe(false);
+  });
+
+  it.each([
+    "Write a SQL query to list overdue invoices.",
+    "Refactor this Go method to avoid duplication.",
+    "Solve this SQL query.",
+    "Analyze the runtime complexity of this algorithm.",
+  ])("recognizes concrete coding work without broad keywords: %s", (prompt) => {
+    expect(compiler.compile(request(prompt)).requirements.intent).toBe("coding");
+  });
+
+  it.each([
+    "There is no bug; tell me a joke.",
+    "Do not calculate anything; just chat.",
+    "What is API pricing?",
+    "Analyze how I feel about this.",
+  ])("does not route incidental keywords to an expert: %s", (prompt) => {
+    expect(compiler.compile(request(prompt)).requirements.intent).toBe(
+      "conversation",
+    );
+  });
+
+  it.each([
+    "Prove that sqrt(2) is irrational.",
+    "What is 17 * 23?",
+    "Solve this probability problem.",
+  ])("recognizes direct mathematical reasoning: %s", (prompt) => {
+    expect(compiler.compile(request(prompt)).requirements.intent).toBe(
+      "reasoning",
+    );
+  });
+
+  it("carries an established task through a referential follow-up", () => {
+    const compiled = compiler.compile(
+      conversationRequest([
+        "Refactor this TypeScript function to remove duplication.",
+        "Now make it faster.",
+      ]),
+    );
+
+    expect(compiled.requirements).toMatchObject({
+      intent: "coding",
+      intentSource: "conversation",
+      intentConfidence: 0.78,
+      capabilities: ["chat", "coding"],
+    });
+  });
+
+  it("allows an explicit topic reset instead of carrying the prior route", () => {
+    const compiled = compiler.compile(
+      conversationRequest([
+        "Solve this equation: 2x = 8.",
+        "New topic: tell me a joke.",
+      ]),
+    );
+
+    expect(compiled.requirements).toMatchObject({
+      intent: "conversation",
+      intentSource: "default",
+    });
+  });
+
+  it("does not cross an explicit reset on a later short follow-up", () => {
+    const compiled = compiler.compile(
+      conversationRequest([
+        "Write a TypeScript function.",
+        "New topic: tell me a joke.",
+        "Why?",
+      ]),
+    );
+
+    expect(compiled.requirements.intent).toBe("conversation");
+  });
+
+  it.each([
+    "What should I cook this weekend?",
+    "Tell me about this composer.",
+  ])("does not treat an unrelated use of a pronoun as a follow-up: %s", (prompt) => {
+    const compiled = compiler.compile(
+      conversationRequest(["Write a TypeScript function.", prompt]),
+    );
+
+    expect(compiled.requirements.intent).toBe("conversation");
+  });
+
+  it("detects sensitive data anywhere in the context sent to a model", () => {
+    const compiled = compiler.compile(
+      conversationRequest([
+        "My private key is in the earlier message.",
+        "Now summarize that.",
+      ]),
+    );
+
+    expect(compiled.requirements.containsSensitiveData).toBe(true);
+  });
+
+  it.each([
+    "Customer credential AKIAIOSFODNN7EXAMPLE",
+    "The account number is 123-45-6789",
+    "Use this API key for the request",
+    "OPENAI_API_KEY=sk-exampleSecret12345",
+    "api_key=private-value",
+    "ghp_abcdefghijklmnopqrstuvwxyz123456",
+    "Authorization: Basic dXNlcjpwYXNzd29yZA==",
+    "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signature123",
+  ])("recognizes common structured secret and credential signals: %s", (prompt) => {
+    expect(
+      compiler.compile(request(prompt)).requirements.containsSensitiveData,
+    ).toBe(true);
   });
 });

@@ -163,4 +163,81 @@ describe("RoutePlanner", () => {
 
     expect(plan.modelId).toBe(localModel.id);
   });
+
+  it("does not let duplicate specialty tags inflate a model score", () => {
+    const singleSpecialty: ModelDescriptor = {
+      ...localModel,
+      id: "local:single-specialty",
+      qualityRating: 50,
+      specialties: ["coding"],
+    };
+    const duplicateSpecialty: ModelDescriptor = {
+      ...singleSpecialty,
+      id: "local:duplicate-specialty",
+      qualityRating: 49,
+      specialties: ["coding", "coding", "coding"],
+    };
+
+    const plan = planner.plan(
+      compiler.compile(
+        request("balanced", "Write a TypeScript function for this."),
+      ),
+      [singleSpecialty, duplicateSpecialty],
+    );
+
+    expect(plan.modelId).toBe(singleSpecialty.id);
+  });
+
+  it("keeps best-quality mode anchored to quality instead of specialty tags", () => {
+    const specialist: ModelDescriptor = {
+      ...localModel,
+      id: "local:low-quality-specialist",
+      qualityRating: 50,
+      specialties: ["reasoning"],
+    };
+    const stronger: ModelDescriptor = {
+      ...cloudModel,
+      id: "cloud:stronger",
+      capabilities: ["chat", "reasoning"],
+      qualityRating: 79,
+      specialties: [],
+    };
+
+    const plan = planner.plan(
+      compiler.compile(request("quality", "Solve this probability problem.")),
+      [specialist, stronger],
+    );
+
+    expect(plan.modelId).toBe(stronger.id);
+  });
+
+  it("uses the in-process scaffold transparently when no model has the capability", () => {
+    const scaffold = new DemoProvider().model;
+    const plan = planner.plan(
+      compiler.compile(
+        request("offline", "Solve this probability problem."),
+      ),
+      [scaffold],
+    );
+
+    expect(plan).toMatchObject({
+      modelId: scaffold.id,
+      degraded: true,
+    });
+    expect(plan.rationale).toContain("no model with every required capability");
+  });
+
+  it("marks ordinary scaffold chat as degraded too", () => {
+    const scaffold = new DemoProvider().model;
+    const plan = planner.plan(
+      compiler.compile(request("balanced", "Hello there.")),
+      [scaffold],
+    );
+
+    expect(plan).toMatchObject({
+      modelId: scaffold.id,
+      degraded: true,
+    });
+    expect(plan.rationale).toContain("local scaffold");
+  });
 });

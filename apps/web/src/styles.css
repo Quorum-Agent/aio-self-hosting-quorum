@@ -1,9 +1,7 @@
-@import url("https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Manrope:wght@500;600;700&display=swap");
-
 :root {
   color: #272a25;
   background: #f3f2ed;
-  font-family: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+  font-family: "Segoe UI", ui-sans-serif, system-ui, sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   --ink: #20231f;
@@ -42,6 +40,13 @@ select,
 textarea {
   color: inherit;
   font: inherit;
+}
+
+button:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid #5f8f70;
+  outline-offset: 2px;
 }
 
 button {
@@ -102,7 +107,7 @@ button {
 
 .brand strong {
   color: #f1f2ee;
-  font-family: "Manrope", sans-serif;
+  font-family: "Segoe UI", ui-sans-serif, system-ui, sans-serif;
   font-size: 15px;
   letter-spacing: -0.02em;
 }
@@ -132,6 +137,12 @@ button {
 .new-chat:hover {
   background: rgba(255, 255, 255, 0.09);
   border-color: rgba(255, 255, 255, 0.11);
+}
+
+.new-chat:disabled,
+.conversation-item:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .sidebar-label {
@@ -227,10 +238,22 @@ button {
   box-shadow: 0 0 0 1px #839286;
 }
 
-.status-dot.is-online {
+.status-dot.is-ready {
   background: #4c8c63;
   border-color: #dce9df;
   box-shadow: 0 0 0 1px #4c8c63;
+}
+
+.status-dot.is-degraded {
+  background: #b47b32;
+  border-color: #f1e4d2;
+  box-shadow: 0 0 0 1px #b47b32;
+}
+
+.status-dot.is-unavailable {
+  background: #9d5147;
+  border-color: #f0ddda;
+  box-shadow: 0 0 0 1px #9d5147;
 }
 
 .model-status strong,
@@ -239,7 +262,7 @@ button {
 }
 
 .model-status strong {
-  font-family: "Manrope", sans-serif;
+  font-family: "Segoe UI", ui-sans-serif, system-ui, sans-serif;
   font-size: 11px;
   font-weight: 600;
 }
@@ -278,6 +301,10 @@ button {
   outline: 0;
   font-size: 11px;
   font-weight: 600;
+}
+
+.policy-select select:disabled {
+  cursor: not-allowed;
 }
 
 .inspector-button {
@@ -353,7 +380,7 @@ button {
 .welcome h1 {
   margin: 9px 0 12px;
   color: #20231f;
-  font-family: "Manrope", sans-serif;
+  font-family: "Segoe UI", ui-sans-serif, system-ui, sans-serif;
   font-size: clamp(27px, 3.4vw, 39px);
   line-height: 1.14;
   letter-spacing: -0.045em;
@@ -494,6 +521,17 @@ button {
   border-radius: 8px;
 }
 
+.retry-button {
+  margin: 0 0 18px;
+  padding: 9px 12px;
+  color: var(--green-deep);
+  background: var(--green-soft);
+  border: 1px solid rgba(48, 89, 64, 0.18);
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
 .composer-wrap {
   width: min(730px, calc(100% - 36px));
   margin: 0 auto;
@@ -598,7 +636,7 @@ button {
 
 .panel-heading h2 {
   margin: 3px 0 0;
-  font-family: "Manrope", sans-serif;
+  font-family: "Segoe UI", ui-sans-serif, system-ui, sans-serif;
   font-size: 19px;
   letter-spacing: -0.03em;
 }
@@ -832,7 +870,7 @@ button {
 
 .model-summary strong {
   color: #3d423b;
-  font-family: "Manrope", sans-serif;
+  font-family: "Segoe UI", ui-sans-serif, system-ui, sans-serif;
   font-size: 11px;
 }
 
@@ -957,7 +995,7 @@ button {
   }
 
   .model-status span,
-  .inspector-button {
+  .inspector-button span {
     display: none;
   }
 
@@ -976,10 +1014,6 @@ button {
 
   .starter-grid {
     grid-template-columns: 1fr;
-  }
-
-  .starter-grid button:nth-child(n + 3) {
-    display: none;
   }
 
   .message-list {

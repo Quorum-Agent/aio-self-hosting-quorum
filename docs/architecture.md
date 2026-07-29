@@ -43,12 +43,16 @@ The compiler converts a conversational request into explicit requirements:
 
 - intent: conversation, reasoning, coding, document, vision, or research;
 - required model capabilities;
+- confidence and whether intent came from the current turn or conversation context;
 - freshness requirement;
-- sensitive-data signal.
+- sensitive-data signal across the complete context that can be dispatched.
 
-The current classifier is deterministic and intentionally small. It is a boundary,
-not the final implementation. A later compiler can combine rules, a local classifier,
-attachment metadata, workspace policy, and user overrides without changing providers.
+The current classifier uses deterministic, contextual signals and keeps an established
+coding or reasoning route for referential follow-ups. The API reconstructs history
+from local storage before compilation, so client-supplied system/tool roles cannot
+become model instructions. A later compiler can combine these rules with a local
+classifier, attachment metadata, workspace policy, and user overrides without changing
+providers.
 
 ### Route planner
 
@@ -60,10 +64,12 @@ Selection is constrained before ranking:
 3. remove cloud models forbidden by policy;
 4. in Offline mode, remove every provider not running in-process;
 5. for sensitive requests, remove every cloud model;
-6. rank remaining models according to policy, including a bonus for declared
-   specialties that match the request.
+6. rank remaining models according to policy, including a bounded, deduplicated bonus
+   for declared specialties that match the request.
 
-If the constrained set is empty, planning fails. It does not quietly weaken the policy.
+If the constrained set is empty, the planner may select only Quorum's in-process
+scaffold to explain the unavailable capability. It does not call an ineligible model
+or quietly weaken the policy.
 
 ### Orchestrator
 
@@ -76,7 +82,12 @@ The orchestrator is an async event generator. It emits:
 - `error` — recoverable execution failure.
 
 That event contract allows the API transport to change without coupling the core to
-HTTP or WebSockets.
+HTTP or WebSockets. A model failure can trigger another policy-safe plan only before
+any response content is emitted. Repeated failures temporarily open a per-provider
+circuit. Caller cancellation and request-specific validation failures do not affect
+provider health. Automatic fallback never crosses from a local attempt into cloud, and
+the final plan retains an append-only attempt ledger so failed cloud contact cannot be
+erased by a later local result.
 
 ### Providers
 
@@ -94,11 +105,18 @@ The current adapters are:
 - `OpenAICompatibleProvider` for local loopback or remote cloud endpoints;
 - `DemoProvider` for an offline, deterministic, in-process runnable experience.
 
-The model descriptor declares location, transport, capabilities, optional specialties,
-context window, and a provisional quality rating. Capabilities are hard eligibility
-requirements; specialties influence ranking only after a model is eligible. Benchmarks
-and user preferences should eventually replace the static quality rating and specialty
-bonus.
+Local adapters accept only explicit loopback URLs and do not follow redirects. A shared
+scheduler serializes local inference with bounded queue length and wait time. Each
+dispatch enforces its declared input/output budget, response/frame/output memory
+limits, terminal stream markers, and first-output, idle, and end-to-end timeouts.
+Optional reasoning settings are retried without the extension only if a compatible
+server identifies that exact field as unsupported. Cloud endpoints require HTTPS.
+
+The model descriptor declares location, role, transport, capabilities, optional
+specialties, executable context budget, inference settings, and a provisional quality
+rating. Capabilities are hard eligibility requirements; specialties influence ranking
+only after a model is eligible. Benchmarks and user preferences should eventually
+replace the static quality rating and specialty bonus.
 
 ### Persistence
 
@@ -194,8 +212,12 @@ The resulting decision belongs in a local usage ledger.
 - Sensitive classification excludes cloud routes even in Best quality mode.
 - Offline mode excludes loopback endpoints as well as remote endpoints.
 - A provider is registered only when its configured model is discoverable.
+- A local provider URL must be explicit loopback and redirects are forbidden.
+- A cloud provider URL must use HTTPS and redirects are forbidden.
 - Cloud providers are absent when credentials are absent.
 - Conversation storage is local by default.
+- Stored history and server-generated message identities, not client-submitted roles,
+  timestamps, or IDs, are authoritative model context.
 - Tool authorization must be evaluated outside model output.
 - Execution disclosure is derived from the actual plan, not decorative UI state.
 

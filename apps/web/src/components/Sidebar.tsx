@@ -5,6 +5,7 @@ import type { ConversationRecord } from "../lib/api";
 interface SidebarProps {
   conversations: ConversationRecord[];
   activeId: string;
+  disabled: boolean;
   onNew: () => void;
   onSelect: (id: string) => void;
 }
@@ -20,6 +21,7 @@ function relativeTime(value: string): string {
 export function Sidebar({
   conversations,
   activeId,
+  disabled,
   onNew,
   onSelect,
 }: SidebarProps) {
@@ -35,7 +37,12 @@ export function Sidebar({
         </div>
       </div>
 
-      <button className="new-chat" type="button" onClick={onNew}>
+      <button
+        className="new-chat"
+        type="button"
+        disabled={disabled}
+        onClick={onNew}
+      >
         <Plus size={17} />
         New conversation
       </button>
@@ -52,6 +59,7 @@ export function Sidebar({
               }`}
               key={conversation.id}
               type="button"
+              disabled={disabled}
               onClick={() => onSelect(conversation.id)}
             >
               <MessageSquare size={15} />

@@ -8,6 +8,10 @@ const originalDataDirectory = process.env["QUORUM_DATA_DIR"];
 const originalLocalModel = process.env["QUORUM_LOCAL_MODEL"];
 const originalCodingModel = process.env["QUORUM_LOCAL_CODING_MODEL"];
 const originalReasoningModel = process.env["QUORUM_LOCAL_REASONING_MODEL"];
+const originalGeneralContext = process.env["QUORUM_LOCAL_CONTEXT_WINDOW"];
+const originalLocalBaseUrl = process.env["QUORUM_LOCAL_BASE_URL"];
+const originalCloudBaseUrl = process.env["QUORUM_CLOUD_BASE_URL"];
+const originalCloudApiKey = process.env["QUORUM_CLOUD_API_KEY"];
 
 afterEach(() => {
   const variables = [
@@ -15,6 +19,10 @@ afterEach(() => {
     ["QUORUM_LOCAL_MODEL", originalLocalModel],
     ["QUORUM_LOCAL_CODING_MODEL", originalCodingModel],
     ["QUORUM_LOCAL_REASONING_MODEL", originalReasoningModel],
+    ["QUORUM_LOCAL_CONTEXT_WINDOW", originalGeneralContext],
+    ["QUORUM_LOCAL_BASE_URL", originalLocalBaseUrl],
+    ["QUORUM_CLOUD_BASE_URL", originalCloudBaseUrl],
+    ["QUORUM_CLOUD_API_KEY", originalCloudApiKey],
   ] as const;
 
   for (const [name, value] of variables) {
@@ -42,14 +50,18 @@ describe("loadConfig", () => {
 
     expect(config.local.models).toEqual([
       expect.objectContaining({
+        role: "general",
         name: "qwen3:4b",
         specialties: [],
+        contextWindow: 16_384,
       }),
       expect.objectContaining({
+        role: "coding",
         name: "qwen2.5-coder:1.5b",
         specialties: ["coding"],
       }),
       expect.objectContaining({
+        role: "reasoning",
         name: "qwen3.5:2b",
         specialties: ["reasoning"],
         reasoningEffort: "none",
@@ -57,21 +69,53 @@ describe("loadConfig", () => {
     ]);
   });
 
-  it("merges expert roles when they use the same model", () => {
+  it("keeps role settings separate when roles use the same physical model", () => {
     process.env["QUORUM_LOCAL_MODEL"] = "one-model";
     process.env["QUORUM_LOCAL_CODING_MODEL"] = "one-model";
     process.env["QUORUM_LOCAL_REASONING_MODEL"] = "one-model";
 
     const config = loadConfig();
 
-    expect(config.local.models).toHaveLength(1);
-    expect(config.local.models[0]).toMatchObject({
-      name: "one-model",
-      capabilities: ["chat", "reasoning", "coding", "documents"],
-      specialties: ["coding", "reasoning"],
-      contextWindow: 256_000,
-      qualityRating: 60,
-      reasoningEffort: "none",
-    });
+    expect(config.local.models).toEqual([
+      expect.objectContaining({
+        role: "general",
+        name: "one-model",
+        specialties: [],
+      }),
+      expect.objectContaining({
+        role: "coding",
+        name: "one-model",
+        specialties: ["coding"],
+      }),
+      expect.objectContaining({
+        role: "reasoning",
+        name: "one-model",
+        specialties: ["reasoning"],
+        reasoningEffort: "none",
+      }),
+    ]);
+  });
+
+  it("allows an explicit executable context budget per role", () => {
+    process.env["QUORUM_LOCAL_CONTEXT_WINDOW"] = "8192";
+
+    expect(loadConfig().local.models[0]?.contextWindow).toBe(8_192);
+  });
+
+  it("rejects a remote endpoint configured as local", () => {
+    process.env["QUORUM_LOCAL_BASE_URL"] = "https://models.example.com/v1";
+
+    expect(() => loadConfig()).toThrow(
+      "QUORUM_LOCAL_BASE_URL must resolve explicitly to localhost",
+    );
+  });
+
+  it("rejects plaintext cloud endpoints when cloud is configured", () => {
+    process.env["QUORUM_CLOUD_API_KEY"] = "configured";
+    process.env["QUORUM_CLOUD_BASE_URL"] = "http://api.example.com/v1";
+
+    expect(() => loadConfig()).toThrow(
+      "QUORUM_CLOUD_BASE_URL must use HTTPS",
+    );
   });
 });

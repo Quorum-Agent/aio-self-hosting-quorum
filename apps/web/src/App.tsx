@@ -1,11 +1,10 @@
 import {
   Braces,
+  BrainCircuit,
   ChevronDown,
-  FileSearch,
-  Image,
   Menu,
+  MessageCircle,
   PanelRight,
-  Search,
   Shield,
   Sparkles,
   WifiOff,
@@ -13,6 +12,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type {
+  Capability,
   ChatMessage,
   ExecutionTrace,
   PolicyMode,
@@ -30,27 +30,37 @@ import {
   type ConversationRecord,
   type RuntimeInfo,
 } from "./lib/api";
+import {
+  describeRuntimeStatus,
+  selectablePolicies,
+  supportsCapability,
+} from "./lib/runtime-view";
 
-const STARTERS = [
+const STARTERS: Array<{
+  capability: Capability;
+  icon: typeof MessageCircle;
+  title: string;
+  prompt: string;
+}> = [
   {
-    icon: FileSearch,
-    title: "Analyze a document",
-    prompt: "Summarize a document locally and identify its key decisions.",
+    capability: "chat",
+    icon: MessageCircle,
+    title: "Explore an idea",
+    prompt:
+      "Compare a modular architecture with a monolith for a local-first assistant, then recommend a practical starting point.",
   },
   {
+    capability: "coding",
     icon: Braces,
     title: "Work with code",
     prompt: "Help me design a small TypeScript service with clear boundaries.",
   },
   {
-    icon: Search,
-    title: "Research a topic",
-    prompt: "Research the latest developments and explain which steps require the web.",
-  },
-  {
-    icon: Image,
-    title: "Inspect an image",
-    prompt: "Describe how you would inspect an image using local vision tools.",
+    capability: "reasoning",
+    icon: BrainCircuit,
+    title: "Solve a problem",
+    prompt:
+      "A local service handles 120 tasks in 8 minutes at a constant rate. How many tasks can it handle in 30 minutes? Explain the reasoning.",
   },
 ];
 
@@ -69,6 +79,7 @@ function coalesceTrace(
 
 export default function App() {
   const [runtime, setRuntime] = useState<RuntimeInfo>();
+  const [runtimeFailed, setRuntimeFailed] = useState(false);
   const [conversations, setConversations] = useState<ConversationRecord[]>([]);
   const [conversationId, setConversationId] = useState<string>(createConversationId);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -79,7 +90,9 @@ export default function App() {
   const [traces, setTraces] = useState<ExecutionTrace[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
-  const [executionOpen, setExecutionOpen] = useState(true);
+  const [executionOpen, setExecutionOpen] = useState(() =>
+    window.matchMedia("(min-width: 841px)").matches,
+  );
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const abortController = useRef<AbortController | undefined>(undefined);
 
@@ -87,26 +100,74 @@ export default function App() {
     setConversations(await getConversations());
   }, []);
 
-  useEffect(() => {
-    void Promise.all([getRuntime(), getConversations()])
-      .then(([runtimeInfo, savedConversations]) => {
-        setRuntime(runtimeInfo);
-        setConversations(savedConversations);
-        const first = savedConversations[0];
-        if (first) {
-          setConversationId(first.id);
-          return getMessages(first.id).then(setMessages);
-        }
-        return undefined;
-      })
-      .catch((reason: unknown) => {
-        setError(reason instanceof Error ? reason.message : "Could not connect to Quorum.");
-      });
+  const refreshRuntime = useCallback(async () => {
+    const runtimeInfo = await getRuntime();
+    setRuntime(runtimeInfo);
+    setRuntimeFailed(false);
   }, []);
+
+  const loadApplication = useCallback(async () => {
+    setRuntimeFailed(false);
+    setError(undefined);
+    try {
+      const [runtimeInfo, savedConversations] = await Promise.all([
+        getRuntime(),
+        getConversations(),
+      ]);
+      setRuntime(runtimeInfo);
+      setConversations(savedConversations);
+      const first = savedConversations[0];
+      if (first) {
+        setConversationId(first.id);
+        setMessages(await getMessages(first.id));
+      }
+    } catch (reason) {
+      setRuntimeFailed(true);
+      setError(
+        reason instanceof Error ? reason.message : "Could not connect to Quorum.",
+      );
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadApplication();
+  }, [loadApplication]);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      void refreshRuntime().catch(() => setRuntimeFailed(true));
+    }, 5_000);
+    return () => window.clearInterval(interval);
+  }, [refreshRuntime]);
 
   const activePolicy = useMemo(
     () => runtime?.policies.find((candidate) => candidate.id === policy),
     [policy, runtime],
+  );
+  const inspectedPolicy = useMemo(
+    () =>
+      runtime?.policies.find(
+        (candidate) => candidate.id === (plan?.policy ?? policy),
+      ),
+    [plan?.policy, policy, runtime],
+  );
+  const runtimeStatus = useMemo(
+    () => describeRuntimeStatus(runtime?.localRuntime, runtimeFailed),
+    [runtime, runtimeFailed],
+  );
+  const availableStarters = useMemo(
+    () =>
+      runtime
+        ? STARTERS.filter((starter) =>
+            supportsCapability(
+              runtime.models,
+              starter.capability,
+              activePolicy,
+              "local",
+            ),
+          )
+        : [],
+    [activePolicy, runtime],
   );
 
   const selectConversation = async (id: string) => {
@@ -168,6 +229,7 @@ export default function App() {
             setMessages((current) => [...current, event.result.message]);
             setStreamingContent("");
           } else if (event.type === "error") {
+            setStreamingContent("");
             setError(event.message);
           }
         },
@@ -178,7 +240,13 @@ export default function App() {
       if (!controller.signal.aborted) {
         setError(reason instanceof Error ? reason.message : "The request failed.");
       }
+      setStreamingContent("");
     } finally {
+      try {
+        await refreshRuntime();
+      } catch {
+        setRuntimeFailed(true);
+      }
       setBusy(false);
       abortController.current = undefined;
     }
@@ -193,6 +261,7 @@ export default function App() {
       <Sidebar
         conversations={conversations}
         activeId={conversationId}
+        disabled={busy}
         onNew={newConversation}
         onSelect={(id) => void selectConversation(id)}
       />
@@ -204,19 +273,16 @@ export default function App() {
             type="button"
             onClick={() => setSidebarOpen((open) => !open)}
             aria-label="Open navigation"
+            aria-expanded={sidebarOpen}
           >
             <Menu size={19} />
           </button>
 
-          <div className="model-status">
-            <span className={`status-dot ${runtime?.localEndpointConnected ? "is-online" : ""}`} />
+          <div className="model-status" role="status" aria-live="polite">
+            <span className={`status-dot is-${runtimeStatus.state}`} />
             <div>
-              <strong>
-                {runtime?.localEndpointConnected ? "Local model ready" : "Local scaffold ready"}
-              </strong>
-              <span>
-                {runtime?.localEndpointConnected ? "OpenAI-compatible" : "Connect Ollama anytime"}
-              </span>
+              <strong>{runtimeStatus.title}</strong>
+              <span>{runtimeStatus.detail}</span>
             </div>
           </div>
 
@@ -226,9 +292,10 @@ export default function App() {
               <select
                 value={policy}
                 aria-label="Execution policy"
+                disabled={busy}
                 onChange={(event) => setPolicy(event.target.value as PolicyMode)}
               >
-                {(runtime?.policies ?? []).map((definition) => (
+                {selectablePolicies(runtime?.policies ?? []).map((definition) => (
                   <option key={definition.id} value={definition.id}>
                     {definition.label}
                   </option>
@@ -241,9 +308,11 @@ export default function App() {
               className={`inspector-button ${executionOpen ? "is-active" : ""}`}
               type="button"
               onClick={() => setExecutionOpen((open) => !open)}
+              aria-expanded={executionOpen}
+              aria-controls="execution-panel"
             >
               <PanelRight size={16} />
-              Inspect
+              <span>Inspect</span>
             </button>
           </div>
         </header>
@@ -260,8 +329,22 @@ export default function App() {
                 Quorum chooses the best local path first, shows its work, and only
                 reaches for the cloud when your policy allows it.
               </p>
+              {error && (
+                <div className="error-banner" role="alert">
+                  {error}
+                </div>
+              )}
+              {runtimeFailed && (
+                <button
+                  className="retry-button"
+                  type="button"
+                  onClick={() => void loadApplication()}
+                >
+                  Retry connection
+                </button>
+              )}
               <div className="starter-grid">
-                {STARTERS.map((starter) => (
+                {availableStarters.map((starter) => (
                   <button
                     key={starter.title}
                     type="button"
@@ -300,7 +383,11 @@ export default function App() {
                   </div>
                 </article>
               )}
-              {error && <div className="error-banner">{error}</div>}
+              {error && (
+                <div className="error-banner" role="alert">
+                  {error}
+                </div>
+              )}
             </div>
           )}
         </section>
@@ -316,7 +403,7 @@ export default function App() {
 
       <ExecutionPanel
         open={executionOpen}
-        policy={activePolicy}
+        policy={inspectedPolicy}
         models={runtime?.models ?? []}
         plan={plan}
         traces={traces}
