@@ -1,0 +1,27 @@
+{
+  "name": "quorum",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A local-first conversational computing platform with transparent orchestration.",
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n api,web -c cyan,magenta \"npm run dev -w @quorum/api\" \"npm run dev -w @quorum/web\"",
+    "build": "npm run build -w @quorum/core && npm run build -w @quorum/api && npm run build -w @quorum/web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "check": "npm run typecheck && npm run test && npm run build",
+    "start": "npm run start -w @quorum/api"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}
