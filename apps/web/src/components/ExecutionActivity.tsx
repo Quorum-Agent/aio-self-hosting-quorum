@@ -23,6 +23,7 @@ interface ExecutionActivityProps {
   busy: boolean;
   startedAt: number;
   completedAt: number | undefined;
+  defaultExpanded?: boolean;
 }
 
 function elapsedLabel(milliseconds: number): string {
@@ -49,9 +50,10 @@ export function ExecutionActivity({
   busy,
   startedAt,
   completedAt,
+  defaultExpanded = true,
 }: ExecutionActivityProps) {
   const [now, setNow] = useState(() => Date.now());
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(defaultExpanded);
   const modelAttempts = useMemo(
     () => describeModelAttempts(plan, models),
     [models, plan],

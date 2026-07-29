@@ -75,10 +75,18 @@ export async function streamChat(
   onEvent: (event: OrchestrationEvent) => void,
   signal?: AbortSignal,
 ): Promise<void> {
+  const messages = input.messages.map(
+    ({ id, role, content, createdAt }): ChatMessage => ({
+      id,
+      role,
+      content,
+      createdAt,
+    }),
+  );
   const response = await fetch("/api/chat", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(input),
+    body: JSON.stringify({ ...input, messages }),
     ...(signal ? { signal } : {}),
   });
 

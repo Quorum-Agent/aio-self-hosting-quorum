@@ -7,6 +7,7 @@ export interface ChatMessage {
   role: MessageRole;
   content: string;
   createdAt: string;
+  execution?: MessageExecutionRecord;
 }
 
 export type PolicyMode =
@@ -195,6 +196,13 @@ export interface ExecutionTrace {
   modelId?: Id;
   startedAt: string;
   completedAt?: string;
+}
+
+export interface MessageExecutionRecord {
+  plan: TaskPlan;
+  traces: ExecutionTrace[];
+  startedAt: number;
+  completedAt: number;
 }
 
 export interface ChatRequest {

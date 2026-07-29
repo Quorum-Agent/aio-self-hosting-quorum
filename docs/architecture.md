@@ -96,7 +96,9 @@ erased by a later local result.
 
 Detailed UI mode renders these authoritative events as an expandable in-conversation
 activity rail with elapsed time, request classification, task steps, and model swaps.
-This is execution evidence, not model-authored chain-of-thought.
+The final plan and coalesced traces are stored with the assistant message so each rail
+survives conversation changes and application reloads. This is execution evidence,
+not model-authored chain-of-thought.
 
 ### Providers
 

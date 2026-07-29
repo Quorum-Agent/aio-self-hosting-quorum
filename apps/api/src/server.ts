@@ -4,7 +4,12 @@ import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 
 import fastifyStatic from "@fastify/static";
-import { POLICIES, type ChatMessage, type OrchestrationEvent } from "@quorum/core";
+import {
+  POLICIES,
+  type ChatMessage,
+  type ExecutionTrace,
+  type OrchestrationEvent,
+} from "@quorum/core";
 import Fastify from "fastify";
 import { z } from "zod";
 
@@ -127,14 +132,36 @@ export async function buildServer(config: AppConfig, runtime: QuorumRuntime) {
 
     const controller = new AbortController();
     reply.raw.on("close", () => controller.abort());
+    const executionStartedAt = Date.now();
+    const executionTraces = new Map<string, ExecutionTrace>();
 
     try {
       for await (const event of runtime.orchestrator.run(
         { ...body, messages },
         controller.signal,
       )) {
+        if (event.type === "trace") {
+          executionTraces.set(event.trace.stepId, event.trace);
+        }
         if (event.type === "result") {
-          database.saveMessage(body.conversationId, event.result.message);
+          const persistedMessage: ChatMessage = {
+            ...event.result.message,
+            execution: {
+              plan: event.result.plan,
+              traces: [...executionTraces.values()],
+              startedAt: executionStartedAt,
+              completedAt: Date.now(),
+            },
+          };
+          database.saveMessage(body.conversationId, persistedMessage);
+          writeEvent(reply.raw, {
+            ...event,
+            result: {
+              ...event.result,
+              message: persistedMessage,
+            },
+          });
+          continue;
         }
         writeEvent(reply.raw, event);
       }

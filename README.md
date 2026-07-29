@@ -20,7 +20,7 @@ use an OpenAI-compatible local or cloud model when configured.
 - A local 0.6B prompt expert with deterministic classification safeguards
 - Specialty-aware model routing with fail-closed handling for sensitive content
 - A live execution inspector showing steps, route, model, and cloud usage
-- Detailed-mode in-conversation activity with timing, classification, steps, and swaps
+- Persistent per-response Detailed activity with timing, classification, steps, and swaps
 - Server-sent event streaming from orchestrator to UI
 - Local SQLite storage under `./var`
 - OpenAI-compatible model adapter

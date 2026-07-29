@@ -182,7 +182,7 @@ describe("Orchestrator resilience", () => {
     ).toBe("conversation proposed · deterministic coding retained");
   });
 
-  it("keeps an elliptical SQL follow-up on the coding expert without swaps", async () => {
+  it("keeps chained elliptical SQL follow-ups on the coding expert without swaps", async () => {
     const orchestrator = new Orchestrator(
       [
         provider(generalModel, () => answer("general response")),
@@ -224,6 +224,18 @@ describe("Orchestrator resilience", () => {
           role: "user",
           content: "Are there any better ways?",
           createdAt: new Date(2).toISOString(),
+        },
+        {
+          id: "message-4",
+          role: "assistant",
+          content: "Conditional aggregation is another option.",
+          createdAt: new Date(3).toISOString(),
+        },
+        {
+          id: "message-5",
+          role: "user",
+          content: "What about for ORACLE?",
+          createdAt: new Date(4).toISOString(),
         },
       ],
     });

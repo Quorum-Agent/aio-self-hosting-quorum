@@ -49,6 +49,13 @@ const FOLLOW_UP_PATTERN =
 const COMPARATIVE_FOLLOW_UP_PATTERN =
   /^(?:(?:are|is)\s+there\s+(?:(?:any|a)\s+)?(?:better|other|alternative)\s+(?:ways?|options?|approach(?:es)?|methods?|solutions?)|(?:what|any)\s+(?:other|better|alternative)\s+(?:ways?|options?|approach(?:es)?|methods?|solutions?)(?:\s+are\s+there)?|(?:any\s+)?alternatives?|what\s+else)\??$/i;
 
+function isContextualFollowUp(prompt: string): boolean {
+  return (
+    FOLLOW_UP_PATTERN.test(prompt.trim()) ||
+    COMPARATIVE_FOLLOW_UP_PATTERN.test(prompt.trim())
+  );
+}
+
 interface IntentClassification {
   intent: RequestIntent;
   confidence: number;
@@ -141,13 +148,10 @@ function classifyConversation(
 } {
   const current = classifyPrompt(userMessages.at(-1)?.content ?? "");
   const latestPrompt = userMessages.at(-1)?.content.trim() ?? "";
-  const isContextualFollowUp =
-    FOLLOW_UP_PATTERN.test(latestPrompt) ||
-    COMPARATIVE_FOLLOW_UP_PATTERN.test(latestPrompt);
   if (
     current.intent !== "conversation" ||
     current.explicitReset ||
-    !isContextualFollowUp
+    !isContextualFollowUp(latestPrompt)
   ) {
     return {
       ...current,
@@ -155,18 +159,19 @@ function classifyConversation(
     };
   }
 
-  const previous = userMessages.at(-2);
-  if (!previous) return { ...current, source: "default" };
-  const classification = classifyPrompt(previous.content);
-  if (
-    !classification.explicitReset &&
-    classification.intent !== "conversation"
-  ) {
-    return {
-      ...classification,
-      confidence: Math.min(classification.confidence, 0.78),
-      source: "conversation",
-    };
+  for (let index = userMessages.length - 2; index >= 0; index -= 1) {
+    const previous = userMessages[index];
+    if (!previous) continue;
+    const classification = classifyPrompt(previous.content);
+    if (classification.explicitReset) break;
+    if (classification.intent !== "conversation") {
+      return {
+        ...classification,
+        confidence: Math.min(classification.confidence, 0.78),
+        source: "conversation",
+      };
+    }
+    if (!isContextualFollowUp(previous.content)) break;
   }
 
   return { ...current, source: "default" };

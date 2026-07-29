@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-import type { ChatMessage } from "@quorum/core";
+import type { ChatMessage, MessageExecutionRecord } from "@quorum/core";
 
 export interface ConversationRecord {
   id: string;
@@ -23,6 +23,11 @@ interface MessageRow {
   role: ChatMessage["role"];
   content: string;
   created_at: string;
+  execution_json: string | null;
+}
+
+interface TableInfoRow {
+  name: string;
 }
 
 function mapConversation(row: ConversationRow): ConversationRecord {
@@ -32,6 +37,15 @@ function mapConversation(row: ConversationRow): ConversationRecord {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function parseExecution(value: string | null): MessageExecutionRecord | undefined {
+  if (!value) return undefined;
+  try {
+    return JSON.parse(value) as MessageExecutionRecord;
+  } catch {
+    return undefined;
+  }
 }
 
 export class QuorumDatabase {
@@ -62,6 +76,12 @@ export class QuorumDatabase {
       CREATE INDEX IF NOT EXISTS idx_messages_conversation
         ON messages(conversation_id, created_at);
     `);
+    const messageColumns = this.#database
+      .prepare("PRAGMA table_info(messages)")
+      .all() as unknown as TableInfoRow[];
+    if (!messageColumns.some((column) => column.name === "execution_json")) {
+      this.#database.exec("ALTER TABLE messages ADD COLUMN execution_json TEXT");
+    }
   }
 
   close(): void {
@@ -104,19 +124,23 @@ export class QuorumDatabase {
   listMessages(conversationId: string): ChatMessage[] {
     const rows = this.#database
       .prepare(
-        `SELECT id, role, content, created_at
+        `SELECT id, role, content, created_at, execution_json
          FROM messages
          WHERE conversation_id = ?
          ORDER BY created_at ASC`,
       )
       .all(conversationId) as unknown as MessageRow[];
 
-    return rows.map((row) => ({
-      id: row.id,
-      role: row.role,
-      content: row.content,
-      createdAt: row.created_at,
-    }));
+    return rows.map((row) => {
+      const execution = parseExecution(row.execution_json);
+      return {
+        id: row.id,
+        role: row.role,
+        content: row.content,
+        createdAt: row.created_at,
+        ...(execution ? { execution } : {}),
+      };
+    });
   }
 
   saveMessage(conversationId: string, message: ChatMessage): void {
@@ -124,10 +148,19 @@ export class QuorumDatabase {
     try {
       this.#database
         .prepare(
-          `INSERT OR IGNORE INTO messages (id, conversation_id, role, content, created_at)
-           VALUES (?, ?, ?, ?, ?)`,
+          `INSERT OR IGNORE INTO messages (
+             id, conversation_id, role, content, created_at, execution_json
+           )
+           VALUES (?, ?, ?, ?, ?, ?)`,
         )
-        .run(message.id, conversationId, message.role, message.content, message.createdAt);
+        .run(
+          message.id,
+          conversationId,
+          message.role,
+          message.content,
+          message.createdAt,
+          message.execution ? JSON.stringify(message.execution) : null,
+        );
       this.#database
         .prepare("UPDATE conversations SET updated_at = ? WHERE id = ?")
         .run(new Date().toISOString(), conversationId);

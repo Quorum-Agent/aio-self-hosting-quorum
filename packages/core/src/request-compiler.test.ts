@@ -143,6 +143,23 @@ describe("RequestCompiler", () => {
     });
   });
 
+  it("carries specialist intent through chained contextual follow-ups", () => {
+    const compiled = compiler.compile(
+      conversationRequest([
+        "Create a SQL PIVOT query with dynamic columns.",
+        "Are there any better ways?",
+        "What about for ORACLE?",
+      ]),
+    );
+
+    expect(compiled.requirements).toMatchObject({
+      intent: "coding",
+      intentSource: "conversation",
+      intentConfidence: 0.78,
+      capabilities: ["chat", "coding"],
+    });
+  });
+
   it.each([
     "Are there any better ways?",
     "Is there a better approach?",
@@ -189,6 +206,22 @@ describe("RequestCompiler", () => {
     );
 
     expect(compiled.requirements.intent).toBe("conversation");
+  });
+
+  it("does not cross an explicit reset while walking a follow-up chain", () => {
+    const compiled = compiler.compile(
+      conversationRequest([
+        "Create a SQL PIVOT query with dynamic columns.",
+        "Are there any better ways?",
+        "New topic: tell me a joke.",
+        "What about that?",
+      ]),
+    );
+
+    expect(compiled.requirements).toMatchObject({
+      intent: "conversation",
+      intentSource: "default",
+    });
   });
 
   it.each([

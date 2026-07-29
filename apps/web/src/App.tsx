@@ -24,6 +24,7 @@ import type {
 import { Composer } from "./components/Composer";
 import { ExecutionActivity } from "./components/ExecutionActivity";
 import { ExecutionPanel } from "./components/ExecutionPanel";
+import { MessageExecutionActivity } from "./components/MessageExecutionActivity";
 import { Sidebar } from "./components/Sidebar";
 import {
   getConversations,
@@ -199,6 +200,17 @@ export default function App() {
   );
   const runtimeWarming = runtime?.warmup.state === "warming";
   const runtimePreparing = !runtime || runtimeWarming;
+  const latestExecutionMessageId = useMemo(
+    () =>
+      [...messages]
+        .reverse()
+        .find(
+          (message) =>
+            message.role === "assistant" &&
+            message.execution?.plan.verbosity === "detailed",
+        )?.id,
+    [messages],
+  );
 
   const selectConversation = async (id: string) => {
     if (busy) return;
@@ -442,7 +454,11 @@ export default function App() {
             <div className="message-list">
               {messages.map((message) => (
                 <div className="message-entry" key={message.id}>
-                  {message.id === activityMessageId && detailedActivity}
+                  <MessageExecutionActivity
+                    message={message}
+                    models={runtime?.models ?? []}
+                    defaultExpanded={message.id === latestExecutionMessageId}
+                  />
                   <article className={`message message-${message.role}`}>
                     <div className="message-avatar">
                       {message.role === "user" ? "You" : <Sparkles size={15} />}
