@@ -143,6 +143,28 @@ describe("RequestCompiler", () => {
     });
   });
 
+  it.each([
+    "Are there any better ways?",
+    "Is there a better approach?",
+    "What other options are there?",
+    "Any alternatives?",
+    "What else?",
+  ])("carries an established task through a comparative follow-up: %s", (prompt) => {
+    const compiled = compiler.compile(
+      conversationRequest([
+        "Create a SQL PIVOT query with dynamic columns.",
+        prompt,
+      ]),
+    );
+
+    expect(compiled.requirements).toMatchObject({
+      intent: "coding",
+      intentSource: "conversation",
+      intentConfidence: 0.78,
+      capabilities: ["chat", "coding"],
+    });
+  });
+
   it("allows an explicit topic reset instead of carrying the prior route", () => {
     const compiled = compiler.compile(
       conversationRequest([
@@ -241,6 +263,38 @@ describe("RequestCompiler", () => {
       analyzer: {
         intent: "conversation",
         confidence: 0.9,
+      },
+    });
+  });
+
+  it("protects inherited specialist context from a contradictory tiny model", () => {
+    const baseline = compiler.compile(
+      conversationRequest([
+        "Create a SQL PIVOT query with dynamic columns.",
+        "Are there any better ways?",
+      ]),
+    );
+    const compiled = compiler.applyPromptAnalysis(
+      baseline,
+      { id: "local:classifier:test", label: "Tiny classifier" },
+      {
+        intent: "conversation",
+        confidence: 1,
+        taskSummary: "Discuss alternative approaches.",
+      },
+    );
+
+    expect(compiled.requirements).toMatchObject({
+      intent: "coding",
+      intentSource: "conversation",
+      capabilities: ["chat", "coding"],
+    });
+    expect(compiled.analysis).toMatchObject({
+      source: "hybrid",
+      intent: "coding",
+      analyzer: {
+        intent: "conversation",
+        confidence: 1,
       },
     });
   });

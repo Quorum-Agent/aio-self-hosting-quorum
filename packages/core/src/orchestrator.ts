@@ -139,6 +139,7 @@ export class Orchestrator {
           {
             messages: request.messages,
             baseline: request.analysis,
+            baselineIntentSource: request.requirements.intentSource,
           },
           signal,
         );

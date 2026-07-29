@@ -46,6 +46,8 @@ const SENSITIVE_PATTERN =
   /\b(password|secret|private key|api[ _-]?key|credentials?|access[ _-]?token|bearer[ _-]?token|ssn|social security|medical|confidential|proprietary|account number)\b|AKIA[0-9A-Z]{16}|\bsk-[A-Za-z0-9_-]{10,}\b|\bgh[pousr]_[A-Za-z0-9]{20,}\b|\bauthorization\s*:\s*(?:basic|bearer)\s+[A-Za-z0-9._~+/=-]+\b|\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b|\b\d{3}-\d{2}-\d{4}\b/i;
 const FOLLOW_UP_PATTERN =
   /^(?:(?:and|also|now|then|next|okay,?\s+now)\b|(?:what|how) about\b|(?:please\s+)?(?:make|change|fix|explain|summari[sz]e|continue|retry|redo|add|remove|update)\s+(?:it|that|this|those|them)\b|(?:why|how|are you sure)\??$)/i;
+const COMPARATIVE_FOLLOW_UP_PATTERN =
+  /^(?:(?:are|is)\s+there\s+(?:(?:any|a)\s+)?(?:better|other|alternative)\s+(?:ways?|options?|approach(?:es)?|methods?|solutions?)|(?:what|any)\s+(?:other|better|alternative)\s+(?:ways?|options?|approach(?:es)?|methods?|solutions?)(?:\s+are\s+there)?|(?:any\s+)?alternatives?|what\s+else)\??$/i;
 
 interface IntentClassification {
   intent: RequestIntent;
@@ -138,10 +140,14 @@ function classifyConversation(
   source: RequestRequirements["intentSource"];
 } {
   const current = classifyPrompt(userMessages.at(-1)?.content ?? "");
+  const latestPrompt = userMessages.at(-1)?.content.trim() ?? "";
+  const isContextualFollowUp =
+    FOLLOW_UP_PATTERN.test(latestPrompt) ||
+    COMPARATIVE_FOLLOW_UP_PATTERN.test(latestPrompt);
   if (
     current.intent !== "conversation" ||
     current.explicitReset ||
-    !FOLLOW_UP_PATTERN.test(userMessages.at(-1)?.content.trim() ?? "")
+    !isContextualFollowUp
   ) {
     return {
       ...current,
@@ -253,8 +259,12 @@ export class RequestCompiler {
   ): CompiledRequest {
     const analysis = validAnalyzerResult(incoming);
     const heuristic = request.analysis;
+    const protectedConversationContext =
+      request.requirements.intentSource === "conversation" &&
+      heuristic.intent !== "conversation";
     const conflictingStrongHeuristic =
-      heuristic.intent !== analysis.intent && heuristic.confidence >= 0.84;
+      heuristic.intent !== analysis.intent &&
+      (heuristic.confidence >= 0.84 || protectedConversationContext);
     const analyzerIsUsable = analysis.confidence >= 0.65;
     const useAnalyzer = analyzerIsUsable && !conflictingStrongHeuristic;
     const selected = useAnalyzer

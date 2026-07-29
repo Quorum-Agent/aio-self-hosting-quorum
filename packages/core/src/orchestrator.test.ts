@@ -182,6 +182,77 @@ describe("Orchestrator resilience", () => {
     ).toBe("conversation proposed · deterministic coding retained");
   });
 
+  it("keeps an elliptical SQL follow-up on the coding expert without swaps", async () => {
+    const orchestrator = new Orchestrator(
+      [
+        provider(generalModel, () => answer("general response")),
+        provider(codingModel, () => answer("coding response")),
+      ],
+      undefined,
+      undefined,
+      {
+        id: "local:classifier:test",
+        label: "Tiny classifier",
+        async analyze() {
+          return {
+            intent: "conversation",
+            confidence: 1,
+            taskSummary: "Discuss alternative approaches.",
+          };
+        },
+      },
+    );
+
+    const events = await collect(orchestrator, {
+      conversationId: "conversation-1",
+      policy: "quality",
+      messages: [
+        {
+          id: "message-1",
+          role: "user",
+          content: "Create a SQL PIVOT query with dynamic columns.",
+          createdAt: new Date(0).toISOString(),
+        },
+        {
+          id: "message-2",
+          role: "assistant",
+          content: "Use conditional aggregation or dynamic SQL.",
+          createdAt: new Date(1).toISOString(),
+        },
+        {
+          id: "message-3",
+          role: "user",
+          content: "Are there any better ways?",
+          createdAt: new Date(2).toISOString(),
+        },
+      ],
+    });
+    const plans = events
+      .filter((event) => event.type === "plan")
+      .map((event) => event.plan);
+    const result = events.find((event) => event.type === "result");
+
+    expect(plans).toHaveLength(2);
+    expect(plans.every((plan) => plan.modelId === codingModel.id)).toBe(true);
+    expect(plans.every((plan) => !plan.fallbackFromModelId)).toBe(true);
+    expect(plans[0]).toMatchObject({
+      modelId: codingModel.id,
+      analysis: {
+        source: "hybrid",
+        intent: "coding",
+        analyzer: { intent: "conversation" },
+      },
+    });
+    expect(
+      result?.type === "result" && result.result.plan.attempts,
+    ).toEqual([
+      expect.objectContaining({
+        modelId: codingModel.id,
+        status: "completed",
+      }),
+    ]);
+  });
+
   it("passes the live circuit-aware model inventory to the selected provider", async () => {
     let receivedModels: ModelDescriptor[] = [];
     const observingProvider = provider(generalModel, (input) => {

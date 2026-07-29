@@ -107,6 +107,7 @@ export interface PromptAnalyzerResult {
 export interface PromptAnalyzerInput {
   messages: ChatMessage[];
   baseline: RequestAnalysis;
+  baselineIntentSource: RequestRequirements["intentSource"];
 }
 
 export interface PromptAnalyzer {
