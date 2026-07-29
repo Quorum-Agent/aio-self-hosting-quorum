@@ -7,8 +7,14 @@ import type {
   RequestRequirements,
 } from "./types.js";
 
-const FRESHNESS_PATTERN =
-  /\b(latest|current|currently|today|this week|recent|news|live|up[- ]to[- ]date)\b/i;
+const EXPLICIT_FRESHNESS_PATTERN =
+  /\b(latest|today|this week|recent|news|live|up[- ]to[- ]date)\b/i;
+const TIME_SENSITIVE_SUBJECT =
+  String.raw`(?:news|events?|laws?|regulations?|prices?|weather|versions?|releases?|exchange rates?|schedules?|scores?|officeholders?|presidents?|ceos?)`;
+const CONTEXTUAL_CURRENT_PATTERN = new RegExp(
+  String.raw`(?:\bcurrent(?:ly)?\b[^.!?\n]{0,60}\b${TIME_SENSITIVE_SUBJECT}\b|\b${TIME_SENSITIVE_SUBJECT}\b[^.!?\n]{0,60}\bcurrent(?:ly)?\b)`,
+  "i",
+);
 const CODE_PATTERN =
   /\b(code|function|class|typescript|javascript|python|rust|compile|repository|bug|api)\b/i;
 const DOCUMENT_PATTERN =
@@ -20,8 +26,15 @@ const RESEARCH_PATTERN =
 const SENSITIVE_PATTERN =
   /\b(password|secret|private key|ssn|social security|medical|confidential|proprietary)\b/i;
 
-function detectIntent(prompt: string): RequestIntent {
-  if (RESEARCH_PATTERN.test(prompt) || FRESHNESS_PATTERN.test(prompt)) return "research";
+function requiresFreshness(prompt: string): boolean {
+  return (
+    EXPLICIT_FRESHNESS_PATTERN.test(prompt) ||
+    CONTEXTUAL_CURRENT_PATTERN.test(prompt)
+  );
+}
+
+function detectIntent(prompt: string, freshInformationRequired: boolean): RequestIntent {
+  if (RESEARCH_PATTERN.test(prompt) || freshInformationRequired) return "research";
   if (VISION_PATTERN.test(prompt)) return "vision";
   if (DOCUMENT_PATTERN.test(prompt)) return "document";
   if (CODE_PATTERN.test(prompt)) return "coding";
@@ -29,7 +42,8 @@ function detectIntent(prompt: string): RequestIntent {
 }
 
 function deriveRequirements(prompt: string): RequestRequirements {
-  const intent = detectIntent(prompt);
+  const freshInformationRequired = requiresFreshness(prompt);
+  const intent = detectIntent(prompt, freshInformationRequired);
   const capabilities: RequestRequirements["capabilities"] = ["chat"];
 
   if (intent === "coding") capabilities.push("coding");
@@ -40,7 +54,7 @@ function deriveRequirements(prompt: string): RequestRequirements {
   return {
     intent,
     capabilities,
-    requiresFreshness: FRESHNESS_PATTERN.test(prompt),
+    requiresFreshness: freshInformationRequired,
     containsSensitiveData: SENSITIVE_PATTERN.test(prompt),
   };
 }

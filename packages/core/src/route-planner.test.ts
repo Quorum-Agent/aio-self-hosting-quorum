@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { DemoProvider } from "./demo-provider.js";
 import { RequestCompiler } from "./request-compiler.js";
 import { RoutePlanner } from "./route-planner.js";
 import type { ChatRequest, ModelDescriptor } from "./types.js";
@@ -99,5 +100,18 @@ describe("RoutePlanner", () => {
     );
 
     expect(plan.modelId).toBe(inProcessModel.id);
+  });
+
+  it("routes a capabilities question to a real local model instead of the scaffold", () => {
+    const scaffoldModel = new DemoProvider().model;
+    const plan = planner.plan(
+      compiler.compile(
+        request("balanced", "What are your current capabilities?"),
+      ),
+      [localModel, scaffoldModel],
+    );
+
+    expect(scaffoldModel.capabilities).toEqual(["chat"]);
+    expect(plan.modelId).toBe(localModel.id);
   });
 });

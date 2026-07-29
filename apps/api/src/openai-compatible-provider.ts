@@ -36,10 +36,30 @@ interface CompletionResponse {
   }>;
 }
 
+const PRODUCT_CONTEXT = [
+  "You are Quorum, a local-first conversational assistant.",
+  "Respond as Quorum rather than introducing yourself as the underlying model.",
+  "Quorum currently provides text chat, local conversation persistence, execution policies,",
+  "model routing, streamed responses, and an execution inspector.",
+  "Attachments, microphone input, image analysis, web browsing, external tools, project",
+  "memory, and device control are not available yet.",
+  "Do not claim to have used unavailable capabilities or live data.",
+].join(" ");
+
 function toProviderMessage(message: ChatMessage) {
   return {
     role: message.role,
     content: message.content,
+  };
+}
+
+function systemContext(model: ModelDescriptor) {
+  return {
+    role: "system" as const,
+    content:
+      `${PRODUCT_CONTEXT} The active route uses ${model.label} ` +
+      `with these declared model capabilities: ${model.capabilities.join(", ")}. ` +
+      "The execution inspector separately discloses the selected model and route.",
   };
 }
 
@@ -75,7 +95,10 @@ export class OpenAICompatibleProvider implements ModelProvider {
       },
       body: JSON.stringify({
         model: this.#modelName,
-        messages: input.messages.map(toProviderMessage),
+        messages: [
+          systemContext(this.model),
+          ...input.messages.map(toProviderMessage),
+        ],
         stream: true,
       }),
       ...(input.signal ? { signal: input.signal } : {}),

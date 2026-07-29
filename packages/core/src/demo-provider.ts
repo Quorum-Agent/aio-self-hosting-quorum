@@ -9,7 +9,7 @@ export class DemoProvider implements ModelProvider {
     provider: "quorum",
     location: "local" as const,
     transport: "in_process",
-    capabilities: ["chat", "reasoning", "coding", "vision", "documents", "web", "tools"],
+    capabilities: ["chat"],
     contextWindow: 32_000,
     qualityRating: 1,
     available: true,
