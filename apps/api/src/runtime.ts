@@ -4,7 +4,6 @@ import {
   type LocalRuntimeStatus,
   type ModelProvider,
   type RuntimeToolDescriptor,
-  type WebSearchProvider,
 } from "@quorum/core";
 
 import type { AppConfig } from "./config.js";
@@ -16,8 +15,7 @@ import {
 } from "./openai-compatible-provider.js";
 import { LocalPromptAnalyzer } from "./prompt-analyzer.js";
 import {
-  BraveWebSearchProvider,
-  SearxngWebSearchProvider,
+  ConfigurableWebSearchProvider,
 } from "./web-search-provider.js";
 
 export interface ModelWarmupStatus {
@@ -34,7 +32,8 @@ export interface QuorumRuntime {
   orchestrator: Orchestrator;
   localRuntime: LocalRuntimeStatus;
   cloudConfigured: boolean;
-  webSearch?: RuntimeToolDescriptor;
+  readonly webSearch?: RuntimeToolDescriptor;
+  webSearchProvider?: ConfigurableWebSearchProvider;
   warmup: Promise<ModelWarmupStatus>;
   warmupStatus: ModelWarmupStatus;
 }
@@ -181,12 +180,7 @@ export async function createRuntime(config: AppConfig): Promise<QuorumRuntime> {
     );
   }
 
-  let webSearch: WebSearchProvider | undefined;
-  if (config.webSearch?.provider === "searxng") {
-    webSearch = new SearxngWebSearchProvider(config.webSearch.baseUrl);
-  } else if (config.webSearch?.provider === "brave") {
-    webSearch = new BraveWebSearchProvider(config.webSearch.apiKey);
-  }
+  const webSearch = new ConfigurableWebSearchProvider(config.webSearch);
 
   providers.push(new DemoProvider());
   const orchestrator = new Orchestrator(
@@ -263,7 +257,10 @@ export async function createRuntime(config: AppConfig): Promise<QuorumRuntime> {
       return currentLocalRuntime(localRuntime, orchestrator.models);
     },
     cloudConfigured: Boolean(config.cloud),
-    ...(webSearch ? { webSearch: webSearch.tool } : {}),
+    get webSearch() {
+      return webSearch.tool;
+    },
+    webSearchProvider: webSearch,
     warmup,
     get warmupStatus() {
       return warmupStatus;

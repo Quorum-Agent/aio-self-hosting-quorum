@@ -30,6 +30,10 @@ interface TableInfoRow {
   name: string;
 }
 
+interface SettingRow {
+  value_json: string;
+}
+
 function mapConversation(row: ConversationRow): ConversationRecord {
   return {
     id: row.id,
@@ -75,6 +79,12 @@ export class QuorumDatabase {
 
       CREATE INDEX IF NOT EXISTS idx_messages_conversation
         ON messages(conversation_id, created_at);
+
+      CREATE TABLE IF NOT EXISTS settings (
+        key TEXT PRIMARY KEY,
+        value_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
     `);
     const messageColumns = this.#database
       .prepare("PRAGMA table_info(messages)")
@@ -86,6 +96,38 @@ export class QuorumDatabase {
 
   close(): void {
     this.#database.close();
+  }
+
+  getSetting(key: string): unknown | undefined {
+    const row = this.#database
+      .prepare("SELECT value_json FROM settings WHERE key = ?")
+      .get(key) as unknown as SettingRow | undefined;
+    if (!row) return undefined;
+    try {
+      return JSON.parse(row.value_json) as unknown;
+    } catch {
+      return undefined;
+    }
+  }
+
+  setSetting(key: string, value: unknown): void {
+    this.#database
+      .prepare(
+        `INSERT INTO settings (key, value_json, updated_at)
+         VALUES (?, ?, ?)
+         ON CONFLICT(key) DO UPDATE SET
+           value_json = excluded.value_json,
+           updated_at = excluded.updated_at`,
+      )
+      .run(key, JSON.stringify(value), new Date().toISOString());
+  }
+
+  replaceSettingAndPurgePreviousValue(key: string, value: unknown): void {
+    this.#database.exec("PRAGMA secure_delete = ON");
+    this.setSetting(key, value);
+    this.#database.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    this.#database.exec("VACUUM");
+    this.#database.exec("PRAGMA wal_checkpoint(TRUNCATE)");
   }
 
   listConversations(): ConversationRecord[] {

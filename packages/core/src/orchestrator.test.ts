@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { DemoProvider } from "./demo-provider.js";
 import { ModelExecutionError } from "./model-execution-error.js";
 import { Orchestrator } from "./orchestrator.js";
+import { WebSearchExecutionError } from "./web-search-execution-error.js";
 import type {
   ChatRequest,
   ModelDescriptor,
@@ -186,7 +187,7 @@ describe("Orchestrator resilience", () => {
     expect(
       result?.type === "result" && result.result.message.content,
     ).toContain(
-      "Sources\n[1] Current source — https://example.com/current",
+      "Sources\nExternal destinations are not network-verified; inspect links before opening.\n[1] Current source — https://example.com/current",
     );
   });
 
@@ -499,6 +500,177 @@ describe("Orchestrator resilience", () => {
       },
     });
     expect(events.some((event) => event.type === "result")).toBe(false);
+  });
+
+  it("retains provider attempts when every web-search provider fails", async () => {
+    const attempts = [
+      {
+        provider: "Exa",
+        status: "failed" as const,
+        detail: "Web search returned HTTP 503.",
+      },
+      {
+        provider: "DuckDuckGo",
+        status: "failed" as const,
+        detail: "Provider returned no usable sources.",
+      },
+    ];
+    const webSearch: WebSearchProvider = {
+      tool: {
+        id: "web-search:auto",
+        label: "Web search (Auto)",
+        capabilities: ["web"],
+        location: "cloud",
+        available: true,
+        contextMayLeaveDevice: true,
+      },
+      async search() {
+        throw new WebSearchExecutionError(
+          "Web search failed across Exa, DuckDuckGo.",
+          attempts,
+        );
+      },
+    };
+    const orchestrator = new Orchestrator(
+      [provider(generalModel, () => answer("must not run"))],
+      undefined,
+      undefined,
+      undefined,
+      webSearch,
+    );
+
+    const events = await collect(
+      orchestrator,
+      chatRequest("Research the latest Quorum release."),
+    );
+
+    expect(events.find((event) => event.type === "error")).toMatchObject({
+      type: "error",
+      plan: {
+        webSearch: {
+          provider: "Web search (Auto)",
+          attempts,
+        },
+      },
+    });
+    expect(
+      events.filter(
+        (event) =>
+          event.type === "plan" && event.plan.webSearch?.attempts?.length === 2,
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("publishes the concrete provider before that provider receives the query", async () => {
+    let dispatched = false;
+    const webSearch: WebSearchProvider = {
+      tool: {
+        id: "web-search:auto",
+        label: "Web search (Auto)",
+        capabilities: ["web"],
+        location: "cloud",
+        available: true,
+        contextMayLeaveDevice: true,
+      },
+      async search(query, _signal, onAttempt) {
+        await onAttempt?.({ provider: "Exa", status: "running" });
+        dispatched = true;
+        await onAttempt?.({ provider: "Exa", status: "completed" });
+        return {
+          query,
+          provider: "Exa",
+          attempts: [{ provider: "Exa", status: "completed" }],
+          results: [
+            {
+              title: "Current source",
+              url: "https://example.com/current",
+              snippet: "Current evidence.",
+            },
+          ],
+        };
+      },
+    };
+    const orchestrator = new Orchestrator(
+      [
+        provider(generalModel, () => {
+          expect(dispatched).toBe(true);
+          return answer("Current answer [1].");
+        }),
+      ],
+      undefined,
+      undefined,
+      undefined,
+      webSearch,
+    );
+
+    const events = await collect(
+      orchestrator,
+      chatRequest("Research the latest Quorum release."),
+    );
+    const attemptPlans = events.filter(
+      (event) =>
+        event.type === "plan" &&
+        event.plan.webSearch?.attempts?.[0]?.provider === "Exa",
+    );
+
+    const attemptStatuses = attemptPlans.map((event) =>
+      event.type === "plan"
+        ? event.plan.webSearch?.attempts?.[0]?.status
+        : undefined,
+    );
+    expect(attemptStatuses.slice(0, 2)).toEqual(["running", "completed"]);
+    expect(attemptStatuses).not.toContain("failed");
+  });
+
+  it("releases and cancels a provider when the event consumer exits early", async () => {
+    let attemptAcknowledged = false;
+    let providerCleanedUp = false;
+    const webSearch: WebSearchProvider = {
+      tool: {
+        id: "web-search:auto",
+        label: "Web search (Auto)",
+        capabilities: ["web"],
+        location: "cloud",
+        available: true,
+        contextMayLeaveDevice: true,
+      },
+      async search(_query, signal, onAttempt) {
+        try {
+          await onAttempt?.({ provider: "Exa", status: "running" });
+          attemptAcknowledged = true;
+          if (signal?.aborted) throw new Error("Web search was cancelled.");
+          await new Promise<void>((resolve) => {
+            signal?.addEventListener("abort", () => resolve(), { once: true });
+          });
+          throw new Error("Web search was cancelled.");
+        } finally {
+          providerCleanedUp = true;
+        }
+      },
+    };
+    const orchestrator = new Orchestrator(
+      [provider(generalModel, () => answer("must not run"))],
+      undefined,
+      undefined,
+      undefined,
+      webSearch,
+    );
+    const iterator = orchestrator.run(
+      chatRequest("Research the latest Quorum release."),
+    );
+    let sawRunningAttempt = false;
+
+    while (!sawRunningAttempt) {
+      const event = await iterator.next();
+      expect(event.done).toBe(false);
+      sawRunningAttempt =
+        event.value?.type === "plan" &&
+        event.value.plan.webSearch?.attempts?.[0]?.status === "running";
+    }
+    await iterator.return(undefined);
+
+    expect(attemptAcknowledged).toBe(true);
+    expect(providerCleanedUp).toBe(true);
   });
 
   it("uses the local prompt analyzer before selecting a specialist", async () => {

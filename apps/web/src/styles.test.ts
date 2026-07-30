@@ -57,3 +57,18 @@ describe("response transparency controls", () => {
     expect(declarations(".activity-traces")).toContain("list-style: none;");
   });
 });
+
+describe("web-search settings", () => {
+  it("keeps the settings dialog inside the viewport with its own scroll owner", () => {
+    expect(declarations(".settings-dialog")).toContain(
+      "max-height: min(820px, 100%);",
+    );
+    expect(declarations(".settings-dialog")).toContain("overflow: hidden;");
+    expect(declarations(".settings-scroll")).toContain("overflow-y: auto;");
+  });
+
+  it("keeps the working settings entry reachable below long conversation lists", () => {
+    expect(declarations(".conversation-list")).toContain("flex: 1;");
+    expect(declarations(".sidebar-settings")).toContain("display: flex;");
+  });
+});

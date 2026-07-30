@@ -7,6 +7,7 @@ import {
 } from "./request-compiler.js";
 import { RoutePlanner } from "./route-planner.js";
 import { ModelExecutionError } from "./model-execution-error.js";
+import { WebSearchExecutionError } from "./web-search-execution-error.js";
 import type {
   ChatMessage,
   ChatRequest,
@@ -18,6 +19,7 @@ import type {
   PlanStep,
   PromptAnalyzer,
   TaskPlan,
+  WebSearchAttempt,
   WebSearchProvider,
   WebSearchResponse,
 } from "./types.js";
@@ -342,13 +344,118 @@ export class Orchestrator {
         trace: executionTrace(webSearchStep, "running"),
       };
       try {
-        webSearchResponse = await this.#webSearch.search(
-          searchQuery,
-          signal,
-        );
+        const attemptUpdates: Array<{
+          attempt: WebSearchAttempt;
+          acknowledge: () => void;
+        }> = [];
+        let wakeAttemptLoop: (() => void) | undefined;
+        let searchSettled = false;
+        let searchFailure: unknown;
+        let completedSearchResponse: WebSearchResponse | undefined;
+        let attemptLoopClosed = false;
+        const pendingAcknowledgements = new Set<() => void>();
+        const searchController = new AbortController();
+        const forwardSearchAbort = () =>
+          searchController.abort(signal?.reason);
+        signal?.addEventListener("abort", forwardSearchAbort, { once: true });
+        if (signal?.aborted) forwardSearchAbort();
+        const wake = () => {
+          const current = wakeAttemptLoop;
+          wakeAttemptLoop = undefined;
+          current?.();
+        };
+        const searchTask = (async () => {
+          try {
+            completedSearchResponse = await this.#webSearch!.search(
+              searchQuery,
+              searchController.signal,
+              (attempt) => {
+                if (attemptLoopClosed) return;
+                return new Promise<void>((resolve) => {
+                  let acknowledged = false;
+                  const acknowledge = () => {
+                    if (acknowledged) return;
+                    acknowledged = true;
+                    pendingAcknowledgements.delete(acknowledge);
+                    resolve();
+                  };
+                  pendingAcknowledgements.add(acknowledge);
+                  attemptUpdates.push({ attempt, acknowledge });
+                  wake();
+                });
+              },
+            );
+          } catch (error) {
+            searchFailure = error;
+          } finally {
+            searchSettled = true;
+            wake();
+          }
+        })();
+
+        try {
+          while (!searchSettled || attemptUpdates.length > 0) {
+            const update = attemptUpdates.shift();
+            if (!update) {
+              await new Promise<void>((resolve) => {
+                wakeAttemptLoop = resolve;
+                if (searchSettled || attemptUpdates.length > 0) wake();
+              });
+              continue;
+            }
+            if (plan.webSearch) {
+              const attempts: WebSearchAttempt[] = [
+                ...(plan.webSearch.attempts ?? []),
+              ];
+              const runningIndex = attempts.findLastIndex(
+                (attempt) =>
+                  attempt.provider === update.attempt.provider &&
+                  attempt.status === "running",
+              );
+              if (update.attempt.status !== "running" && runningIndex >= 0) {
+                attempts[runningIndex] = update.attempt;
+              } else {
+                attempts.push(update.attempt);
+              }
+              plan = {
+                ...plan,
+                webSearch: {
+                  ...plan.webSearch,
+                  attempts,
+                },
+              };
+              yield { type: "plan", plan };
+            }
+            update.acknowledge();
+          }
+          await searchTask;
+        } finally {
+          attemptLoopClosed = true;
+          for (const acknowledge of [...pendingAcknowledgements]) {
+            acknowledge();
+          }
+          searchController.abort();
+          signal?.removeEventListener("abort", forwardSearchAbort);
+          await searchTask;
+        }
+        if (searchFailure !== undefined) throw searchFailure;
+        if (!completedSearchResponse) {
+          throw new Error("Web search completed without a response.");
+        }
+        webSearchResponse = completedSearchResponse;
       } catch (error) {
         const detail =
           error instanceof Error ? error.message : "Web search failed.";
+        if (error instanceof WebSearchExecutionError && plan.webSearch) {
+          plan = {
+            ...plan,
+            webSearch: {
+              ...plan.webSearch,
+              attempts: error.attempts,
+            },
+          };
+          yield { type: "plan", plan };
+        }
         yield {
           type: "trace",
           trace: executionTrace(webSearchStep, "failed", detail),
@@ -356,6 +463,15 @@ export class Orchestrator {
         yield {
           type: "error",
           message: detail,
+          recoverable: true,
+          plan,
+        };
+        return;
+      }
+      if (!webSearchResponse) {
+        yield {
+          type: "error",
+          message: "Web search completed without a response.",
           recoverable: true,
           plan,
         };
@@ -395,13 +511,13 @@ export class Orchestrator {
         trace: executionTrace(
           webSearchStep,
           "completed",
-          `${webSearchResponse.results.length} source${webSearchResponse.results.length === 1 ? "" : "s"} retrieved`,
+          `${webSearchResponse.results.length} source${webSearchResponse.results.length === 1 ? "" : "s"} retrieved via ${webSearchResponse.provider ?? this.#webSearch.tool.label}`,
         ),
       };
       plan = {
         ...plan,
         webSearch: {
-          provider: this.#webSearch.tool.label,
+          provider: webSearchResponse.provider ?? this.#webSearch.tool.label,
           query: webSearchResponse.query,
           contextMayHaveLeftDevice:
             this.#webSearch.tool.contextMayLeaveDevice,
@@ -409,9 +525,12 @@ export class Orchestrator {
             title: result.title,
             url: result.url,
             ...(result.publishedAt
-              ? { publishedAt: result.publishedAt }
-              : {}),
+                ? { publishedAt: result.publishedAt }
+                : {}),
           })),
+          ...(webSearchResponse.attempts
+            ? { attempts: webSearchResponse.attempts }
+            : {}),
         },
       };
       yield { type: "plan", plan };
@@ -514,7 +633,10 @@ export class Orchestrator {
                 `[${index + 1}] ${source.title} — ${source.url}`,
             )
             .join("\n");
-          const sourceAppendix = `\n\nSources\n${sources}`;
+          const sourceAppendix =
+            "\n\nSources\n" +
+            "External destinations are not network-verified; inspect links before opening.\n" +
+            sources;
           content += sourceAppendix;
           yield { type: "delta", content: sourceAppendix };
         }
@@ -610,7 +732,8 @@ export class Orchestrator {
                 ...fallbackPlan.steps.slice(2),
               ],
               webSearch: {
-                provider: this.#webSearch.tool.label,
+                provider:
+                  webSearchResponse.provider ?? this.#webSearch.tool.label,
                 query: webSearchResponse.query,
                 contextMayHaveLeftDevice:
                   this.#webSearch.tool.contextMayLeaveDevice,
@@ -618,9 +741,12 @@ export class Orchestrator {
                   title: result.title,
                   url: result.url,
                   ...(result.publishedAt
-                    ? { publishedAt: result.publishedAt }
-                    : {}),
+                      ? { publishedAt: result.publishedAt }
+                      : {}),
                 })),
+                ...(webSearchResponse.attempts
+                  ? { attempts: webSearchResponse.attempts }
+                  : {}),
               },
             }
           : {}),

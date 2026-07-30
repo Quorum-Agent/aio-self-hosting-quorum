@@ -185,6 +185,7 @@ export interface TaskPlan {
     query: string;
     contextMayHaveLeftDevice: boolean;
     sources: WebSearchSource[];
+    attempts?: WebSearchAttempt[];
   };
 }
 
@@ -277,9 +278,23 @@ export interface WebSearchSource {
 export interface WebSearchResponse {
   query: string;
   results: WebSearchResult[];
+  provider?: string;
+  attempts?: WebSearchAttempt[];
+}
+
+export interface WebSearchAttempt {
+  provider: string;
+  status: "running" | "completed" | "failed";
+  detail?: string;
 }
 
 export interface WebSearchProvider {
   readonly tool: RuntimeToolDescriptor;
-  search(query: string, signal?: AbortSignal): Promise<WebSearchResponse>;
+  search(
+    query: string,
+    signal?: AbortSignal,
+    onAttempt?: (
+      attempt: WebSearchAttempt,
+    ) => void | Promise<void>,
+  ): Promise<WebSearchResponse>;
 }

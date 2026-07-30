@@ -147,6 +147,26 @@ describe("QuorumDatabase", () => {
     database.close();
   });
 
+  it("persists local application settings separately from conversations", () => {
+    const directory = mkdtempSync(join(tmpdir(), "quorum-"));
+    temporaryDirectories.push(directory);
+    const database = new QuorumDatabase(directory);
+    database.setSetting("web_search", {
+      enabled: true,
+      provider: "auto",
+      resultLimit: 5,
+    });
+    database.close();
+
+    const reopened = new QuorumDatabase(directory);
+    expect(reopened.getSetting("web_search")).toEqual({
+      enabled: true,
+      provider: "auto",
+      resultLimit: 5,
+    });
+    reopened.close();
+  });
+
   it("migrates an existing message table without losing history", () => {
     const directory = mkdtempSync(join(tmpdir(), "quorum-"));
     temporaryDirectories.push(directory);

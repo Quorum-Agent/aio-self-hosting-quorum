@@ -28,8 +28,9 @@ use an OpenAI-compatible local or cloud model when configured.
 - Automatic discovery of configured local models and experts
 - Role-aware ready, degraded, and unavailable runtime status
 - Serialized local inference, bounded execution time, circuit breaking, and safe fallback
-- Automatic policy-controlled web search through local SearXNG or Brave Search
-- Source citations and durable search-transmission disclosure, including failed searches
+- Keyless policy-controlled web search with live Auto/provider settings
+- DuckDuckGo, SearXNG, Exa, Perplexity, Tavily, Brave, and Firecrawl adapters
+- Source citations and durable search/provider-fallback disclosure
 - Loopback-only local endpoints with redirects disabled
 - Append-only execution attempts so failed cloud contact remains disclosed
 - A deterministic in-process responder when no configured model is available
@@ -37,7 +38,7 @@ use an OpenAI-compatible local or cloud model when configured.
 - Startup warmup for the prompt expert and default general model
 - Native Ollama generation that keeps private thinking separate from visible answers
 
-Attachment, microphone, settings, vision, project memory, and general-purpose tool
+Attachment, microphone, vision, project memory, and general-purpose tool
 execution are planned but are not exposed as controls until they are wired. See
 [Roadmap](#roadmap) for the intended order.
 
@@ -118,39 +119,62 @@ The cloud provider is not registered when the key is blank. Private and Offline 
 never select a cloud model. Requests detected as sensitive never use cloud; when no
 capable local model exists, the in-process scaffold reports the limitation.
 
-### Optional web search
+### Web search
 
 Web search is automatic for requests that need current information or external
 sources. It is not used for ordinary explanation or analysis. Quorum retrieves a
-small bounded source set, passes it to a local model as lower-privilege untrusted
+small bounded source set, passes it to a local model as explicitly framed untrusted
 evidence, appends source links to the answer, and records the provider and sources
 in the execution inspector. Retrieved web data is never forwarded to a cloud model.
 
-For a local-first setup, run a SearXNG instance on this machine, enable JSON output,
-and configure:
+Search is enabled out of the box. With no configuration, Auto mode uses keyless
+DuckDuckGo. Configure the master toggle, provider, result count, SearXNG URL, and
+optional provider keys from **Web search settings** in the sidebar. Changes apply
+to the next request without restarting Quorum.
+
+Auto mode uses configured providers in this order and falls back visibly when a
+provider fails:
+
+```text
+Exa → Perplexity → Tavily → Brave → Firecrawl → SearXNG → DuckDuckGo
+```
+
+Non-secret settings are stored in the local `quorum.db`. Keys entered in the UI stay
+in server memory for the current run and are never written to SQLite or returned to
+the browser. Use environment variables when credentials must survive a restart:
 
 ```dotenv
-QUORUM_WEB_SEARCH_PROVIDER=searxng
+QUORUM_WEB_SEARCH_ENABLED=true
+QUORUM_WEB_SEARCH_PROVIDER=auto
+QUORUM_WEB_SEARCH_RESULT_LIMIT=5
+
+# Optional provider configuration used by Auto:
 QUORUM_SEARXNG_BASE_URL=http://127.0.0.1:8080
-```
 
-The SearXNG endpoint is restricted to an explicit loopback address. SearXNG is local,
-but its upstream search requests can still disclose the query; Quorum reports that
-in the inspector.
-
-Alternatively, configure Brave Search:
-
-```dotenv
-QUORUM_WEB_SEARCH_PROVIDER=brave
+QUORUM_EXA_SEARCH_API_KEY=your-key
+QUORUM_PERPLEXITY_SEARCH_API_KEY=your-key
+QUORUM_TAVILY_SEARCH_API_KEY=your-key
 QUORUM_BRAVE_SEARCH_API_KEY=your-search-key
+QUORUM_FIRECRAWL_SEARCH_API_KEY=your-key
 ```
 
-No search provider is registered when these values are absent. Private and Offline
-modes never search. Requests detected as sensitive never search. Search calls time
-out after eight seconds, do not follow redirects, allow at most two concurrent and
-30 per minute, and feed only bounded, validated public HTTPS results to a local model.
-Sensitive results are discarded before model routing, and persisted execution records
-store source titles and URLs rather than source snippets.
+Set `QUORUM_WEB_SEARCH_PROVIDER` to a provider ID instead of `auto` to require
+that provider and disable automatic provider fallback.
+
+SearXNG accepts explicit loopback HTTP or HTTPS URLs; remote instances are rejected
+to keep the configurable endpoint out of Quorum's server-side request boundary.
+Quorum does not rotate through public instances. Private and Offline modes never
+search, and requests detected as sensitive never search. Each logical search has one
+eight-second deadline, does not follow redirects, allows at most two concurrent and
+30 per minute, and feeds only bounded HTTPS results that pass lexical safety
+filtering to a local model. Link destinations remain explicitly unverified because
+Quorum does not resolve or navigate them. Sensitive results are
+discarded before model routing, and persisted execution records store source titles
+and URLs rather than source snippets.
+
+If an earlier development build saved provider keys in `quorum.db`, this version
+purges the legacy setting with SQLite secure deletion, WAL truncation, and `VACUUM`.
+Rotate those old keys once anyway, because Quorum cannot sanitize external backups.
 
 ## Architecture
 

@@ -166,6 +166,19 @@ export function ExecutionActivity({
             <div>
               <strong>Web search via {plan.webSearch.provider}</strong>
               <span>{plan.webSearch.query}</span>
+              {(plan.webSearch.attempts?.length ?? 0) > 0 && (
+                <ul className="web-attempt-list">
+                  {plan.webSearch.attempts?.map((attempt, index) => (
+                    <li
+                      className={`is-${attempt.status}`}
+                      key={`${attempt.provider}-${index}`}
+                    >
+                      {attempt.provider}: {attempt.status}
+                      {attempt.detail ? ` · ${attempt.detail}` : ""}
+                    </li>
+                  ))}
+                </ul>
+              )}
               <ol>
                 {plan.webSearch.sources.map((source, index) => (
                   <li key={`${source.url}-${index}`}>

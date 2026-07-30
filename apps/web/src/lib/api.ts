@@ -33,15 +33,83 @@ export interface RuntimeInfo {
   webSearch?: RuntimeToolDescriptor;
 }
 
+export type WebSearchProviderId =
+  | "auto"
+  | "duckduckgo"
+  | "exa"
+  | "perplexity"
+  | "tavily"
+  | "brave"
+  | "firecrawl"
+  | "searxng";
+
+export type KeyedWebSearchProviderId =
+  | "exa"
+  | "perplexity"
+  | "tavily"
+  | "brave"
+  | "firecrawl";
+
+export interface WebSearchProviderSettings {
+  id: Exclude<WebSearchProviderId, "auto">;
+  label: string;
+  description: string;
+  configured: boolean;
+  requires: "none" | "api_key" | "base_url";
+  configurationSource?: "environment" | "saved" | "session";
+  environmentConfigured?: boolean;
+}
+
+export interface WebSearchSettings {
+  enabled: boolean;
+  provider: WebSearchProviderId;
+  resultLimit: number;
+  available: boolean;
+  autoOrder: readonly Exclude<WebSearchProviderId, "auto">[];
+  providers: WebSearchProviderSettings[];
+  searxngBaseUrl?: string;
+}
+
+export interface WebSearchSettingsUpdate {
+  enabled: boolean;
+  provider: WebSearchProviderId;
+  resultLimit: number;
+  searxngBaseUrl?: string | null;
+  apiKeys?: Partial<Record<KeyedWebSearchProviderId, string | null>>;
+}
+
 async function readJson<T>(response: Response): Promise<T> {
   if (!response.ok) {
-    throw new Error(`Quorum API returned ${response.status}.`);
+    const body = (await response.json().catch(() => undefined)) as
+      | { message?: string }
+      | undefined;
+    throw new Error(body?.message ?? `Quorum API returned ${response.status}.`);
   }
   return (await response.json()) as T;
 }
 
 export async function getRuntime(): Promise<RuntimeInfo> {
   return readJson<RuntimeInfo>(await fetch("/api/runtime"));
+}
+
+export async function getWebSearchSettings(): Promise<WebSearchSettings> {
+  const response = await readJson<{ settings: WebSearchSettings }>(
+    await fetch("/api/settings/web-search"),
+  );
+  return response.settings;
+}
+
+export async function updateWebSearchSettings(
+  update: WebSearchSettingsUpdate,
+): Promise<WebSearchSettings> {
+  const response = await readJson<{ settings: WebSearchSettings }>(
+    await fetch("/api/settings/web-search", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(update),
+    }),
+  );
+  return response.settings;
 }
 
 export async function getConversations(): Promise<ConversationRecord[]> {

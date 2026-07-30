@@ -165,6 +165,22 @@ export function ExecutionPanel({
             <Search size={13} />
             <span>{plan.webSearch.query}</span>
           </div>
+          {(plan.webSearch.attempts?.length ?? 0) > 0 && (
+            <ol className="web-attempt-list">
+              {plan.webSearch.attempts?.map((attempt, index) => (
+                <li
+                  className={`is-${attempt.status}`}
+                  key={`${attempt.provider}-${index}`}
+                >
+                  <strong>{attempt.provider}</strong>
+                  <span>
+                    {attempt.status}
+                    {attempt.detail ? ` · ${attempt.detail}` : ""}
+                  </span>
+                </li>
+              ))}
+            </ol>
+          )}
           <ol className="web-source-list">
             {plan.webSearch.sources.map((source, index) => (
               <li key={`${source.url}-${index}`}>

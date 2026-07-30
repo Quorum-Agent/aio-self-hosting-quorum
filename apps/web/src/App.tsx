@@ -25,6 +25,7 @@ import { Composer } from "./components/Composer";
 import { ExecutionActivity } from "./components/ExecutionActivity";
 import { ExecutionPanel } from "./components/ExecutionPanel";
 import { MessageExecutionActivity } from "./components/MessageExecutionActivity";
+import { SettingsDialog } from "./components/SettingsDialog";
 import { Sidebar } from "./components/Sidebar";
 import {
   getConversations,
@@ -129,6 +130,7 @@ export default function App() {
     window.matchMedia("(min-width: 841px)").matches,
   );
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const abortController = useRef<AbortController | undefined>(undefined);
   const streamingContentRef = useRef("");
   const conversationElement = useRef<HTMLElement | null>(null);
@@ -435,6 +437,10 @@ export default function App() {
         disabled={busy}
         onNew={newConversation}
         onSelect={(id) => void selectConversation(id)}
+        onSettings={() => {
+          setSettingsOpen(true);
+          setSidebarOpen(false);
+        }}
       />
 
       <main className="main">
@@ -634,6 +640,12 @@ export default function App() {
         traces={traces}
         verbosity={verbosity}
         onClose={() => setExecutionOpen(false)}
+      />
+
+      <SettingsDialog
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        onSaved={refreshRuntime}
       />
 
       {sidebarOpen && (

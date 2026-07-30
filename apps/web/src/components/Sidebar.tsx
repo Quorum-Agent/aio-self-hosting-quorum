@@ -1,4 +1,4 @@
-import { MessageSquare, Plus, Sparkles } from "lucide-react";
+import { MessageSquare, Plus, Settings, Sparkles } from "lucide-react";
 
 import type { ConversationRecord } from "../lib/api";
 
@@ -8,6 +8,7 @@ interface SidebarProps {
   disabled: boolean;
   onNew: () => void;
   onSelect: (id: string) => void;
+  onSettings: () => void;
 }
 
 function relativeTime(value: string): string {
@@ -24,6 +25,7 @@ export function Sidebar({
   disabled,
   onNew,
   onSelect,
+  onSettings,
 }: SidebarProps) {
   return (
     <aside className="sidebar">
@@ -70,6 +72,15 @@ export function Sidebar({
         )}
       </nav>
 
+      <button
+        className="sidebar-settings"
+        type="button"
+        disabled={disabled}
+        onClick={onSettings}
+      >
+        <Settings size={15} />
+        Web search settings
+      </button>
     </aside>
   );
 }

@@ -7,6 +7,10 @@ import {
   normalizeCloudBaseUrl,
   normalizeLoopbackBaseUrl,
 } from "./loopback-url.js";
+import {
+  isLoopbackHostname,
+  normalizeSearchBaseUrl,
+} from "./outbound-url.js";
 
 export const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 
@@ -29,15 +33,34 @@ export interface PromptAnalyzerConfig {
   contextWindow: number;
 }
 
-export type WebSearchConfig =
-  | {
-      provider: "searxng";
-      baseUrl: string;
-    }
-  | {
-      provider: "brave";
-      apiKey: string;
-    };
+export const WEB_SEARCH_PROVIDER_IDS = [
+  "auto",
+  "duckduckgo",
+  "exa",
+  "perplexity",
+  "tavily",
+  "brave",
+  "firecrawl",
+  "searxng",
+] as const;
+
+export type WebSearchProviderId =
+  (typeof WEB_SEARCH_PROVIDER_IDS)[number];
+
+export type KeyedWebSearchProviderId =
+  | "exa"
+  | "perplexity"
+  | "tavily"
+  | "brave"
+  | "firecrawl";
+
+export interface WebSearchConfig {
+  enabled: boolean;
+  provider: WebSearchProviderId;
+  resultLimit: number;
+  searxngBaseUrl?: string;
+  apiKeys: Partial<Record<KeyedWebSearchProviderId, string>>;
+}
 
 function positiveInteger(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
@@ -65,49 +88,84 @@ export interface AppConfig {
 }
 
 export function loadConfig(): AppConfig {
+  const host = process.env["HOST"] ?? "127.0.0.1";
+  if (!isLoopbackHostname(host)) {
+    throw new Error(
+      "HOST must be an explicit loopback address until authenticated remote access is available.",
+    );
+  }
   const cloudApiKey = process.env["QUORUM_CLOUD_API_KEY"]?.trim();
   const configuredWebProvider =
     process.env["QUORUM_WEB_SEARCH_PROVIDER"]?.trim().toLowerCase();
   const searxngBaseUrl = process.env["QUORUM_SEARXNG_BASE_URL"]?.trim();
-  const braveSearchApiKey =
-    process.env["QUORUM_BRAVE_SEARCH_API_KEY"]?.trim();
-  const webProvider =
-    configuredWebProvider ||
-    (searxngBaseUrl ? "searxng" : braveSearchApiKey ? "brave" : undefined);
+  const apiKeys: WebSearchConfig["apiKeys"] = {};
+  const configuredApiKeys: Array<
+    [KeyedWebSearchProviderId, string | undefined]
+  > = [
+    ["exa", process.env["QUORUM_EXA_SEARCH_API_KEY"]?.trim()],
+    [
+      "perplexity",
+      process.env["QUORUM_PERPLEXITY_SEARCH_API_KEY"]?.trim(),
+    ],
+    ["tavily", process.env["QUORUM_TAVILY_SEARCH_API_KEY"]?.trim()],
+    ["brave", process.env["QUORUM_BRAVE_SEARCH_API_KEY"]?.trim()],
+    ["firecrawl", process.env["QUORUM_FIRECRAWL_SEARCH_API_KEY"]?.trim()],
+  ];
+  for (const [provider, apiKey] of configuredApiKeys) {
+    if (apiKey) apiKeys[provider] = apiKey;
+  }
   if (
-    webProvider !== undefined &&
-    webProvider !== "searxng" &&
-    webProvider !== "brave"
+    configuredWebProvider !== undefined &&
+    !WEB_SEARCH_PROVIDER_IDS.includes(
+      configuredWebProvider as WebSearchProviderId,
+    )
   ) {
     throw new Error(
-      "QUORUM_WEB_SEARCH_PROVIDER must be either searxng or brave.",
+      `QUORUM_WEB_SEARCH_PROVIDER must be one of: ${WEB_SEARCH_PROVIDER_IDS.join(", ")}.`,
     );
   }
-  let webSearch: WebSearchConfig | undefined;
-  if (webProvider === "searxng") {
-    if (!searxngBaseUrl) {
-      throw new Error(
-        "QUORUM_SEARXNG_BASE_URL is required when SearXNG web search is enabled.",
-      );
-    }
-    webSearch = {
-      provider: "searxng",
-      baseUrl: normalizeLoopbackBaseUrl(
-        searxngBaseUrl,
-        "QUORUM_SEARXNG_BASE_URL",
-      ),
-    };
-  } else if (webProvider === "brave") {
-    if (!braveSearchApiKey) {
-      throw new Error(
-        "QUORUM_BRAVE_SEARCH_API_KEY is required when Brave web search is enabled.",
-      );
-    }
-    webSearch = {
-      provider: "brave",
-      apiKey: braveSearchApiKey,
-    };
+  const webProvider =
+    (configuredWebProvider as WebSearchProviderId | undefined) ?? "auto";
+  const webSearchEnabled =
+    process.env["QUORUM_WEB_SEARCH_ENABLED"]?.trim().toLowerCase() !== "false";
+  if (webSearchEnabled && webProvider === "searxng" && !searxngBaseUrl) {
+    throw new Error(
+      "QUORUM_SEARXNG_BASE_URL is required when SearXNG web search is enabled.",
+    );
   }
+  if (
+    webSearchEnabled &&
+    webProvider !== "auto" &&
+    webProvider !== "duckduckgo" &&
+    webProvider !== "searxng" &&
+    !apiKeys[webProvider]
+  ) {
+    throw new Error(
+      `An API key is required when ${webProvider} web search is selected.`,
+    );
+  }
+  let normalizedSearxngBaseUrl: string | undefined;
+  if (searxngBaseUrl) {
+    normalizedSearxngBaseUrl = normalizeSearchBaseUrl(
+      searxngBaseUrl,
+      "QUORUM_SEARXNG_BASE_URL",
+    );
+  }
+  const webSearch: WebSearchConfig = {
+    enabled: webSearchEnabled,
+    provider: webProvider,
+    resultLimit: Math.max(
+      3,
+      Math.min(
+        positiveInteger(process.env["QUORUM_WEB_SEARCH_RESULT_LIMIT"], 5),
+        10,
+      ),
+    ),
+    apiKeys,
+    ...(normalizedSearxngBaseUrl
+      ? { searxngBaseUrl: normalizedSearxngBaseUrl }
+      : {}),
+  };
   const primaryModel = process.env["QUORUM_LOCAL_MODEL"] ?? "qwen3.5:9b";
   const codingModel = process.env["QUORUM_LOCAL_CODING_MODEL"]?.trim();
   const reasoningModel = process.env["QUORUM_LOCAL_REASONING_MODEL"]?.trim();
@@ -154,7 +212,7 @@ export function loadConfig(): AppConfig {
   }
 
   return {
-    host: process.env["HOST"] ?? "127.0.0.1",
+    host,
     port: Number(process.env["PORT"] ?? 8787),
     logLevel: process.env["LOG_LEVEL"] ?? "info",
     dataDirectory: resolveFromProjectRoot(process.env["QUORUM_DATA_DIR"] ?? "./var"),
@@ -189,6 +247,6 @@ export function loadConfig(): AppConfig {
           },
         }
       : {}),
-    ...(webSearch ? { webSearch } : {}),
+    webSearch,
   };
 }

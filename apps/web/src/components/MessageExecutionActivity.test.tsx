@@ -158,6 +158,17 @@ describe("MessageExecutionActivity", () => {
           url: "https://example.com/release",
         },
       ],
+      attempts: [
+        {
+          provider: "Exa",
+          status: "failed",
+          detail: "Web search returned HTTP 503.",
+        },
+        {
+          provider: "SearXNG",
+          status: "completed",
+        },
+      ],
     };
 
     const markup = renderToStaticMarkup(
@@ -171,6 +182,8 @@ describe("MessageExecutionActivity", () => {
     expect(markup).toContain("Web search via SearXNG");
     expect(markup).toContain("latest Quorum release");
     expect(markup).toContain("https://example.com/release");
+    expect(markup).toContain("Exa: failed");
+    expect(markup).toContain("SearXNG: completed");
     expect(markup).toContain("search query may have left this device");
   });
 });
