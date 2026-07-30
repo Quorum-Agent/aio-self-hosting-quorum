@@ -59,6 +59,33 @@ export function ExecutionActivity({
     () => describeModelAttempts(plan, models),
     [models, plan],
   );
+  const attempts = plan?.attempts ?? [];
+  const completedAttempt = attempts.some(
+    (attempt) => attempt.status === "completed",
+  );
+  const failedAttempt = attempts.some((attempt) => attempt.status === "failed");
+  const cancelled =
+    !completedAttempt &&
+    attempts.some(
+      (attempt) =>
+        attempt.status === "failed" &&
+        /\bcancel(?:led|ed|ation)?\b/i.test(attempt.detail ?? ""),
+    );
+  const completedWithFallback =
+    completedAttempt &&
+    (plan?.fallbackFromModelId !== undefined || failedAttempt);
+  const failed = !completedAttempt && failedAttempt && !cancelled;
+  const completionLabel = busy
+    ? "Working for"
+    : cancelled
+      ? "Stopped after"
+      : failed
+        ? "Failed after"
+        : completedWithFallback
+          ? "Completed with fallback after"
+          : plan?.degraded
+            ? "Completed in degraded mode after"
+            : "Worked for";
 
   useEffect(() => {
     if (!busy) return;
@@ -77,7 +104,7 @@ export function ExecutionActivity({
     >
       <summary>
         <span>
-          {busy ? "Working" : "Worked"} for {elapsedLabel(elapsed)}
+          {completionLabel} {elapsedLabel(elapsed)}
         </span>
         <ChevronDown size={14} />
       </summary>
@@ -156,8 +183,9 @@ export function ExecutionActivity({
         )}
 
         <p className="activity-boundary">
-          Shows request analysis and execution events. Private model scratch work
-          is not exposed.
+          Shows request analysis and execution events. Structured reasoning fields
+          are withheld; text produced in the model's validated answer channel is
+          displayed.
         </p>
       </div>
     </details>

@@ -541,6 +541,73 @@ describe("RequestCompiler", () => {
     });
   });
 
+  it.each([
+    "continue",
+    "please continue",
+    "Please continue.",
+    "continue with it",
+    "keep going",
+    "go on",
+    "carry on",
+  ])(
+    "inherits the persisted intent for a bare continuation request: %s",
+    (prompt) => {
+      const compiled = compiler.compile({
+        conversationId: "conversation-1",
+        policy: "balanced",
+        messages: [
+          {
+            id: "message-1",
+            role: "user",
+            content: "Explore biomimetic applications to computer technology.",
+            createdAt: new Date(0).toISOString(),
+          },
+          assistantWithIntent("research", 1),
+          {
+            id: "message-2",
+            role: "user",
+            content: prompt,
+            createdAt: new Date(2).toISOString(),
+          },
+        ],
+      });
+
+      expect(compiled.requirements).toMatchObject({
+        intent: "research",
+        intentSource: "conversation",
+        capabilities: ["chat", "reasoning"],
+      });
+    },
+  );
+
+  it("inherits coding for an object-bearing continuation request", () => {
+    const compiled = compiler.compile({
+      conversationId: "conversation-1",
+      policy: "balanced",
+      messages: [
+        {
+          id: "message-1",
+          role: "user",
+          content: "Implement an Oracle query in Node.js.",
+          createdAt: new Date(0).toISOString(),
+        },
+        assistantWithIntent("coding", 1),
+        {
+          id: "message-2",
+          role: "user",
+          content: "Please continue the implementation.",
+          createdAt: new Date(2).toISOString(),
+        },
+      ],
+    });
+
+    expect(compiled.requirements).toMatchObject({
+      intent: "coding",
+      intentSource: "conversation",
+      capabilities: ["chat", "coding"],
+    });
+  });
+
   it("recovers the coding task after a low-confidence conversational misroute", () => {
     const misroutedConversation = assistantWithIntent("conversation", 3);
     if (misroutedConversation.execution) {

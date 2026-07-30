@@ -814,6 +814,10 @@ describe("Orchestrator resilience", () => {
       kind: "request" as const,
       message: "context is too large",
     },
+    {
+      kind: "unsafe_output" as const,
+      message: "model omitted the public-answer envelope",
+    },
   ])("does not open a provider circuit for a $kind failure", async ({ kind, message }) => {
     async function* failForRequest() {
       throw new ModelExecutionError(message, kind);
@@ -831,6 +835,36 @@ describe("Orchestrator resilience", () => {
       orchestrator.models.find((model) => model.id === codingModel.id)
         ?.available,
     ).toBe(true);
+  });
+
+  it("counts only provider failures across an intervening unsafe output", async () => {
+    const failureKinds = ["provider", "unsafe_output", "provider"] as const;
+    let run = 0;
+    async function* failInSequence() {
+      const kind = failureKinds[run++] ?? "provider";
+      throw new ModelExecutionError(`${kind} failure`, kind);
+    }
+    const orchestrator = new Orchestrator([
+      provider(codingModel, failInSequence),
+      provider(generalModel, () => answer("fallback response")),
+    ]);
+    const request = chatRequest("Write a TypeScript function.");
+
+    await collect(orchestrator, request);
+    expect(
+      orchestrator.models.find((model) => model.id === codingModel.id)
+        ?.available,
+    ).toBe(true);
+    await collect(orchestrator, request);
+    expect(
+      orchestrator.models.find((model) => model.id === codingModel.id)
+        ?.available,
+    ).toBe(true);
+    await collect(orchestrator, request);
+    expect(
+      orchestrator.models.find((model) => model.id === codingModel.id)
+        ?.available,
+    ).toBe(false);
   });
 
   it("does not open a circuit for a plain cancellation error", async () => {

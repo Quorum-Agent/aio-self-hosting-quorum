@@ -55,7 +55,7 @@ describe("loadConfig", () => {
     expect(loadConfig().dataDirectory).toBe(resolve(PROJECT_ROOT, "test-data"));
   });
 
-  it("configures general, coding, and reasoning model roles", () => {
+  it("keeps the prompt compiler separate from the default answer model", () => {
     delete process.env["QUORUM_LOCAL_MODEL"];
     delete process.env["QUORUM_LOCAL_CODING_MODEL"];
     delete process.env["QUORUM_LOCAL_REASONING_MODEL"];
@@ -68,20 +68,10 @@ describe("loadConfig", () => {
     expect(config.local.models).toEqual([
       expect.objectContaining({
         role: "general",
-        name: "qwen3:4b",
+        name: "qwen3.5:9b",
         specialties: [],
         contextWindow: 16_384,
-        reasoningEffort: "none",
-      }),
-      expect.objectContaining({
-        role: "coding",
-        name: "qwen2.5-coder:1.5b",
-        specialties: ["coding"],
-      }),
-      expect.objectContaining({
-        role: "reasoning",
-        name: "qwen3.5:2b",
-        specialties: ["reasoning"],
+        qualityRating: 75,
         reasoningEffort: "none",
       }),
     ]);
@@ -90,6 +80,28 @@ describe("loadConfig", () => {
       contextWindow: 4_096,
     });
     expect(config.local.warmOnStartup).toBe(true);
+  });
+
+  it("registers answer specialists only when explicitly configured", () => {
+    process.env["QUORUM_LOCAL_CODING_MODEL"] = "coding-candidate";
+    process.env["QUORUM_LOCAL_REASONING_MODEL"] = "reasoning-candidate";
+
+    expect(loadConfig().local.models).toEqual([
+      expect.objectContaining({
+        role: "general",
+        name: "qwen3.5:9b",
+      }),
+      expect.objectContaining({
+        role: "coding",
+        name: "coding-candidate",
+        specialties: ["coding"],
+      }),
+      expect.objectContaining({
+        role: "reasoning",
+        name: "reasoning-candidate",
+        specialties: ["reasoning"],
+      }),
+    ]);
   });
 
   it("keeps role settings separate when roles use the same physical model", () => {

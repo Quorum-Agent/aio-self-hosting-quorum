@@ -7,6 +7,14 @@ import {
 } from "./openai-compatible-provider.js";
 import type { ModelDescriptor, ModelStreamInput } from "@quorum/core";
 
+function finalAnswer(content: string): string {
+  return `<quorum-final>${content}</quorum-final>`;
+}
+
+function structuredAnswer(content: string): string {
+  return JSON.stringify({ answer: content });
+}
+
 function modelInput(
   runtimeModels: ModelDescriptor[] = [],
   policy: ModelStreamInput["request"]["policy"] = "balanced",
@@ -59,7 +67,7 @@ describe("OpenAICompatibleProvider", () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
         JSON.stringify({
-          choices: [{ message: { content: "I am Quorum." } }],
+          choices: [{ message: { content: finalAnswer("I am Quorum.") } }],
         }),
         { headers: { "content-type": "application/json" } },
       ),
@@ -163,6 +171,9 @@ describe("OpenAICompatibleProvider", () => {
     expect(systemMessage).toContain("Reasoning summary");
     expect(systemMessage).toContain("Never reveal hidden chain-of-thought");
     expect(systemMessage).toContain(
+      "exactly one <quorum-final>...</quorum-final> envelope",
+    );
+    expect(systemMessage).toContain(
       "request compiler classified this as conversation",
     );
     expect(systemMessage).toContain(
@@ -174,7 +185,7 @@ describe("OpenAICompatibleProvider", () => {
     });
     expect(JSON.parse(String(request.body))).toMatchObject({
       reasoning_effort: "none",
-      max_tokens: 768,
+      max_tokens: 1_536,
     });
   });
 
@@ -188,7 +199,9 @@ describe("OpenAICompatibleProvider", () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
         JSON.stringify({
-          choices: [{ message: { content: "Web search is available." } }],
+          choices: [
+            { message: { content: finalAnswer("Web search is available.") } },
+          ],
         }),
         { headers: { "content-type": "application/json" } },
       ),
@@ -249,7 +262,9 @@ describe("OpenAICompatibleProvider", () => {
     fetchMock.mockResolvedValueOnce(
       new Response(
         JSON.stringify({
-          choices: [{ message: { content: "Web search is unavailable." } }],
+          choices: [
+            { message: { content: finalAnswer("Web search is unavailable.") } },
+          ],
         }),
         { headers: { "content-type": "application/json" } },
       ),
@@ -271,18 +286,21 @@ describe("OpenAICompatibleProvider", () => {
   });
 
   it("uses Ollama's native stream with hidden thinking disabled", async () => {
+    const structured = structuredAnswer(
+      "Visible answer begins and continues.",
+    );
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
         [
           JSON.stringify({
             message: {
               thinking: "private scratch work",
-              content: "Visible ",
+              content: structured.slice(0, 18),
             },
             done: false,
           }),
           JSON.stringify({
-            message: { content: "answer." },
+            message: { content: structured.slice(18) },
             done: true,
           }),
           "",
@@ -310,8 +328,9 @@ describe("OpenAICompatibleProvider", () => {
       chunks.push(chunk);
     }
 
-    expect(chunks.join("")).toBe("Visible answer.");
+    expect(chunks.join("")).toBe("Visible answer begins and continues.");
     expect(chunks.join("")).not.toContain("private scratch work");
+    expect(chunks).toHaveLength(1);
     expect(fetchMock.mock.calls[0]?.[0]).toBe(
       "http://127.0.0.1:11434/api/chat",
     );
@@ -321,12 +340,208 @@ describe("OpenAICompatibleProvider", () => {
     expect(body).toMatchObject({
       model: "qwen3:4b",
       stream: true,
+      format: {
+        type: "object",
+        required: ["answer"],
+        additionalProperties: false,
+      },
       think: false,
       keep_alive: "30m",
       options: {
-        num_predict: 512,
+        num_predict: 768,
       },
     });
+    expect(body.messages[0]?.content).toContain(
+      'required JSON "answer" field',
+    );
+  });
+
+  it("does not let a post-terminal native record complete structured output", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          [
+            JSON.stringify({
+              message: { content: '{"answer":"SAFE' },
+              done: true,
+            }),
+            JSON.stringify({
+              message: { content: ' + POST_TERMINAL"}' },
+              done: false,
+            }),
+            "",
+          ].join("\n"),
+        ),
+      ),
+    );
+    const provider = new OpenAICompatibleProvider({
+      id: "local:qwen3.5:9b",
+      label: "qwen3.5:9b",
+      provider: "openai-compatible",
+      location: "local",
+      baseUrl: "http://127.0.0.1:11434/v1",
+      apiKey: "ollama",
+      model: "qwen3.5:9b",
+      contextWindow: 16_384,
+      qualityRating: 75,
+      capabilities: ["chat"],
+      reasoningEffort: "none",
+      nativeOllama: true,
+    });
+    const chunks: string[] = [];
+    const consume = async () => {
+      for await (const chunk of provider.stream(modelInput())) chunks.push(chunk);
+    };
+
+    await expect(consume()).rejects.toMatchObject({
+      kind: "unsafe_output",
+      message: "qwen3.5:9b returned no valid structured public answer.",
+    });
+    expect(chunks).toEqual([]);
+  });
+
+  it("rejects unstructured native content before yielding it", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        [
+          JSON.stringify({
+            message: {
+              content:
+                "Okay, the user asked to continue. Let me check the runtime inventory.",
+            },
+            done: false,
+          }),
+          JSON.stringify({
+            message: {
+              content:
+                " The active route is qwen3:4b. I should focus on the next examples.",
+            },
+            done: true,
+          }),
+          "",
+        ].join("\n"),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const provider = new OpenAICompatibleProvider({
+      id: "local:qwen3:4b",
+      label: "qwen3:4b",
+      provider: "openai-compatible",
+      location: "local",
+      baseUrl: "http://127.0.0.1:11434/v1",
+      apiKey: "ollama",
+      model: "qwen3:4b",
+      contextWindow: 16_384,
+      qualityRating: 60,
+      capabilities: ["chat"],
+      reasoningEffort: "none",
+      nativeOllama: true,
+    });
+    const chunks: string[] = [];
+    const consume = async () => {
+      for await (const chunk of provider.stream(modelInput())) {
+        chunks.push(chunk);
+      }
+    };
+
+    await expect(consume()).rejects.toMatchObject({
+      kind: "unsafe_output",
+      message: "qwen3:4b returned no valid structured public answer.",
+    });
+    expect(chunks).toEqual([]);
+  });
+
+  it("rejects a private reasoning preamble in native content", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          [
+            JSON.stringify({
+              message: {
+                content:
+                  "<think>private scratch work</think>\n\n" +
+                  finalAnswer("Visible answer."),
+              },
+              done: true,
+            }),
+            "",
+          ].join("\n"),
+        ),
+      ),
+    );
+    const provider = new OpenAICompatibleProvider({
+      id: "local:qwen3:4b",
+      label: "qwen3:4b",
+      provider: "openai-compatible",
+      location: "local",
+      baseUrl: "http://127.0.0.1:11434/v1",
+      apiKey: "ollama",
+      model: "qwen3:4b",
+      contextWindow: 16_384,
+      qualityRating: 60,
+      capabilities: ["chat"],
+      reasoningEffort: "none",
+      nativeOllama: true,
+    });
+
+    const chunks: string[] = [];
+    const consume = async () => {
+      for await (const chunk of provider.stream(modelInput())) {
+        chunks.push(chunk);
+      }
+    };
+
+    await expect(consume()).rejects.toMatchObject({
+      kind: "unsafe_output",
+      message: "qwen3:4b returned no valid structured public answer.",
+    });
+    expect(chunks).toEqual([]);
+  });
+
+  it("preserves private-tag examples that are part of a public answer", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          [
+            JSON.stringify({
+              message: {
+                content: structuredAnswer(
+                  "Use `<analysis>public application data</analysis>` for this example.",
+                ),
+              },
+              done: true,
+            }),
+            "",
+          ].join("\n"),
+        ),
+      ),
+    );
+    const provider = new OpenAICompatibleProvider({
+      id: "local:qwen3.5:9b",
+      label: "qwen3.5:9b",
+      provider: "openai-compatible",
+      location: "local",
+      baseUrl: "http://127.0.0.1:11434/v1",
+      apiKey: "ollama",
+      model: "qwen3.5:9b",
+      contextWindow: 16_384,
+      qualityRating: 75,
+      capabilities: ["chat"],
+      reasoningEffort: "none",
+      nativeOllama: true,
+    });
+
+    const chunks: string[] = [];
+    for await (const chunk of provider.stream(modelInput())) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks).toEqual([
+      "Use `<analysis>public application data</analysis>` for this example.",
+    ]);
   });
 
   it("falls back to OpenAI-compatible generation when the native route is absent", async () => {
@@ -336,7 +551,9 @@ describe("OpenAICompatibleProvider", () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            choices: [{ message: { content: "Fallback answer." } }],
+            choices: [
+              { message: { content: finalAnswer("Fallback answer.") } },
+            ],
           }),
           { headers: { "content-type": "application/json" } },
         ),
@@ -365,6 +582,142 @@ describe("OpenAICompatibleProvider", () => {
     expect(fetchMock.mock.calls[1]?.[0]).toBe(
       "http://127.0.0.1:11434/v1/chat/completions",
     );
+  });
+
+  it("rejects unenveloped JSON fallback content without yielding it", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(new Response("not found", { status: 404 }))
+        .mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({
+              choices: [
+                {
+                  message: {
+                    content:
+                      "Let me think through the private reasoning step by step.",
+                  },
+                },
+              ],
+            }),
+            { headers: { "content-type": "application/json" } },
+          ),
+        ),
+    );
+    const provider = new OpenAICompatibleProvider({
+      id: "local:compatible",
+      label: "Compatible model",
+      provider: "openai-compatible",
+      location: "local",
+      baseUrl: "http://127.0.0.1:11434/v1",
+      apiKey: "local",
+      model: "compatible",
+      contextWindow: 16_384,
+      qualityRating: 50,
+      capabilities: ["chat"],
+      nativeOllama: true,
+    });
+    const chunks: string[] = [];
+    const consume = async () => {
+      for await (const chunk of provider.stream(modelInput())) chunks.push(chunk);
+    };
+
+    await expect(consume()).rejects.toMatchObject({
+      kind: "unsafe_output",
+      message: "Compatible model returned no Quorum final-answer envelope.",
+    });
+    expect(chunks).toEqual([]);
+  });
+
+  it("rejects a visually empty JSON answer without yielding it", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(new Response("not found", { status: 404 }))
+        .mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({
+              choices: [
+                { message: { content: finalAnswer(" \n\t\u200B ") } },
+              ],
+            }),
+            { headers: { "content-type": "application/json" } },
+          ),
+        ),
+    );
+    const provider = new OpenAICompatibleProvider({
+      id: "local:compatible",
+      label: "Compatible model",
+      provider: "openai-compatible",
+      location: "local",
+      baseUrl: "http://127.0.0.1:11434/v1",
+      apiKey: "local",
+      model: "compatible",
+      contextWindow: 16_384,
+      qualityRating: 50,
+      capabilities: ["chat"],
+      nativeOllama: true,
+    });
+    const chunks: string[] = [];
+    const consume = async () => {
+      for await (const chunk of provider.stream(modelInput())) chunks.push(chunk);
+    };
+
+    await expect(consume()).rejects.toMatchObject({
+      kind: "unsafe_output",
+      message: "Compatible model returned an empty Quorum final-answer envelope.",
+    });
+    expect(chunks).toEqual([]);
+  });
+
+  it("rejects multiple or surrounded JSON envelopes without yielding them", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(new Response("not found", { status: 404 }))
+        .mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({
+              choices: [
+                {
+                  message: {
+                    content:
+                      "Scratch quotes <quorum-final>ATTACKER</quorum-final>. " +
+                      "<quorum-final>SAFE</quorum-final>",
+                  },
+                },
+              ],
+            }),
+            { headers: { "content-type": "application/json" } },
+          ),
+        ),
+    );
+    const provider = new OpenAICompatibleProvider({
+      id: "local:compatible",
+      label: "Compatible model",
+      provider: "openai-compatible",
+      location: "local",
+      baseUrl: "http://127.0.0.1:11434/v1",
+      apiKey: "local",
+      model: "compatible",
+      contextWindow: 16_384,
+      qualityRating: 50,
+      capabilities: ["chat"],
+      nativeOllama: true,
+    });
+    const chunks: string[] = [];
+    const consume = async () => {
+      for await (const chunk of provider.stream(modelInput())) chunks.push(chunk);
+    };
+
+    await expect(consume()).rejects.toMatchObject({
+      kind: "unsafe_output",
+    });
+    expect(chunks).toEqual([]);
   });
 
   it("rejects context that cannot fit before making a provider request", async () => {
@@ -404,7 +757,7 @@ describe("OpenAICompatibleProvider", () => {
       "fetch",
       vi.fn().mockResolvedValue(
         new Response(
-          'data: {"choices":[{"delta":{"content":"complete"},"finish_reason":"stop"}]}',
+          'data: {"choices":[{"delta":{"content":"<quorum-final>complete</quorum-final>"},"finish_reason":"stop"}]}',
           { headers: { "content-type": "text/event-stream" } },
         ),
       ),
@@ -428,12 +781,86 @@ describe("OpenAICompatibleProvider", () => {
     expect(chunks).toEqual(["complete"]);
   });
 
+  it("does not let a post-terminal SSE frame complete an envelope", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          [
+            'data: {"choices":[{"delta":{"content":"<quorum-final>SAFE"},"finish_reason":"stop"}]}',
+            "",
+            'data: {"choices":[{"delta":{"content":" + POST_TERMINAL</quorum-final>"},"finish_reason":null}]}',
+            "",
+            "",
+          ].join("\n"),
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+      ),
+    );
+    const provider = new OpenAICompatibleProvider({
+      id: "local:stream",
+      label: "stream",
+      provider: "openai-compatible",
+      location: "local",
+      baseUrl: "http://127.0.0.1:11434/v1",
+      apiKey: "ollama",
+      model: "stream",
+      contextWindow: 8_192,
+      qualityRating: 10,
+      capabilities: ["chat"],
+    });
+    const chunks: string[] = [];
+    const consume = async () => {
+      for await (const chunk of provider.stream(modelInput())) chunks.push(chunk);
+    };
+
+    await expect(consume()).rejects.toMatchObject({
+      kind: "unsafe_output",
+      message: "stream returned an incomplete Quorum final-answer envelope.",
+    });
+    expect(chunks).toEqual([]);
+  });
+
+  it("rejects unenveloped SSE content without yielding it", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          'data: {"choices":[{"delta":{"content":"Reasoning: inspect private context."},"finish_reason":"stop"}]}',
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+      ),
+    );
+    const provider = new OpenAICompatibleProvider({
+      id: "local:stream",
+      label: "stream",
+      provider: "openai-compatible",
+      location: "local",
+      baseUrl: "http://127.0.0.1:11434/v1",
+      apiKey: "ollama",
+      model: "stream",
+      contextWindow: 8_192,
+      qualityRating: 10,
+      capabilities: ["chat"],
+    });
+    const chunks: string[] = [];
+    const consume = async () => {
+      for await (const chunk of provider.stream(modelInput())) chunks.push(chunk);
+    };
+
+    await expect(consume()).rejects.toMatchObject({
+      kind: "unsafe_output",
+      message: "stream returned no Quorum final-answer envelope.",
+    });
+    expect(chunks).toEqual([]);
+  });
+
   it("makes an output-limit truncation visible to the user", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue(
         new Response(
-          'data: {"choices":[{"delta":{"content":"incomplete"},"finish_reason":"length"}]}',
+          'data: {"choices":[{"delta":{"content":"<quorum-final>complete but limited</quorum-final>"},"finish_reason":"length"}]}',
           { headers: { "content-type": "text/event-stream" } },
         ),
       ),
@@ -454,18 +881,18 @@ describe("OpenAICompatibleProvider", () => {
     const chunks: string[] = [];
     for await (const chunk of provider.stream(modelInput())) chunks.push(chunk);
 
-    expect(chunks.join("")).toContain("incomplete");
+    expect(chunks.join("")).toContain("complete but limited");
     expect(chunks.join("")).toContain(
-      "reached Quorum's 512-token response limit",
+      "reached Quorum's 768-token response limit",
     );
   });
 
-  it("rejects a truncated SSE stream after exposing its partial chunk", async () => {
+  it("rejects an SSE stream without a terminal marker before exposing content", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue(
         new Response(
-          'data: {"choices":[{"delta":{"content":"partial"}}]}',
+          'data: {"choices":[{"delta":{"content":"<quorum-final>partial response that has already started"}}]}',
           { headers: { "content-type": "text/event-stream" } },
         ),
       ),
@@ -490,10 +917,44 @@ describe("OpenAICompatibleProvider", () => {
     await expect(consume()).rejects.toThrow(
       "stream ended before a terminal marker",
     );
-    expect(chunks).toEqual(["partial"]);
+    expect(chunks).toEqual([]);
   });
 
-  it("aborts a provider that never produces its first output", async () => {
+  it("rejects a truncated partial closing tag before exposing content", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          'data: {"choices":[{"delta":{"content":"<quorum-final>partial</quorum-fi"},"finish_reason":"length"}]}',
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+      ),
+    );
+    const provider = new OpenAICompatibleProvider({
+      id: "local:limited",
+      label: "limited",
+      provider: "openai-compatible",
+      location: "local",
+      baseUrl: "http://127.0.0.1:11434/v1",
+      apiKey: "ollama",
+      model: "limited",
+      contextWindow: 8_192,
+      qualityRating: 10,
+      capabilities: ["chat"],
+    });
+    const chunks: string[] = [];
+    const consume = async () => {
+      for await (const chunk of provider.stream(modelInput())) chunks.push(chunk);
+    };
+
+    await expect(consume()).rejects.toMatchObject({
+      kind: "unsafe_output",
+      message: "limited returned an incomplete Quorum final-answer envelope.",
+    });
+    expect(chunks).toEqual([]);
+  });
+
+  it("aborts a provider that never produces its first activity", async () => {
     vi.useFakeTimers();
     vi.stubGlobal(
       "fetch",
@@ -527,9 +988,323 @@ describe("OpenAICompatibleProvider", () => {
     };
 
     const expectation = expect(consume()).rejects.toThrow(
-      "timed out waiting for first output after 10ms",
+      "timed out waiting for first provider activity after 10ms",
     );
     await vi.advanceTimersByTimeAsync(11);
+    await expectation;
+  });
+
+  it("bounds a stalled native stream after its first activity", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url: string | URL | Request, init?: RequestInit) => {
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(
+              new TextEncoder().encode(
+                `${JSON.stringify({
+                  message: { content: "private preamble" },
+                  done: false,
+                })}\n`,
+              ),
+            );
+            init?.signal?.addEventListener(
+              "abort",
+              () => controller.error(new Error("aborted")),
+              { once: true },
+            );
+          },
+        });
+        return Promise.resolve(new Response(body));
+      }),
+    );
+    const provider = new OpenAICompatibleProvider({
+      id: "local:timeout",
+      label: "timeout",
+      provider: "openai-compatible",
+      location: "local",
+      baseUrl: "http://127.0.0.1:11434/v1",
+      apiKey: "ollama",
+      model: "timeout",
+      contextWindow: 8_192,
+      qualityRating: 10,
+      capabilities: ["chat"],
+      nativeOllama: true,
+      timeouts: { firstTokenMs: 10, idleMs: 20, totalMs: 30 },
+    });
+    const consume = async () => {
+      for await (const _chunk of provider.stream(modelInput())) {
+        // Unvalidated model content must not become visible output.
+      }
+    };
+
+    const expectation = expect(consume()).rejects.toThrow(
+      "stopped responding for 20ms",
+    );
+    await vi.advanceTimersByTimeAsync(21);
+    await expectation;
+  });
+
+  it("bounds a stalled SSE stream after its first activity", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url: string | URL | Request, init?: RequestInit) => {
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(
+              new TextEncoder().encode(
+                'data: {"choices":[{"delta":{"content":"private preamble"},"finish_reason":null}]}\n\n',
+              ),
+            );
+            init?.signal?.addEventListener(
+              "abort",
+              () => controller.error(new Error("aborted")),
+              { once: true },
+            );
+          },
+        });
+        return Promise.resolve(
+          new Response(body, {
+            headers: { "content-type": "text/event-stream" },
+          }),
+        );
+      }),
+    );
+    const provider = new OpenAICompatibleProvider({
+      id: "local:timeout",
+      label: "timeout",
+      provider: "openai-compatible",
+      location: "local",
+      baseUrl: "http://127.0.0.1:11434/v1",
+      apiKey: "ollama",
+      model: "timeout",
+      contextWindow: 8_192,
+      qualityRating: 10,
+      capabilities: ["chat"],
+      timeouts: { firstTokenMs: 10, idleMs: 20, totalMs: 30 },
+    });
+    const consume = async () => {
+      for await (const _chunk of provider.stream(modelInput())) {
+        // Unvalidated compatibility content must not become visible output.
+      }
+    };
+
+    const expectation = expect(consume()).rejects.toThrow(
+      "stopped responding for 20ms",
+    );
+    await vi.advanceTimersByTimeAsync(21);
+    await expectation;
+  });
+
+  it("allows active generation to finish after the first-activity window", async () => {
+    vi.useFakeTimers();
+    const encoder = new TextEncoder();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url: string | URL | Request, init?: RequestInit) => {
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            const enqueue = (
+              delay: number,
+              content: string,
+              done: boolean,
+            ) => {
+              setTimeout(
+                () =>
+                  controller.enqueue(
+                    encoder.encode(
+                      `${JSON.stringify({
+                        message: { content },
+                        done,
+                      })}\n`,
+                    ),
+                  ),
+                delay,
+              );
+            };
+            enqueue(5, '{"answer":"Slow', false);
+            enqueue(14, " but active", false);
+            enqueue(23, ' response."}', true);
+            init?.signal?.addEventListener(
+              "abort",
+              () => controller.error(new Error("aborted")),
+              { once: true },
+            );
+          },
+        });
+        return Promise.resolve(new Response(body));
+      }),
+    );
+    const provider = new OpenAICompatibleProvider({
+      id: "local:slow",
+      label: "slow",
+      provider: "openai-compatible",
+      location: "local",
+      baseUrl: "http://127.0.0.1:11434/v1",
+      apiKey: "ollama",
+      model: "slow",
+      contextWindow: 8_192,
+      qualityRating: 10,
+      capabilities: ["chat"],
+      nativeOllama: true,
+      timeouts: {
+        firstTokenMs: 10,
+        idleMs: 12,
+        validatedOutputMs: 40,
+        totalMs: 50,
+      },
+    });
+    const consume = async () => {
+      const chunks: string[] = [];
+      for await (const chunk of provider.stream(modelInput())) chunks.push(chunk);
+      return chunks;
+    };
+
+    const result = consume();
+    await vi.advanceTimersByTimeAsync(24);
+    await expect(result).resolves.toEqual(["Slow but active response."]);
+  });
+
+  it("allows an active JSON response to finish after the first-activity window", async () => {
+    vi.useFakeTimers();
+    const encoder = new TextEncoder();
+    const responseText = JSON.stringify({
+      choices: [
+        {
+          message: {
+            content: finalAnswer("Slow compatible response."),
+          },
+        },
+      ],
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url: string | URL | Request, init?: RequestInit) => {
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            const first = Math.ceil(responseText.length / 3);
+            const second = Math.ceil((responseText.length * 2) / 3);
+            setTimeout(
+              () => controller.enqueue(encoder.encode(responseText.slice(0, first))),
+              5,
+            );
+            setTimeout(
+              () =>
+                controller.enqueue(
+                  encoder.encode(responseText.slice(first, second)),
+                ),
+              14,
+            );
+            setTimeout(() => {
+              controller.enqueue(encoder.encode(responseText.slice(second)));
+              controller.close();
+            }, 23);
+            init?.signal?.addEventListener(
+              "abort",
+              () => controller.error(new Error("aborted")),
+              { once: true },
+            );
+          },
+        });
+        return Promise.resolve(
+          new Response(body, {
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      }),
+    );
+    const provider = new OpenAICompatibleProvider({
+      id: "local:slow-json",
+      label: "slow-json",
+      provider: "openai-compatible",
+      location: "local",
+      baseUrl: "http://127.0.0.1:11434/v1",
+      apiKey: "ollama",
+      model: "slow-json",
+      contextWindow: 8_192,
+      qualityRating: 10,
+      capabilities: ["chat"],
+      timeouts: {
+        firstTokenMs: 10,
+        idleMs: 12,
+        validatedOutputMs: 40,
+        totalMs: 50,
+      },
+    });
+    const consume = async () => {
+      const chunks: string[] = [];
+      for await (const chunk of provider.stream(modelInput())) chunks.push(chunk);
+      return chunks;
+    };
+
+    const result = consume();
+    await vi.advanceTimersByTimeAsync(24);
+    await expect(result).resolves.toEqual(["Slow compatible response."]);
+  });
+
+  it("bounds active but invalid output by the validation deadline", async () => {
+    vi.useFakeTimers();
+    const encoder = new TextEncoder();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url: string | URL | Request, init?: RequestInit) => {
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            for (const delay of [5, 14, 23, 32]) {
+              setTimeout(
+                () =>
+                  controller.enqueue(
+                    encoder.encode(
+                      `${JSON.stringify({
+                        message: { content: "unvalidated" },
+                        done: false,
+                      })}\n`,
+                    ),
+                  ),
+                delay,
+              );
+            }
+            init?.signal?.addEventListener(
+              "abort",
+              () => controller.error(new Error("aborted")),
+              { once: true },
+            );
+          },
+        });
+        return Promise.resolve(new Response(body));
+      }),
+    );
+    const provider = new OpenAICompatibleProvider({
+      id: "local:invalid",
+      label: "invalid",
+      provider: "openai-compatible",
+      location: "local",
+      baseUrl: "http://127.0.0.1:11434/v1",
+      apiKey: "ollama",
+      model: "invalid",
+      contextWindow: 8_192,
+      qualityRating: 10,
+      capabilities: ["chat"],
+      nativeOllama: true,
+      timeouts: {
+        firstTokenMs: 10,
+        idleMs: 12,
+        validatedOutputMs: 30,
+        totalMs: 50,
+      },
+    });
+    const consume = async () => {
+      for await (const _chunk of provider.stream(modelInput())) {
+        // Invalid output must remain hidden until the validation deadline.
+      }
+    };
+
+    const expectation = expect(consume()).rejects.toThrow(
+      "did not produce a validated answer within 30ms",
+    );
+    await vi.advanceTimersByTimeAsync(31);
     await expectation;
   });
 
@@ -542,7 +1317,7 @@ describe("OpenAICompatibleProvider", () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            choices: [{ message: { content: "negotiated" } }],
+            choices: [{ message: { content: finalAnswer("negotiated") } }],
           }),
           { headers: { "content-type": "application/json" } },
         ),
@@ -640,7 +1415,9 @@ describe("OpenAICompatibleProvider", () => {
       vi.fn().mockResolvedValue(
         new Response(
           JSON.stringify({
-            choices: [{ message: { content: "x".repeat(1_000) } }],
+            choices: [
+              { message: { content: finalAnswer("x".repeat(1_000)) } },
+            ],
           }),
           { headers: { "content-type": "application/json" } },
         ),

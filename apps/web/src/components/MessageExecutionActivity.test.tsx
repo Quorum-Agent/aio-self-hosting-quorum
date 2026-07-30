@@ -69,6 +69,8 @@ describe("MessageExecutionActivity", () => {
     expect(markup).toContain("Worked for 1.5s");
     expect(markup).toContain("Adapt the dynamic pivot query for Oracle.");
     expect(markup).toContain("Generate with coding expert");
+    expect(markup).toContain("Structured reasoning fields");
+    expect(markup).toContain("answer channel is displayed");
     expect(markup).not.toContain("<details open=");
   });
 
@@ -82,6 +84,65 @@ describe("MessageExecutionActivity", () => {
         />,
       ),
     ).toBe("");
+  });
+
+  it("keeps failed fallback activity visible for a standard response", () => {
+    const message = historicalMessage("standard");
+    if (!message.execution) throw new Error("Expected execution metadata.");
+    message.execution.plan.fallbackFromModelId = "local:general:test";
+    message.execution.plan.modelId = "local:scaffold";
+    message.execution.plan.attempts = [
+      {
+        modelId: "local:general:test",
+        route: "local",
+        status: "failed",
+        contextMayHaveBeenTransmitted: false,
+        detail: "The model returned no Quorum final-answer envelope.",
+      },
+      {
+        modelId: "local:scaffold",
+        route: "local",
+        status: "completed",
+        contextMayHaveBeenTransmitted: false,
+      },
+    ];
+
+    const markup = renderToStaticMarkup(
+      <MessageExecutionActivity
+        message={message}
+        models={[]}
+        defaultExpanded={false}
+      />,
+    );
+
+    expect(markup).toContain("Completed with fallback");
+    expect(markup).toContain("1 model swap");
+    expect(markup).toContain("<details class=\"execution-activity\" open=\"\"");
+  });
+
+  it("labels a cancelled execution as stopped rather than as a fallback", () => {
+    const message = historicalMessage("standard");
+    if (!message.execution) throw new Error("Expected execution metadata.");
+    message.execution.plan.attempts = [
+      {
+        modelId: "local:coding:test",
+        route: "local",
+        status: "failed",
+        contextMayHaveBeenTransmitted: false,
+        detail: "The request was cancelled.",
+      },
+    ];
+
+    const markup = renderToStaticMarkup(
+      <MessageExecutionActivity
+        message={message}
+        models={[]}
+        defaultExpanded={false}
+      />,
+    );
+
+    expect(markup).toContain("Stopped after 1.5s");
+    expect(markup).not.toContain("Completed with fallback");
   });
 
   it("keeps web-search sources and egress disclosure in historical activity", () => {

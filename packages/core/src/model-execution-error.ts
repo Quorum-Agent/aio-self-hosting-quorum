@@ -1,4 +1,8 @@
-export type ModelFailureKind = "cancelled" | "request" | "provider";
+export type ModelFailureKind =
+  | "cancelled"
+  | "request"
+  | "provider"
+  | "unsafe_output";
 
 export class ModelExecutionError extends Error {
   readonly kind: ModelFailureKind;

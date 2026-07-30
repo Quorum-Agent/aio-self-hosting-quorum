@@ -582,7 +582,7 @@ export default function App() {
                 </div>
               ))}
               {!activityMessageId && detailedActivity}
-              {streamingContent && (
+              {(busy || streamingContent) && (
                 <article
                   className="message message-assistant is-streaming"
                   role="status"
@@ -594,7 +594,10 @@ export default function App() {
                   </div>
                   <div>
                     <span>Quorum</span>
-                    <p>{streamingContent}<i className="cursor" /></p>
+                    <p>
+                      {streamingContent || "Generating and validating…"}
+                      <i className="cursor" />
+                    </p>
                   </div>
                 </article>
               )}

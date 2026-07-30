@@ -61,27 +61,21 @@ responder and exposes that decision in the execution panel.
 
 ### Connect Ollama
 
-The default configuration expects Ollama's OpenAI-compatible endpoint, a `qwen3:4b`
-general model, and a `qwen3.5:2b` prompt-analysis and reasoning expert:
+The default configuration expects Ollama's OpenAI-compatible endpoint, a
+`qwen3.5:9b` main model, and a `qwen3.5:2b` prompt expert:
 
 ```bash
-ollama pull qwen3:4b
+ollama pull qwen3.5:9b
 ollama pull qwen3.5:2b
-```
-
-The optional coding expert can be installed before Quorum starts:
-
-```bash
-ollama pull qwen2.5-coder:1.5b
 ```
 
 The prompt expert extracts a faithful task summary and intent before routing. Strong
 deterministic signals, a maintained software vocabulary, and sensitive-data detection
-remain authoritative if the model conflicts or fails. Coding work routes to the coding
-expert, math and logic work to the reasoning expert, and ordinary conversation to the
-general model. Best quality
-still accounts for model quality, but a matching specialist can overcome a small
-static quality gap.
+remain authoritative if the model conflicts or fails. It is not registered as an
+answer model. The main model owns conversation continuity and all user-facing answers
+unless an explicitly configured specialist has passed evaluation for the user's
+workload. Best quality still accounts for model quality, and an opt-in matching
+specialist can overcome a small static quality gap.
 
 At startup, Quorum warms the prompt expert first and the default general model last,
 keeping both alive through Ollama for 30 minutes. This moves the initial model-load
@@ -94,20 +88,20 @@ Restart Quorum after installing models. To change any model role:
 copy .env.example .env
 ```
 
-Then change `QUORUM_LOCAL_MODEL`, `QUORUM_LOCAL_PROMPT_MODEL`,
-`QUORUM_LOCAL_CODING_MODEL`, or `QUORUM_LOCAL_REASONING_MODEL` in `.env`. Quorum only
+Then change `QUORUM_LOCAL_MODEL` or `QUORUM_LOCAL_PROMPT_MODEL` in `.env`. Optional
+`QUORUM_LOCAL_CODING_MODEL` and `QUORUM_LOCAL_REASONING_MODEL` values add answer
+specialists; leaving them unset keeps user-facing generation on the main brain. Quorum only
 registers a role after the configured model appears in the endpoint's `/models`
 response. Runtime status distinguishes discovery from startup warmup, and execution
 failures feed the runtime circuit breaker.
 
-Quorum enforces a conservative 16,384-token dispatch budget for each default role.
+Quorum enforces a conservative 16,384-token dispatch budget for the default answer
+model and a 4,096-token budget for the prompt expert.
 Override it only when the endpoint is configured to execute a different budget:
 
 ```dotenv
 QUORUM_LOCAL_CONTEXT_WINDOW=16384
 QUORUM_LOCAL_PROMPT_CONTEXT_WINDOW=4096
-QUORUM_LOCAL_CODING_CONTEXT_WINDOW=16384
-QUORUM_LOCAL_REASONING_CONTEXT_WINDOW=16384
 ```
 
 ### Optional cloud fallback

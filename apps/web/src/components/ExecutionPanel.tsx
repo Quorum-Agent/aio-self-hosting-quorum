@@ -195,7 +195,7 @@ export function ExecutionPanel({
                 selectedModel.role ? `${selectedModel.role} role` : undefined,
                 selectedModel.inference?.reasoningEffort
                   ? selectedModel.inference.reasoningEffort === "none"
-                    ? "private reasoning filtered"
+                    ? "structured reasoning disabled"
                     : `reasoning ${selectedModel.inference.reasoningEffort}`
                   : undefined,
               ]

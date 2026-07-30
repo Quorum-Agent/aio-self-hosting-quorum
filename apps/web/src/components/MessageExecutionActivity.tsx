@@ -14,11 +14,17 @@ export function MessageExecutionActivity({
   defaultExpanded,
 }: MessageExecutionActivityProps) {
   const execution = message.execution;
+  const hasDegradedExecution =
+    execution?.plan.degraded === true ||
+    execution?.plan.fallbackFromModelId !== undefined ||
+    execution?.plan.attempts?.some((attempt) => attempt.status === "failed") ===
+      true;
   if (
     message.role !== "assistant" ||
     !execution ||
     (execution.plan.verbosity !== "detailed" &&
-      !execution.plan.webSearch)
+      !execution.plan.webSearch &&
+      !hasDegradedExecution)
   ) {
     return null;
   }
@@ -31,7 +37,11 @@ export function MessageExecutionActivity({
       busy={false}
       startedAt={execution.startedAt}
       completedAt={execution.completedAt}
-      defaultExpanded={defaultExpanded || Boolean(execution.plan.webSearch)}
+      defaultExpanded={
+        defaultExpanded ||
+        Boolean(execution.plan.webSearch) ||
+        hasDegradedExecution
+      }
     />
   );
 }

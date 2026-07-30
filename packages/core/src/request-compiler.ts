@@ -64,7 +64,7 @@ const PAYMENT_CARD_CANDIDATE_PATTERN = /(?:\d[ -]*?){13,19}/g;
 const COURTESY_PREFIX_PATTERN =
   /^(?:(?:thank you|thanks(?:\s+(?:so much|a lot))?|okay|ok|great|got it|understood|makes sense|perfect)[\s.!,:;-]+)+/i;
 const FOLLOW_UP_PATTERN =
-  /^(?:(?:and|also|now|then|next|okay,?\s+now)\b|what(?:'s| is)\s+(?:the\s+)?(?:latest|current)\b|(?:what|how) about\s+(?:(?:it|that|this|those|them)\b|(?:for|in|on|with|using|doing|implementing|running)\b)|(?:please\s+)?(?:make|change|fix|explain|summari[sz]e|continue|retry|redo|add|remove|update|use|adapt|integrate|convert|port)\s+(?:it|that|this|those|them)\b|(?:why|how|are you sure)\??$)/i;
+  /^(?:(?:and|also|now|then|next|okay,?\s+now)\b|what(?:'s| is)\s+(?:the\s+)?(?:latest|current)\b|(?:what|how) about\s+(?:(?:it|that|this|those|them)\b|(?:for|in|on|with|using|doing|implementing|running)\b)|(?:please\s+)?(?:continue|retry|redo)(?:\s+(?:(?:with\s+)?(?:it|that|this|those|them)|(?:the|this|that)\s+[a-z0-9_-]+(?:\s+[a-z0-9_-]+){0,4}))?\s*[.!?]*$|(?:please\s+)?(?:keep going|go on|carry on)\s*[.!?]*$|(?:please\s+)?(?:make|change|fix|explain|summari[sz]e|add|remove|update|use|adapt|integrate|convert|port)\s+(?:it|that|this|those|them)\b|(?:why|how|are you sure)\??$)/i;
 const COMPARATIVE_FOLLOW_UP_PATTERN =
   /^(?:(?:are|is)\s+there\s+(?:(?:any|a)\s+)?(?:better|other|alternative)\s+(?:ways?|options?|approach(?:es)?|methods?|solutions?)|(?:what|any)\s+(?:other|better|alternative)\s+(?:ways?|options?|approach(?:es)?|methods?|solutions?)(?:\s+are\s+there)?|(?:any\s+)?alternatives?|what\s+else)\??$/i;
 const MODAL_REFERENTIAL_FOLLOW_UP_PATTERN =

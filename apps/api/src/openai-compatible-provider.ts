@@ -19,6 +19,7 @@ import {
 interface ProviderTimeouts {
   firstTokenMs: number;
   idleMs: number;
+  validatedOutputMs: number;
   totalMs: number;
 }
 
@@ -46,6 +47,7 @@ interface CompletionChunk {
   choices?: Array<{
     delta?: {
       content?: string;
+      reasoning_content?: string;
     };
     finish_reason?: string | null;
   }>;
@@ -63,6 +65,7 @@ interface CompletionResponse {
 interface OllamaStreamChunk {
   message?: {
     content?: string;
+    thinking?: string;
   };
   done?: boolean;
   done_reason?: string;
@@ -72,12 +75,13 @@ interface OllamaStreamChunk {
 const DEFAULT_TIMEOUTS: ProviderTimeouts = {
   firstTokenMs: 20_000,
   idleMs: 15_000,
+  validatedOutputMs: 60_000,
   totalMs: 90_000,
 };
 const VERBOSITY_OUTPUT_LIMITS: Record<ResponseVerbosity, number> = {
-  concise: 256,
-  standard: 512,
-  detailed: 768,
+  concise: 384,
+  standard: 768,
+  detailed: 1_536,
 };
 const MAX_ERROR_BODY_BYTES = 16 * 1024;
 const MAX_JSON_BODY_BYTES = 1024 * 1024;
@@ -90,7 +94,7 @@ const PRODUCT_CONTEXT = [
   "You are Quorum, a local-first conversational assistant.",
   "Respond as Quorum rather than introducing yourself as the underlying model.",
   "Quorum currently provides text chat, local conversation persistence, execution policies,",
-  "model routing, streamed responses, and an execution inspector.",
+  "model routing, streamed execution events, validated model responses, and an execution inspector.",
   "Attachments, microphone input, image analysis, project memory, and device control",
   "are not available yet.",
   "Do not claim to have used unavailable capabilities or live data.",
@@ -98,14 +102,28 @@ const PRODUCT_CONTEXT = [
 
 const RESPONSE_GUIDANCE: Record<ResponseVerbosity, string> = {
   concise:
-    "Give a direct, compact answer. Include only context needed for correctness or safety.",
+    "Return only the final user-facing answer. Give a direct, compact answer. " +
+    "Include only context needed for correctness or safety.",
   standard:
-    "Use moderate detail, clear structure, and explain important conclusions when useful.",
+    "Return only the final user-facing answer. Use moderate detail, clear structure, " +
+    "and explain important conclusions when useful.",
   detailed:
-    "Lead with the answer, then develop it with useful examples or implementation detail. " +
+    "Return only the final user-facing answer. Lead with the answer, then develop it " +
+    "with useful examples or implementation detail. " +
     "End with a short 'Reasoning summary' that states the decisive factors and conclusion. " +
     "Never reveal hidden chain-of-thought, private scratch work, or token-by-token reasoning.",
 };
+const PUBLIC_ANSWER_OPEN = "<quorum-final>";
+const PUBLIC_ANSWER_CLOSE = "</quorum-final>";
+const PUBLIC_ANSWER_SCHEMA = {
+  type: "object",
+  properties: {
+    answer: { type: "string" },
+  },
+  required: ["answer"],
+  additionalProperties: false,
+} as const;
+type PublicAnswerProtocol = "structured" | "envelope";
 
 function toProviderMessage(message: ChatMessage) {
   if (message.role === "tool") {
@@ -149,6 +167,7 @@ function systemContext(
   verbosity: ResponseVerbosity,
   requestAnalysis: ModelStreamInput["request"]["analysis"],
   runtimeTools: ModelStreamInput["runtimeTools"],
+  answerProtocol: PublicAnswerProtocol,
 ) {
   const policyDefinition = getPolicy(policy);
   const routedModels = runtimeModels.filter(
@@ -219,6 +238,12 @@ function systemContext(
           ? "Web search is configured but unavailable under the active execution policy. "
         : "Web search is not configured for this runtime. ") +
       `Response detail is ${verbosity}: ${RESPONSE_GUIDANCE[verbosity]} ` +
+      (answerProtocol === "structured"
+        ? 'Output protocol: put the complete user-facing answer only in the required JSON "answer" field. '
+        : `Output protocol: the entire response must be exactly one ${PUBLIC_ANSWER_OPEN}...` +
+          `${PUBLIC_ANSWER_CLOSE} envelope, apart from optional outer whitespace. Put the complete ` +
+          "user-facing answer inside it. Do not emit a preamble, suffix, second envelope, or either " +
+          "reserved tag inside the answer. ") +
       "The execution inspector separately discloses the selected model and route.",
   };
 }
@@ -244,30 +269,36 @@ function parseCompletionFrame(frame: string): {
   contents: string[];
   terminal: boolean;
   truncated: boolean;
+  activity: boolean;
 } {
   const contents: string[] = [];
   let terminal = false;
   let truncated = false;
+  let activity = false;
   for (const line of frame.split(/\r?\n/)) {
     if (!line.startsWith("data:")) continue;
     const data = line.slice(5).trim();
     if (!data) continue;
     if (data === "[DONE]") {
       terminal = true;
-      continue;
+      break;
     }
 
     const payload = JSON.parse(data) as CompletionChunk;
-    truncated ||= payload.choices?.some(
+    activity = true;
+    const recordTruncated = payload.choices?.some(
       (choice) => choice.finish_reason === "length",
     ) ?? false;
-    terminal ||= payload.choices?.some(
+    const recordTerminal = payload.choices?.some(
       (choice) => choice.finish_reason !== undefined && choice.finish_reason !== null,
     ) ?? false;
     const content = payload.choices?.[0]?.delta?.content;
     if (content) contents.push(content);
+    truncated ||= recordTruncated;
+    terminal ||= recordTerminal;
+    if (recordTerminal) break;
   }
-  return { contents, terminal, truncated };
+  return { contents, terminal, truncated, activity };
 }
 
 function truncationNotice(modelLabel: string, maximumTokens: number): string {
@@ -284,12 +315,106 @@ function nativeOllamaChatUrl(baseUrl: string): string | undefined {
   return url.toString();
 }
 
+class PublicAnswerEnvelope {
+  readonly #modelLabel: string;
+  #response = "";
+
+  constructor(modelLabel: string) {
+    this.#modelLabel = modelLabel;
+  }
+
+  push(delta: string): string[] {
+    if (delta) this.#response += delta;
+    return [];
+  }
+
+  finish(_truncated = false): string[] {
+    const response = this.#response.trim();
+    if (!response.startsWith(PUBLIC_ANSWER_OPEN)) {
+      throw new ModelExecutionError(
+        `${this.#modelLabel} returned no Quorum final-answer envelope.`,
+        "unsafe_output",
+      );
+    }
+    if (!response.endsWith(PUBLIC_ANSWER_CLOSE)) {
+      throw new ModelExecutionError(
+        `${this.#modelLabel} returned an incomplete Quorum final-answer envelope.`,
+        "unsafe_output",
+      );
+    }
+    const publicContent = response.slice(
+      PUBLIC_ANSWER_OPEN.length,
+      -PUBLIC_ANSWER_CLOSE.length,
+    );
+    if (
+      publicContent.includes(PUBLIC_ANSWER_OPEN) ||
+      publicContent.includes(PUBLIC_ANSWER_CLOSE)
+    ) {
+      throw new ModelExecutionError(
+        `${this.#modelLabel} returned an ambiguous Quorum final-answer envelope.`,
+        "unsafe_output",
+      );
+    }
+    if (!hasVisibleContent(publicContent)) {
+      throw new ModelExecutionError(
+        `${this.#modelLabel} returned an empty Quorum final-answer envelope.`,
+        "unsafe_output",
+      );
+    }
+    return [publicContent];
+  }
+}
+
+function hasVisibleContent(content: string): boolean {
+  return /\S/u.test(
+    content
+      .normalize("NFKC")
+      .replace(/\p{Default_Ignorable_Code_Point}/gu, ""),
+  );
+}
+
+function parseStructuredPublicAnswer(
+  content: string,
+  modelLabel: string,
+): string {
+  let payload: unknown;
+  try {
+    payload = JSON.parse(content);
+  } catch {
+    throw new ModelExecutionError(
+      `${modelLabel} returned no valid structured public answer.`,
+      "unsafe_output",
+    );
+  }
+  if (
+    typeof payload !== "object" ||
+    payload === null ||
+    Array.isArray(payload) ||
+    Object.keys(payload).length !== 1 ||
+    typeof (payload as { answer?: unknown }).answer !== "string"
+  ) {
+    throw new ModelExecutionError(
+      `${modelLabel} returned an invalid structured public answer.`,
+      "unsafe_output",
+    );
+  }
+  const answer = (payload as { answer: string }).answer;
+  if (!hasVisibleContent(answer)) {
+    throw new ModelExecutionError(
+      `${modelLabel} returned an empty structured public answer.`,
+      "unsafe_output",
+    );
+  }
+  return answer;
+}
+
 async function* streamOllamaResponse(
   response: Response,
   modelLabel: string,
   maximumOutputBytes: number,
   maximumOutputTokens: number,
-  noteOutput: () => void,
+  noteActivity: () => void,
+  markValidated: () => void,
 ): AsyncIterable<string> {
   if (!response.body) {
     throw new ModelExecutionError(
@@ -301,10 +426,10 @@ async function* streamOllamaResponse(
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  let emittedContent = false;
   let terminal = false;
   let truncated = false;
   let outputBytes = 0;
+  let structuredContent = "";
 
   while (!terminal) {
     const { value, done } = await reader.read();
@@ -332,41 +457,44 @@ async function* streamOllamaResponse(
           "provider",
         );
       }
+      const delta = chunk.message?.content;
+      if (chunk.message?.thinking) noteActivity();
+      if (delta) {
+        outputBytes += Buffer.byteLength(delta, "utf8");
+        if (outputBytes > maximumOutputBytes) {
+          await reader.cancel();
+          throw new ModelExecutionError(
+            `${modelLabel} exceeded its local output safety limit.`,
+            "provider",
+          );
+        }
+        structuredContent += delta;
+        noteActivity();
+      }
       terminal ||= chunk.done === true;
       truncated ||= chunk.done_reason === "length";
-      const content = chunk.message?.content;
-      if (!content) continue;
-      outputBytes += Buffer.byteLength(content, "utf8");
-      if (outputBytes > maximumOutputBytes) {
-        await reader.cancel();
-        throw new ModelExecutionError(
-          `${modelLabel} exceeded its local output safety limit.`,
-          "provider",
-        );
+      if (chunk.done === true) {
+        break;
       }
-      emittedContent = true;
-      noteOutput();
-      yield content;
     }
 
     if (done) break;
   }
 
-  if (!emittedContent) {
-    throw new ModelExecutionError(
-      `${modelLabel} returned no response content.`,
-      "provider",
-    );
-  }
   if (!terminal) {
     throw new ModelExecutionError(
       `${modelLabel} stream ended before a terminal marker.`,
       "provider",
     );
   }
+  const publicAnswer = parseStructuredPublicAnswer(
+    structuredContent,
+    modelLabel,
+  );
+  markValidated();
+  yield publicAnswer;
   if (truncated) {
     const notice = truncationNotice(modelLabel, maximumOutputTokens);
-    noteOutput();
     yield notice;
   }
 }
@@ -375,6 +503,7 @@ async function readLimitedText(
   response: Response,
   maximumBytes: number,
   label: string,
+  noteActivity?: () => void,
 ): Promise<string> {
   if (!response.body) return "";
   const reader = response.body.getReader();
@@ -385,6 +514,7 @@ async function readLimitedText(
   while (true) {
     const { value, done } = await reader.read();
     if (value) {
+      noteActivity?.();
       totalBytes += value.byteLength;
       if (totalBytes > maximumBytes) {
         await reader.cancel();
@@ -471,7 +601,8 @@ export class OpenAICompatibleProvider implements ModelProvider {
       this.#maxOutputTokens,
       VERBOSITY_OUTPUT_LIMITS[input.request.verbosity],
     );
-    const messages = [
+    const conversationMessages = input.messages.map(toProviderMessage);
+    const compatibleMessages = [
       systemContext(
         this.model,
         input.runtimeModels,
@@ -479,10 +610,26 @@ export class OpenAICompatibleProvider implements ModelProvider {
         input.request.verbosity,
         input.request.analysis,
         input.runtimeTools,
+        "envelope",
       ),
-      ...input.messages.map(toProviderMessage),
+      ...conversationMessages,
     ];
-    const estimatedInputTokens = estimateInputTokens(messages);
+    const nativeMessages = [
+      systemContext(
+        this.model,
+        input.runtimeModels,
+        input.request.policy,
+        input.request.verbosity,
+        input.request.analysis,
+        input.runtimeTools,
+        "structured",
+      ),
+      ...conversationMessages,
+    ];
+    const estimatedInputTokens = Math.max(
+      estimateInputTokens(compatibleMessages),
+      estimateInputTokens(nativeMessages),
+    );
     const inputBudget = this.model.contextWindow - maxOutputTokens;
     if (estimatedInputTokens > inputBudget) {
       throw new ModelExecutionError(
@@ -498,9 +645,10 @@ export class OpenAICompatibleProvider implements ModelProvider {
       ? await this.#scheduler.acquire(input.signal, this.#timeouts.totalMs)
       : () => {};
     const controller = new AbortController();
-    let timeoutKind: "first" | "idle" | "total" | undefined;
+    let timeoutKind: "first" | "idle" | "validation" | "total" | undefined;
     let firstTimer: ReturnType<typeof setTimeout> | undefined;
     let idleTimer: ReturnType<typeof setTimeout> | undefined;
+    let validationTimer: ReturnType<typeof setTimeout> | undefined;
     let totalTimer: ReturnType<typeof setTimeout> | undefined;
     const abortForTimeout = (kind: typeof timeoutKind) => {
       timeoutKind = kind;
@@ -515,6 +663,16 @@ export class OpenAICompatibleProvider implements ModelProvider {
       () => abortForTimeout("first"),
       this.#timeouts.firstTokenMs,
     );
+    validationTimer = setTimeout(
+      () => abortForTimeout("validation"),
+      Math.min(
+        this.#timeouts.validatedOutputMs,
+        Math.max(
+          1,
+          this.#timeouts.totalMs - (Date.now() - requestStartedAt),
+        ),
+      ),
+    );
     totalTimer = setTimeout(
       () => abortForTimeout("total"),
       Math.max(
@@ -522,7 +680,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
         this.#timeouts.totalMs - (Date.now() - requestStartedAt),
       ),
     );
-    const noteOutput = () => {
+    const noteActivity = () => {
       if (firstTimer) clearTimeout(firstTimer);
       firstTimer = undefined;
       if (idleTimer) clearTimeout(idleTimer);
@@ -530,6 +688,14 @@ export class OpenAICompatibleProvider implements ModelProvider {
         () => abortForTimeout("idle"),
         this.#timeouts.idleMs,
       );
+    };
+    const markValidated = () => {
+      if (firstTimer) clearTimeout(firstTimer);
+      firstTimer = undefined;
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = undefined;
+      if (validationTimer) clearTimeout(validationTimer);
+      validationTimer = undefined;
     };
 
     try {
@@ -542,8 +708,9 @@ export class OpenAICompatibleProvider implements ModelProvider {
           },
           body: JSON.stringify({
             model: this.#modelName,
-            messages,
+            messages: nativeMessages,
             stream: true,
+            format: PUBLIC_ANSWER_SCHEMA,
             // Older Qwen3 Ollama templates always emit a thinking block.
             // Requesting it explicitly makes Ollama separate it into
             // message.thinking, which this provider intentionally ignores.
@@ -565,7 +732,8 @@ export class OpenAICompatibleProvider implements ModelProvider {
             this.model.label,
             maxOutputTokens * 16,
             maxOutputTokens,
-            noteOutput,
+            noteActivity,
+            markValidated,
           );
           return;
         }
@@ -599,7 +767,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
           },
           body: JSON.stringify({
             model: this.#modelName,
-            messages,
+            messages: compatibleMessages,
             stream: true,
             max_tokens: maxOutputTokens,
             ...(this.#reasoningEffort
@@ -660,6 +828,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
             response,
             MAX_JSON_BODY_BYTES,
             this.model.label,
+            noteActivity,
           ),
         ) as CompletionResponse;
         const content = payload.choices?.[0]?.message?.content;
@@ -678,20 +847,23 @@ export class OpenAICompatibleProvider implements ModelProvider {
             "provider",
           );
         }
-        noteOutput();
-        yield (
-          content +
-          (payload.choices?.[0]?.finish_reason === "length"
-            ? truncationNotice(this.model.label, maxOutputTokens)
-            : "")
-        );
+        const truncated = payload.choices?.[0]?.finish_reason === "length";
+        const publicAnswer = new PublicAnswerEnvelope(this.model.label);
+        const publicContent = [
+          ...publicAnswer.push(content),
+          ...publicAnswer.finish(truncated),
+        ].join("");
+        markValidated();
+        yield publicContent + (truncated
+          ? truncationNotice(this.model.label, maxOutputTokens)
+          : "");
         return;
       }
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
+      const publicAnswer = new PublicAnswerEnvelope(this.model.label);
       let buffer = "";
-      let emittedContent = false;
       let terminal = false;
       let truncated = false;
       let outputBytes = 0;
@@ -716,6 +888,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
 
         for (const frame of frames) {
           const parsed = parseCompletionFrame(frame);
+          if (parsed.activity) noteActivity();
           terminal ||= parsed.terminal;
           truncated ||= parsed.truncated;
           for (const content of parsed.contents) {
@@ -727,42 +900,47 @@ export class OpenAICompatibleProvider implements ModelProvider {
                 "provider",
               );
             }
-            emittedContent = true;
-            noteOutput();
-            yield content;
+            for (const publicDelta of publicAnswer.push(content)) {
+              yield publicDelta;
+            }
           }
+          if (terminal) break;
         }
 
         if (done) break;
       }
 
-      if (!emittedContent) {
-        throw new ModelExecutionError(
-          `${this.model.label} returned no response content.`,
-          "provider",
-        );
-      }
       if (!terminal) {
         throw new ModelExecutionError(
           `${this.model.label} stream ended before a terminal marker.`,
           "provider",
         );
       }
+      const publicDeltas = publicAnswer.finish(truncated);
+      markValidated();
+      for (const publicDelta of publicDeltas) {
+        yield publicDelta;
+      }
       if (truncated) {
         const notice = truncationNotice(this.model.label, maxOutputTokens);
-        noteOutput();
         yield notice;
       }
     } catch (error) {
       if (timeoutKind === "first") {
         throw new ModelExecutionError(
-          `${this.model.label} timed out waiting for first output after ${this.#timeouts.firstTokenMs}ms.`,
+          `${this.model.label} timed out waiting for first provider activity after ${this.#timeouts.firstTokenMs}ms.`,
           "provider",
         );
       }
       if (timeoutKind === "idle") {
         throw new ModelExecutionError(
           `${this.model.label} stopped responding for ${this.#timeouts.idleMs}ms.`,
+          "provider",
+        );
+      }
+      if (timeoutKind === "validation") {
+        throw new ModelExecutionError(
+          `${this.model.label} did not produce a validated answer within ${this.#timeouts.validatedOutputMs}ms.`,
           "provider",
         );
       }
@@ -779,6 +957,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
     } finally {
       if (firstTimer) clearTimeout(firstTimer);
       if (idleTimer) clearTimeout(idleTimer);
+      if (validationTimer) clearTimeout(validationTimer);
       if (totalTimer) clearTimeout(totalTimer);
       input.signal?.removeEventListener("abort", onExternalAbort);
       release();

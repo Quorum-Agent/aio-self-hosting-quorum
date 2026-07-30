@@ -108,7 +108,9 @@ export function loadConfig(): AppConfig {
       apiKey: braveSearchApiKey,
     };
   }
-  const primaryModel = process.env["QUORUM_LOCAL_MODEL"] ?? "qwen3:4b";
+  const primaryModel = process.env["QUORUM_LOCAL_MODEL"] ?? "qwen3.5:9b";
+  const codingModel = process.env["QUORUM_LOCAL_CODING_MODEL"]?.trim();
+  const reasoningModel = process.env["QUORUM_LOCAL_REASONING_MODEL"]?.trim();
   const localModels: LocalModelConfig[] = [
     {
       role: "general",
@@ -119,37 +121,37 @@ export function loadConfig(): AppConfig {
         process.env["QUORUM_LOCAL_CONTEXT_WINDOW"],
         16_384,
       ),
-      qualityRating: 60,
+      qualityRating: 75,
       reasoningEffort: "none",
     },
-    {
+  ];
+  if (codingModel) {
+    localModels.push({
       role: "coding",
-      name:
-        process.env["QUORUM_LOCAL_CODING_MODEL"] ??
-        "qwen2.5-coder:1.5b",
+      name: codingModel,
       capabilities: ["chat", "coding"],
       specialties: ["coding"],
       contextWindow: positiveInteger(
         process.env["QUORUM_LOCAL_CODING_CONTEXT_WINDOW"],
         16_384,
       ),
-      qualityRating: 50,
-    },
-    {
+      qualityRating: 65,
+    });
+  }
+  if (reasoningModel) {
+    localModels.push({
       role: "reasoning",
-      name:
-        process.env["QUORUM_LOCAL_REASONING_MODEL"] ??
-        "qwen3.5:2b",
+      name: reasoningModel,
       capabilities: ["chat", "reasoning"],
       specialties: ["reasoning"],
       contextWindow: positiveInteger(
         process.env["QUORUM_LOCAL_REASONING_CONTEXT_WINDOW"],
         16_384,
       ),
-      qualityRating: 55,
+      qualityRating: 65,
       reasoningEffort: "none",
-    },
-  ];
+    });
+  }
 
   return {
     host: process.env["HOST"] ?? "127.0.0.1",
