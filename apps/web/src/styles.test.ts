@@ -12,9 +12,9 @@ function declarations(selector: string): string {
   return match[1].replace(/\s+/g, " ").trim();
 }
 
-function mediaBlock(query: string): string {
-  const start = styles.indexOf(`@media ${query}`);
-  if (start < 0) throw new Error(`Missing media query ${query}`);
+function atRuleBlock(rule: string): string {
+  const start = styles.indexOf(rule);
+  if (start < 0) throw new Error(`Missing at-rule ${rule}`);
   const open = styles.indexOf("{", start);
   let depth = 0;
   for (let index = open; index < styles.length; index += 1) {
@@ -24,7 +24,11 @@ function mediaBlock(query: string): string {
       if (depth === 0) return styles.slice(open + 1, index);
     }
   }
-  throw new Error(`Unterminated media query ${query}`);
+  throw new Error(`Unterminated at-rule ${rule}`);
+}
+
+function mediaBlock(query: string): string {
+  return atRuleBlock(`@media ${query}`);
 }
 
 function declarationsWithin(block: string, selector: string): string {
@@ -114,5 +118,41 @@ describe("web-search settings", () => {
   it("keeps the working settings entry reachable below long conversation lists", () => {
     expect(declarations(".conversation-list")).toContain("flex: 1;");
     expect(declarations(".sidebar-settings")).toContain("display: flex;");
+  });
+});
+
+describe("conversation column width", () => {
+  it("stops the topbar from sizing the column to its own contents", () => {
+    // .main declared rows but no columns, so the implicit auto track sized to
+    // the topbar's max-content width, overflowed the cell, and was clipped by
+    // overflow: hidden — the Inspect button was unpainted and unclickable
+    // between roughly 841px and 1122px with the inspector open.
+    const main = declarations(".main");
+    expect(main).toContain("grid-template-columns: minmax(0, 1fr);");
+    expect(main).toContain("overflow: hidden;");
+  });
+
+  it("compacts the controls on the column's width, not the window's", () => {
+    // The inspector takes 326px at any window size, so a 900px window with it
+    // open leaves the same room a 560px window does and needs the same
+    // compaction. Keying this to the viewport is what let the gap open.
+    const main = declarations(".main");
+    expect(main).toContain("container-type: inline-size;");
+    expect(main).toContain("container-name: main;");
+
+    const compact = atRuleBlock("@container main (max-width: 560px)");
+    // Anchored to the rule itself, since ".inspector-button" also prefixes
+    // ".inspector-button span".
+    expect(compact).toMatch(/\.inspector-button\s*\{[^}]*width:\s*34px/u);
+    expect(compact).toContain(".model-status span");
+  });
+
+  it("keeps the settings overlay sized by the viewport", () => {
+    // It is a fixed overlay and a sibling of .main, so the column's width says
+    // nothing about how much room it has.
+    const viewport = mediaBlock("(max-width: 560px)");
+    expect(declarationsWithin(viewport, ".settings-dialog")).toContain(
+      "height: 100%;",
+    );
   });
 });
