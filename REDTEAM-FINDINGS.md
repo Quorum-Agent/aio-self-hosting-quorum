@@ -730,3 +730,86 @@ as it is.
 
 **Not fixed** — this changes a privacy boundary that §6 and Q-15 both bear on, so it wants an
 explicit decision rather than a quiet patch.
+
+---
+
+## 13. Relay orchestration — pre-merge red team (2026-07-30)
+
+Three lenses against `feat/orchestration-relay` before merge: egress/taint/injection, orchestrator
+failure paths, and planner/disclosure honesty. Nine defects found and fixed on the branch,
+including one introduced *by* a fix earlier in the same session. What follows is what remains.
+
+**The egress boundary held.** Canary strings planted in search snippets were asserted absent from
+every cloud invocation across four configurations — post-search happy path, spoke failure, a
+four-deep local failure chain, and the case where the cloud model was the only healthy provider.
+Zero cloud invocations in all four. Prompt injection through the draft found no escape: JSON
+breakout, forged frame closers, NUL, ANSI and bidi payloads all round-trip as inert data inside
+the per-request UUID frame.
+
+One correction to how the guarantee is often described, worth keeping because the next change will
+depend on it: the protection is **not** primarily "both stages are planned up front." It is the
+conjunction of `#selectHub` hard-requiring a local model, and the fallback re-plan excluding cloud,
+which holds only *inductively* — it excludes cloud when the failing provider is local, and
+post-search every attempt is local because the initial plan was. **If a cloud hub is ever allowed,
+that induction breaks and the fallback re-plan becomes the exposed edge.**
+
+### Q-55 · A relay turn can sit idle for two full generations [CONFIRMED]
+
+`packages/core/src/orchestrator.ts` (draft loop), `apps/api/src/server.ts`. The draft is withheld
+by design, so between `trace:model:running` and `trace:model:completed` the client receives no
+events at all. Note the structured provider already buffers a whole answer before its single
+yield, so route mode has one generation of silence; relay has two.
+
+Mitigated, not eliminated, by the SSE keep-alive comment now written every 15s. That keeps the
+socket alive behind proxies that time out idle connections (nginx defaults to 60s) but does not
+improve time-to-first-byte, which under relay is draft generation plus hub prefill. Real streaming
+would require yielding the draft as a distinct event kind the client renders as progress rather
+than as answer text.
+
+### Q-56 · Scheduler contention silently turns relay into route [CONFIRMED]
+
+`apps/api/src/inference-scheduler.ts` (concurrency 1, maximumQueue 8). Relay takes two sequential
+slots per request. A rejected hub acquire raises `ModelExecutionError` kind `"request"`, which is
+correctly exempt from the circuit breaker and correctly attributed to the spoke — but the only
+surface saying synthesis did not happen is the rationale suffix. On a busy instance relay becomes
+route-with-extra-latency with no explicit signal. A `synthesisDegraded` flag on the plan would be
+cheaper than expecting the rationale to be read. Also note the queue now admits half as many
+concurrent requests as it did under route.
+
+### Q-57 · Fallback costs one full draft per failing spoke [CONFIRMED]
+
+`orchestrator.ts`, the `attemptContent && !drafting` guard. Terminating is not in question —
+`excludedModelIds` strictly shrinks the candidate pool and five emit-then-fail spokes produced
+exactly five attempts before settling. The cost is: route mode stopped falling back at the first
+emitted token, so a mid-stream failure cost one *partial* generation; relay costs one *full*
+generation per physically-distinct local model. A cap of two draft retries would bound it without
+changing the semantics.
+
+Worth recording because it looks alarming and is correct: when every model emits-then-fails, relay
+degrades to route as the general pool empties, and at the moment no hub remains the pre-existing
+"stop once output began" guarantee resumes and the user gets the partial. That seam works.
+
+### Q-58 · An empty hub response can take the general model out of route service [PLAUSIBLE]
+
+`orchestrator.ts`. `"<label> returned no response content."` is thrown as a plain `Error`, so it
+is treated as a provider failure and records against the circuit. Two consecutive empty hub
+responses flip the general model to `available: false` for 30s, and because the breaker is keyed
+by physical identity that also blocks plain `route` requests to the same model.
+
+Sharing the circuit is right for genuine endpoint failure — both stages dial the same endpoint,
+and when it opens `#selectHub` declines to relay so the request runs as plain route, which is
+verified to work. The questionable case is specifically the empty response, which is model
+behaviour rather than endpoint health. Making that a `ModelExecutionError` of a non-provider kind
+would fix it, but the drafting stage shares the wording and would have to change with it.
+
+### Fixed on the branch, listed so they are not re-litigated
+
+Offline mode planning a loopback hub (the hub was selected from the raw model list, bypassing
+policy, capability and transport filters). The panel naming the hub as the model used when the
+hub failed and the spoke's draft shipped — twice, since the first fix covered the degrade path but
+not the cancellation path. A failing hub never opening its circuit while hub successes cleared the
+counter. Cancelling during synthesis discarding a finished draft. Three surfaces attributing a
+cloud spoke's work to the local hub, one of them writing that claim into the append-only ledger.
+Relay degrading with no signal in the rationale. The hub chosen by declaration order rather than
+rank. The drafting stage falling back to `plan.modelId`, which is the hub. A synthesis step naming
+an unregistered model swallowing the draft and delivering an empty answer.

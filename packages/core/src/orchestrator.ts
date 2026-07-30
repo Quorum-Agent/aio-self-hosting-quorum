@@ -36,6 +36,14 @@ function safeDisplayText(value: string, maximumLength = 240): string {
     .slice(0, maximumLength);
 }
 
+// Drops the planner's forward-looking synthesis clause so a failure notice can
+// take its place. Matches the sentence built in route-planner.ts.
+function stripSynthesisPromise(rationale: string): string {
+  return rationale
+    .replace(/\s*\S.*? will synthesize the final answer\./u, "")
+    .trim();
+}
+
 // Framed like retrieved web data, and for the same reason: a draft is model
 // output that may itself carry retrieved text, so the hub must treat it as
 // material to rewrite rather than as instructions to follow.
@@ -897,7 +905,10 @@ export class Orchestrator {
           plan = {
             ...planWithoutSpoke,
             ...(draftedBy ? { modelId: draftedBy } : {}),
-            rationale: `${plan.rationale} ${hubProvider.model.label} failed before writing, so the draft was delivered as it stood.`,
+            // Replace the promise rather than appending a correction to it.
+            // This string is disclosure copy, and "X will synthesize the final
+            // answer. X failed before writing." contradicts itself in sequence.
+            rationale: `${stripSynthesisPromise(plan.rationale)} ${hubProvider.model.label} failed before writing, so the draft was delivered as it stood.`,
           };
         }
         if (hubEmitted || hubCancelled) {

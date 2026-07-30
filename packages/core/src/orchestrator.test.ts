@@ -1378,6 +1378,9 @@ describe("Orchestrator relay mode", () => {
       expect(result.result.plan.modelId).toBe(spokeModel.id);
       expect(result.result.plan.spokeModelId).toBeUndefined();
       expect(result.result.plan.rationale).toContain("delivered as it stood");
+      // The forward-looking promise is replaced, not appended to, so the
+      // disclosure does not contradict itself in sequence.
+      expect(result.result.plan.rationale).not.toContain("will synthesize");
     });
   });
 
