@@ -64,6 +64,24 @@ function networkAuthenticationPlugin(password: string): Plugin {
   };
 }
 
+// Hot reload runs on its own loopback server in network mode, so nothing on
+// the public port should be upgrading. Vite leaves an unmatched upgrade socket
+// open with no error handler, and a peer that resets one takes the whole
+// process down with an unhandled ECONNRESET — a LAN client could stop the
+// server at will. Close them deliberately instead. Any future ws:// proxy
+// entry has to be excluded here.
+function rejectNetworkUpgradesPlugin(): Plugin {
+  return {
+    name: "quorum-reject-network-upgrades",
+    configureServer(server) {
+      server.httpServer?.on("upgrade", (_request, socket) => {
+        socket.on("error", () => {});
+        socket.destroy();
+      });
+    },
+  };
+}
+
 // `npm run dev -w @quorum/web -- --host` bypasses scripts/dev.mjs entirely and
 // would serve the workspace unauthenticated, so refuse it at the server.
 function loopbackOnlyPlugin(): Plugin {
@@ -116,7 +134,7 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [
       ...(networkMode
-        ? [networkAuthenticationPlugin(password)]
+        ? [networkAuthenticationPlugin(password), rejectNetworkUpgradesPlugin()]
         : [loopbackOnlyPlugin()]),
       react(),
     ],

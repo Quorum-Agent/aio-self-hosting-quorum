@@ -43,6 +43,23 @@ describe("network development server", () => {
     expect(deny).toContain("**/.git/**");
   });
 
+  it("closes upgrade sockets that nothing on the public port owns", () => {
+    process.env[PASSWORD_VARIABLE] = LONG_ENOUGH_PASSWORD;
+    // Hot reload moved to its own loopback server, leaving upgrade sockets on
+    // this port unowned. Vite attaches no error handler to them, so a peer
+    // that resets one killed the process — a LAN client could stop the server.
+    const plugins = resolve("network").plugins?.flat() ?? [];
+    expect(
+      plugins.some(
+        (plugin) =>
+          plugin &&
+          typeof plugin === "object" &&
+          "name" in plugin &&
+          plugin.name === "quorum-reject-network-upgrades",
+      ),
+    ).toBe(true);
+  });
+
   it("refuses to start network mode without a usable password", () => {
     process.env[PASSWORD_VARIABLE] = "short";
     expect(() => resolve("network")).toThrow(/at least/);
