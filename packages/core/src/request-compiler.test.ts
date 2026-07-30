@@ -146,10 +146,14 @@ describe("RequestCompiler", () => {
     expect(compiled.requirements.capabilities).not.toContain("web");
   });
 
-  it("honors an explicit network denial even when source language is ambiguous", () => {
-    const compiled = compiler.compile(
-      request("List sources from the local database without using the internet."),
-    );
+  it.each([
+    "List sources from the local database without using the internet.",
+    "Do not use the internet. Summarize the Acme merger for me.",
+    "Don't search the web. What are the latest news on the merger?",
+    "Never access the internet. Explain the current prices.",
+    "Research the local database; do not use external services.",
+  ])("honors an explicit network denial: %s", (prompt) => {
+    const compiled = compiler.compile(request(prompt));
 
     expect(compiled.requirements.capabilities).not.toContain("web");
   });
@@ -240,8 +244,34 @@ describe("RequestCompiler", () => {
     "Fix this regular expression.",
     "Deploy the AWS Lambda.",
     "Please review this source code for bugs.",
+    "How do I build a Docker image?",
+    "Write a function to resize an image in Python.",
+    "Take a screenshot programmatically in Node.",
   ])("recognizes concrete coding work without broad keywords: %s", (prompt) => {
     expect(compiler.compile(request(prompt)).requirements.intent).toBe("coding");
+  });
+
+  it("routes coding domains despite abstract visual language", () => {
+    const prompt = "Explain the architecture diagram pattern for microservices.";
+    expect(compiler.compile(request(prompt)).requirements.intent).toBe("coding");
+  });
+
+  it.each([
+    "Compare image formats for archival storage.",
+    "Analyze the visual design of this UI.",
+  ])("does not mistake abstract visual language for an attachment: %s", (prompt) => {
+    expect(compiler.compile(request(prompt)).requirements.intent).not.toBe(
+      "vision",
+    );
+  });
+
+  it.each([
+    "Analyze this attached screenshot.",
+    "Read the uploaded diagram.",
+    "What is in this image?",
+    "What does this PCB show?",
+  ])("recognizes an explicit visual-inspection request: %s", (prompt) => {
+    expect(compiler.compile(request(prompt)).requirements.intent).toBe("vision");
   });
 
   it.each([

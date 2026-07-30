@@ -28,7 +28,7 @@ const CONTEXTUAL_CURRENT_PATTERN = new RegExp(
 const EXPLICIT_CHAT_PATTERN =
   /\b(tell me a joke|just chat|casual conversation|new topic|let'?s (?:just )?talk)\b/i;
 const CODE_DOMAIN_PATTERN =
-  /\b(compiler|stack trace|source code|codebase|repository|api endpoint|rest endpoint|database schema|unit tests?|http\s+[45]\d{2})\b/i;
+  /\b(compiler|stack trace|source code|codebase|repository|api endpoint|rest endpoint|database schema|unit tests?|microservices?|programmatically|http\s+[45]\d{2})\b/i;
 const CODE_ACTION_PATTERN =
   /\b(write|implement|refactor|debug|fix|compile|program|code|containeri[sz]e|optimi[sz]e|review|test|add|change|edit|build|design|create|analy[sz]e|undo|use)\b/i;
 const CODE_TARGET_PATTERN =
@@ -46,8 +46,14 @@ const ANALYTICAL_DECISION_PATTERN =
   /\b(?:compare|evaluate|assess|weigh)\b[^.!?\n]{0,160}\b(?:architectures?|approaches?|options?|trade[- ]offs?|designs?|strategies?|patterns?)\b|\b(?:recommend|choose|decide)\b[^.!?\n]{0,160}\b(?:architecture|approach|option|design|strategy|pattern|starting point)\b/i;
 const DOCUMENT_PATTERN =
   /\b(?:attached|this|the)\s+(?:pdf|document|invoice|contract|spreadsheet|attachment|file)\b|\b(?:summari[sz]e|extract|parse|review|read)\b[^.!?\n]{0,40}\b(?:pdf|document|invoice|contract|spreadsheet|attachment|file)\b/i;
-const VISION_PATTERN =
-  /\b(image|photo|picture|diagram|screenshot|visual|pcb)\b/i;
+const VISUAL_SUBJECT =
+  String.raw`(?:image|photo|picture|diagram|screenshot|pcb)`;
+const REFERENCED_VISUAL =
+  String.raw`(?:(?:this|that|attached|uploaded)\s+${VISUAL_SUBJECT}|${VISUAL_SUBJECT}\s+(?:attached|uploaded))`;
+const VISION_PATTERN = new RegExp(
+  String.raw`(?:\b(?:analy[sz]e|inspect|describe|read|extract|identify|recognize|interpret|look at)\b[^.!?\n]{0,80}\b${REFERENCED_VISUAL}\b|\b(?:this|that|attached|uploaded)\s+${VISUAL_SUBJECT}\b[^.!?\n]{0,80}\b(?:explain|show|contain|depict|mean|say)\b|\bwhat(?:'s| is| are| does| do)\b[^.!?\n]{0,40}\b(?:in|on)\s+${REFERENCED_VISUAL}\b)`,
+  "i",
+);
 const EXPLICIT_RESEARCH_PATTERN =
   /\b(?:research|compare interpretations|search (?:the )?web|browse (?:the )?web|look (?:it |this |that )?up online)\b/i;
 const EXPLICIT_WEB_REQUEST_PATTERN =
@@ -55,7 +61,7 @@ const EXPLICIT_WEB_REQUEST_PATTERN =
 const EVIDENCE_REQUEST_PATTERN =
   /\b(?:provide|include|cite|show|give)\b[^.!?\n]{0,40}\b(?:an?\s+|the\s+)?(?:sources?|citations?)\b|\bwhat (?:sources?|citations?)\b|\bsources?\s+(?:for|on|about|supporting)\b/i;
 const NETWORK_DENIAL_PATTERN =
-  /\b(?:(?:do not|don'?t|never)\s+(?:use|search|access|contact)|without\s+(?:using\s+|accessing\s+)?|no\s+)(?:the\s+)?(?:internet|web|network|online services?|external services?)\b|\boffline(?:[ -]only)?\b|\b(?:local[ -]only|only (?:my|the) local)\b/i;
+  /\b(?:(?:do not|don'?t|never)\s+(?:use|search|access|contact)\s+|without\s+(?:using\s+|accessing\s+)?|no\s+)(?:the\s+)?(?:internet|web|network|online services?|external services?)\b|\boffline(?:[ -]only)?\b|\b(?:local[ -]only|only (?:my|the) local)\b/i;
 const LOCAL_SCOPE_PATTERN =
   /\b(?:my|the|only)\s+local\s+(?:notes?|files?|documents?|database|sources?|context)\b|\blocal\s+(?:notes?|files?|documents?|database|sources?|context)\s+only\b/i;
 const SENSITIVE_PATTERN =
@@ -126,14 +132,6 @@ function classifyPrompt(prompt: string): IntentClassification {
       explicitReset: false,
     };
   }
-  if (VISION_PATTERN.test(prompt)) {
-    return {
-      intent: "vision",
-      confidence: 0.94,
-      requiresFreshness: false,
-      explicitReset: false,
-    };
-  }
   if (DOCUMENT_PATTERN.test(prompt)) {
     return {
       intent: "document",
@@ -152,6 +150,15 @@ function classifyPrompt(prompt: string): IntentClassification {
           : softwareReference === "contextual"
             ? 0.82
             : 0.86,
+      requiresFreshness: false,
+      explicitReset: false,
+    };
+  }
+
+  if (VISION_PATTERN.test(prompt)) {
+    return {
+      intent: "vision",
+      confidence: 0.94,
       requiresFreshness: false,
       explicitReset: false,
     };
