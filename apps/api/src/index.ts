@@ -3,27 +3,49 @@ import { resolve } from "node:path";
 import { config as loadEnvironment } from "dotenv";
 
 import { loadConfig, PROJECT_ROOT } from "./config.js";
+import {
+  startManagedLlamaRuntime,
+  withManagedLlamaEndpoint,
+  type ManagedLlamaRuntime,
+} from "./managed-llama-runtime.js";
 import { createRuntime } from "./runtime.js";
 import { buildServer } from "./server.js";
 
 loadEnvironment({ path: resolve(PROJECT_ROOT, ".env"), quiet: true });
 
-const config = loadConfig();
-const runtime = await createRuntime(config);
-const server = await buildServer(config, runtime);
+let managedLlama: ManagedLlamaRuntime | undefined;
+let server: Awaited<ReturnType<typeof buildServer>> | undefined;
+let shuttingDown = false;
 
-const shutdown = async () => {
-  await server.close();
-  process.exit(0);
+const shutdown = async (exitCode: number) => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  try {
+    await server?.close();
+  } finally {
+    await managedLlama?.stop();
+  }
+  process.exit(exitCode);
 };
 
-process.once("SIGINT", shutdown);
-process.once("SIGTERM", shutdown);
-
 try {
-  await server.listen({ host: config.host, port: config.port });
+  let config = loadConfig();
+  if (config.managedLlama) {
+    managedLlama = await startManagedLlamaRuntime(
+      config.managedLlama,
+      config.dataDirectory,
+    );
+    config = withManagedLlamaEndpoint(config, managedLlama);
+  }
+  const runtime = await createRuntime(config);
+  server = await buildServer(config, runtime);
+  const activeServer = server;
+
+  process.once("SIGINT", () => void shutdown(0));
+  process.once("SIGTERM", () => void shutdown(0));
+  await activeServer.listen({ host: config.host, port: config.port });
   if (runtime.warmupStatus.state === "warming") {
-    server.log.info(
+    activeServer.log.info(
       {
         models: runtime.warmupStatus.models.map((target) => target.model),
       },
@@ -32,18 +54,23 @@ try {
   }
   void runtime.warmup.then((status) => {
     if (status.state === "degraded") {
-      server.log.warn(
+      activeServer.log.warn(
         { warmup: status },
         "Local model warmup completed with failures.",
       );
     } else {
-      server.log.info(
+      activeServer.log.info(
         { warmup: status },
         "Local model warmup completed.",
       );
     }
   });
 } catch (error) {
-  server.log.error(error);
+  if (server) {
+    server.log.error(error);
+  } else {
+    console.error(error);
+  }
+  await managedLlama?.stop();
   process.exit(1);
 }

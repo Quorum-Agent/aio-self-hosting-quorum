@@ -229,9 +229,11 @@ specific vendors or models.
 
 ### Desktop runtime
 
-A proposed Tauri 2 shell will supervise the existing UI and API rather than absorb
-their responsibilities. It can bundle and start the Quorum API as a platform-specific
-sidecar, discover Ollama, and manage optional native or containerized services.
+A Tauri 2 shell will supervise the existing UI and API rather than absorb their
+responsibilities. It will bundle a pinned llama.cpp runtime and the Quorum API as
+platform-specific sidecars while keeping model weights separately downloaded and
+interchangeable through logical model slots. Ollama, LM Studio, and other compatible
+endpoints remain optional integrations rather than prerequisites.
 Container support remains an optional integration: on Windows, a Linux container still
 requires Docker Desktop, Podman, or another runtime backed by WSL 2 or Hyper-V.
 

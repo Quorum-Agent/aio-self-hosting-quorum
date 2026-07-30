@@ -37,6 +37,7 @@ use an OpenAI-compatible local or cloud model when configured.
 - Production build served by the API process
 - Startup warmup for the prompt expert and default general model
 - Native Ollama generation that keeps private thinking separate from visible answers
+- Opt-in managed llama.cpp sidecar with interchangeable, verified GGUF entries
 
 Attachment, microphone, vision, project memory, and general-purpose tool
 execution are planned but are not exposed as controls until they are wired. See
@@ -56,6 +57,22 @@ npm run dev
 
 Open [http://localhost:5173](http://localhost:5173). The API listens on
 `http://127.0.0.1:8787`.
+
+Vite's generic `--host` hint does not safely expose the complete application because
+Quorum's unauthenticated API is deliberately loopback-only. For development on a
+trusted LAN, use the explicit authenticated gateway:
+
+```powershell
+npm run dev:network
+```
+
+Quorum generates and prints a strong password for that launch; sign in with username
+`quorum`. To choose a repeatable password instead, set
+`QUORUM_DEV_NETWORK_PASSWORD` to at least 16 characters before starting. Vite will
+print the available network URLs. The API remains bound to loopback and is reached
+through the authenticated Vite proxy. This development gateway uses plain HTTP; use a
+VPN or encrypted tunnel outside a trusted LAN. `npm run dev -- --host` is
+intentionally rejected with guidance to this command.
 
 Quorum remains usable if no model is installed: it selects the in-process scaffold
 responder and exposes that decision in the execution panel.
@@ -104,6 +121,32 @@ Override it only when the endpoint is configured to execute a different budget:
 QUORUM_LOCAL_CONTEXT_WINDOW=16384
 QUORUM_LOCAL_PROMPT_CONTEXT_WINDOW=4096
 ```
+
+### Managed llama.cpp runtime spike
+
+Quorum can now supervise an upstream `llama-server` process instead of requiring an
+already-running model service. The runtime executable and model files are deliberately
+not stored in this repository or bundled together. Copy
+`config/managed-models.example.json` to `config/managed-models.local.json`, point its
+stable logical IDs at local GGUF files, and configure:
+
+```dotenv
+QUORUM_MANAGED_LLAMA_SERVER=C:/Quorum/runtime/llama-server.exe
+QUORUM_MANAGED_LLAMA_MODELS=./config/managed-models.local.json
+QUORUM_LOCAL_PROMPT_MODEL=quorum-prompt
+QUORUM_LOCAL_MODEL=quorum-main
+```
+
+On startup Quorum validates each configured file (including its SHA-256 when supplied),
+generates an authenticated llama.cpp router preset, waits for the requested models, and then uses its existing
+OpenAI-compatible provider. The browser never receives the runtime credential. Ollama
+and LM Studio remain valid optional endpoints when the managed settings are absent.
+
+This is the process and model-slot contract validated by the Windows spike, not the
+final desktop packaging. The current Ollama Qwen 3.5 blobs did not load in upstream
+llama.cpp `b10192`, so model selection must verify the exact GGUF artifact against the
+pinned runtime. See the
+[managed-runtime evaluation](docs/evaluations/managed-llama-runtime-2026-07-30.md).
 
 ### Optional cloud fallback
 

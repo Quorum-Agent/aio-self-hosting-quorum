@@ -2,6 +2,7 @@ node_modules/
 dist/
 .env
 .env.local
+config/*.local.json
 coverage/
 var/
 var-e2e-*/

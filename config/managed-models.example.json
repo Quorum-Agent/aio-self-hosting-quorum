@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "models": [
+    {
+      "id": "quorum-prompt",
+      "file": "C:/Models/prompt-expert.gguf",
+      "contextWindow": 4096,
+      "gpuLayers": 999,
+      "loadOnStartup": true
+    },
+    {
+      "id": "quorum-main",
+      "file": "C:/Models/main-brain.gguf",
+      "contextWindow": 16384,
+      "gpuLayers": 999,
+      "loadOnStartup": true
+    }
+  ]
+}

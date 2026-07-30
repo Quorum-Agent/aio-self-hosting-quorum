@@ -9,7 +9,8 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "concurrently -n api,web -c cyan,magenta \"npm run dev -w @quorum/api\" \"npm run dev -w @quorum/web\"",
+    "dev": "node scripts/dev.mjs",
+    "dev:network": "node scripts/dev.mjs --network",
     "build": "npm run build -w @quorum/core && npm run build -w @quorum/api && npm run build -w @quorum/web",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",

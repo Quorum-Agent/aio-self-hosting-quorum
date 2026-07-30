@@ -179,4 +179,44 @@ describe("LocalPromptAnalyzer", () => {
       "json_schema",
     );
   });
+
+  it("uses the compatible endpoint directly for a managed runtime", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  intent: "coding",
+                  confidence: 0.96,
+                  task_summary: "Create a dynamic SQL PIVOT query.",
+                }),
+              },
+            },
+          ],
+        }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const managedAnalyzer = new LocalPromptAnalyzer({
+      id: "local:classifier:quorum-prompt",
+      label: "quorum-prompt",
+      baseUrl: "http://127.0.0.1:43123/v1",
+      apiKey: "ephemeral",
+      model: "quorum-prompt",
+      contextWindow: 4_096,
+      nativeOllama: false,
+      scheduler: new InferenceScheduler(),
+    });
+
+    await expect(managedAnalyzer.analyze(input)).resolves.toMatchObject({
+      intent: "coding",
+      confidence: 0.96,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "http://127.0.0.1:43123/v1/chat/completions",
+    );
+  });
 });
