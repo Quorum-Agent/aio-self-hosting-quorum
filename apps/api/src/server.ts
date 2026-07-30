@@ -73,6 +73,9 @@ function titleFromMessage(message: ChatMessage): string {
   return oneLine.length > 48 ? `${oneLine.slice(0, 47)}…` : oneLine || "New conversation";
 }
 
+// Comfortably inside nginx's 60s default proxy_read_timeout.
+const KEEP_ALIVE_INTERVAL_MS = 15_000;
+
 function writeEvent(response: NodeJS.WritableStream, event: OrchestrationEvent): void {
   response.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
 }
@@ -312,6 +315,15 @@ export async function buildServer(config: AppConfig, runtime: QuorumRuntime) {
     const writeIfOpen = (event: OrchestrationEvent) => {
       if (!reply.raw.destroyed) writeEvent(reply.raw, event);
     };
+    // A relay turn withholds the whole draft, so the connection can sit idle
+    // for two full generations with nothing written. x-accel-buffering stops
+    // proxies buffering but not from timing an idle connection out — nginx
+    // defaults to 60s — so keep the socket warm with SSE comments, which
+    // EventSource ignores.
+    const keepAlive = setInterval(() => {
+      if (!reply.raw.destroyed) reply.raw.write(": keep-alive\n\n");
+    }, KEEP_ALIVE_INTERVAL_MS);
+    keepAlive.unref?.();
     const executionMessage = (
       plan: TaskPlan,
       content: string,
@@ -451,6 +463,7 @@ export async function buildServer(config: AppConfig, runtime: QuorumRuntime) {
         });
       }
     } finally {
+      clearInterval(keepAlive);
       if (!reply.raw.destroyed) reply.raw.end();
     }
   });

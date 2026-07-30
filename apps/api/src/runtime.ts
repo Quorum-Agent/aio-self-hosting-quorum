@@ -1,6 +1,7 @@
 import {
   DemoProvider,
   Orchestrator,
+  RoutePlanner,
   type LocalRuntimeStatus,
   type ModelProvider,
   type RuntimeToolDescriptor,
@@ -218,7 +219,7 @@ export async function createRuntime(config: AppConfig): Promise<QuorumRuntime> {
   const orchestrator = new Orchestrator(
     providers,
     undefined,
-    undefined,
+    new RoutePlanner(config.orchestrationMode ?? "route"),
     promptAnalyzer,
     webSearch,
   );

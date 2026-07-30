@@ -1,7 +1,11 @@
 import { dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import type { Capability, LocalModelRole } from "@quorum/core";
+import type {
+  Capability,
+  LocalModelRole,
+  OrchestrationMode,
+} from "@quorum/core";
 
 import {
   normalizeCloudBaseUrl,
@@ -68,6 +72,12 @@ export interface WebSearchConfig {
   apiKeys: Partial<Record<KeyedWebSearchProviderId, string>>;
 }
 
+const ORCHESTRATION_MODES: readonly OrchestrationMode[] = ["route", "relay"];
+
+function isOrchestrationMode(value: string): value is OrchestrationMode {
+  return (ORCHESTRATION_MODES as readonly string[]).includes(value);
+}
+
 function positiveInteger(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
@@ -95,6 +105,9 @@ export interface AppConfig {
     qualityRating: number;
   };
   webSearch?: WebSearchConfig;
+  // Optional so partial fixtures stay focused, matching webSearch above.
+  // loadConfig always sets it; consumers default to "route".
+  orchestrationMode?: OrchestrationMode;
 }
 
 export function loadConfig(): AppConfig {
@@ -113,6 +126,13 @@ export function loadConfig(): AppConfig {
   ) {
     throw new Error(
       "QUORUM_LOCAL_TRANSPORT must be ollama or openai-compatible.",
+    );
+  }
+  const configuredOrchestrationMode =
+    process.env["QUORUM_ORCHESTRATION_MODE"]?.trim().toLowerCase() ?? "route";
+  if (!isOrchestrationMode(configuredOrchestrationMode)) {
+    throw new Error(
+      `QUORUM_ORCHESTRATION_MODE must be one of ${ORCHESTRATION_MODES.join(", ")}.`,
     );
   }
   const managedLlamaExecutable =
@@ -301,5 +321,6 @@ export function loadConfig(): AppConfig {
         }
       : {}),
     webSearch,
+    orchestrationMode: configuredOrchestrationMode,
   };
 }

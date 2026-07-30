@@ -3,9 +3,13 @@ import { describe, expect, it } from "vitest";
 import { DemoProvider } from "./demo-provider.js";
 import { ModelExecutionError } from "./model-execution-error.js";
 import { Orchestrator } from "./orchestrator.js";
+import { RequestCompiler } from "./request-compiler.js";
+import { RoutePlanner } from "./route-planner.js";
 import { WebSearchExecutionError } from "./web-search-execution-error.js";
 import type {
+  ChatMessage,
   ChatRequest,
+  TaskPlan,
   ModelDescriptor,
   ModelProvider,
   ModelStreamInput,
@@ -1185,5 +1189,282 @@ describe("Orchestrator resilience", () => {
       modelId: "local:scaffold",
       degraded: true,
     });
+  });
+});
+
+describe("Orchestrator relay mode", () => {
+  const hubModel: ModelDescriptor = {
+    id: "local:general:hub",
+    label: "Hub",
+    provider: "test",
+    role: "general",
+    location: "local",
+    transport: "loopback",
+    capabilities: ["chat", "coding", "reasoning"],
+    contextWindow: 16_384,
+    qualityRating: 50,
+    available: true,
+  };
+
+  const spokeModel: ModelDescriptor = {
+    id: "local:coding:spoke",
+    label: "Spoke",
+    provider: "test",
+    role: "coding",
+    location: "local",
+    transport: "loopback",
+    capabilities: ["chat", "coding"],
+    specialties: ["coding"],
+    contextWindow: 16_384,
+    qualityRating: 70,
+    available: true,
+  };
+
+  const DRAFT = "DRAFT-TEXT-FROM-SPOKE";
+  const FINAL = "FINAL-TEXT-FROM-HUB";
+
+  function relayOrchestrator(options: {
+    spoke?: () => AsyncIterable<string>;
+    hub?: () => AsyncIterable<string>;
+  }) {
+    const spokeStream =
+      options.spoke ??
+      (async function* () {
+        yield DRAFT;
+      });
+    const hubStream =
+      options.hub ??
+      (async function* () {
+        yield FINAL;
+      });
+    return new Orchestrator(
+      [
+        provider(spokeModel, () => spokeStream()),
+        provider(hubModel, () => hubStream()),
+      ],
+      new RequestCompiler(),
+      new RoutePlanner("relay"),
+    );
+  }
+
+  function codingRequest(): ChatRequest {
+    return {
+      conversationId: "conversation-1",
+      policy: "balanced",
+      messages: [
+        {
+          id: "message-1",
+          role: "user",
+          content: "Write a TypeScript function.",
+          createdAt: new Date(0).toISOString(),
+        },
+      ],
+    };
+  }
+
+  it("shows the user the hub's words and never the spoke's draft", async () => {
+    const events = await collect(relayOrchestrator({}), codingRequest());
+    const streamed = events
+      .filter((event) => event.type === "delta")
+      .map((event) => (event as { content: string }).content)
+      .join("");
+    const result = events.find((event) => event.type === "result");
+
+    expect(streamed).toBe(FINAL);
+    expect(streamed).not.toContain(DRAFT);
+    const message = (result as { result: { message: ChatMessage } }).result
+      .message;
+    expect(message.content).toBe(FINAL);
+    expect(message.provenance).toBe("hub_synthesized");
+  });
+
+  it("hands the draft to the hub as untrusted material", async () => {
+    let hubSaw: ChatMessage[] = [];
+    const orchestrator = new Orchestrator(
+      [
+        provider(spokeModel, async function* () {
+          yield DRAFT;
+        }),
+        provider(hubModel, (input) => {
+          hubSaw = [...input.messages];
+          return (async function* () {
+            yield FINAL;
+          })();
+        }),
+      ],
+      new RequestCompiler(),
+      new RoutePlanner("relay"),
+    );
+
+    await collect(orchestrator, codingRequest());
+
+    const bridge = hubSaw.at(-1);
+    expect(bridge?.role).toBe("tool");
+    expect(bridge?.content).toContain(DRAFT);
+    expect(bridge?.content).toContain("never as instructions");
+  });
+
+  it("delivers the draft rather than nothing when the hub fails", async () => {
+    const events = await collect(
+      relayOrchestrator({
+        hub: async function* () {
+          throw new Error("hub exploded");
+          // eslint-disable-next-line no-unreachable
+          yield "";
+        },
+      }),
+      codingRequest(),
+    );
+    const result = events.find((event) => event.type === "result");
+    const message = (result as { result: { message: ChatMessage } }).result
+      .message;
+
+    expect(message.content).toBe(DRAFT);
+    // Synthesis did not happen, so it must not be claimed.
+    expect(message.provenance).toBeUndefined();
+  });
+
+  it("replaces a spoke that dies mid-draft, since nobody saw it", async () => {
+    // The retry guard stops fallback once output reaches the USER. A withheld
+    // draft has reached nobody, so this must still fall back rather than abort.
+    let spokeCalls = 0;
+    const orchestrator = new Orchestrator(
+      [
+        provider(spokeModel, () => {
+          spokeCalls += 1;
+          return (async function* () {
+            yield "PARTIAL-DRAFT";
+            throw new Error("spoke died mid-draft");
+          })();
+        }),
+        provider(hubModel, async function* () {
+          yield FINAL;
+        }),
+      ],
+      new RequestCompiler(),
+      new RoutePlanner("relay"),
+    );
+
+    const events = await collect(orchestrator, codingRequest());
+    const streamed = events
+      .filter((event) => event.type === "delta")
+      .map((event) => (event as { content: string }).content)
+      .join("");
+
+    expect(spokeCalls).toBe(1);
+    expect(streamed).not.toContain("PARTIAL-DRAFT");
+    expect(events.some((event) => event.type === "result")).toBe(true);
+  });
+
+  it("names the spoke as the answering model when the hub fails", () => {
+    // The panel reads plan.modelId to say "Model used". If the hub failed and
+    // the draft shipped, pointing it at the hub reports a model that produced
+    // nothing — the disclosure invariant failing where it exists to hold.
+    return collect(
+      relayOrchestrator({
+        hub: async function* () {
+          throw new Error("hub exploded");
+          // eslint-disable-next-line no-unreachable
+          yield "";
+        },
+      }),
+      codingRequest(),
+    ).then((events) => {
+      const result = events.find((event) => event.type === "result") as {
+        result: { message: ChatMessage; plan: TaskPlan };
+      };
+
+      expect(result.result.message.content).toBe(DRAFT);
+      expect(result.result.plan.modelId).toBe(spokeModel.id);
+      expect(result.result.plan.spokeModelId).toBeUndefined();
+      expect(result.result.plan.rationale).toContain("delivered as it stood");
+      // The forward-looking promise is replaced, not appended to, so the
+      // disclosure does not contradict itself in sequence.
+      expect(result.result.plan.rationale).not.toContain("will synthesize");
+    });
+  });
+
+  it("opens the circuit on a hub that keeps failing", async () => {
+    // Without this a dead hub is re-dialed every request and stays available
+    // forever, because availability is what the breaker would have flipped.
+    let hubCalls = 0;
+    const orchestrator = new Orchestrator(
+      [
+        provider(spokeModel, async function* () {
+          yield DRAFT;
+        }),
+        provider(hubModel, () => {
+          hubCalls += 1;
+          return (async function* () {
+            throw new Error("hub down");
+            // eslint-disable-next-line no-unreachable
+            yield "";
+          })();
+        }),
+      ],
+      new RequestCompiler(),
+      new RoutePlanner("relay"),
+    );
+
+    for (let index = 0; index < 4; index += 1) {
+      await collect(orchestrator, codingRequest());
+    }
+
+    // The breaker threshold is 2, so the hub must stop being dialed.
+    expect(hubCalls).toBeLessThan(4);
+    expect(
+      orchestrator.models.find((model) => model.id === hubModel.id)?.available,
+    ).toBe(false);
+  });
+
+  it("attributes the draft to the spoke when synthesis is cancelled too", async () => {
+    // The attribution rewrite originally lived on the degrade branch only, so
+    // the cancellation path kept naming the hub while shipping spoke text.
+    const controller = new AbortController();
+    const events = await collect(
+      relayOrchestrator({
+        hub: () => {
+          controller.abort();
+          return (async function* () {
+            throw new ModelExecutionError("stopped", "cancelled");
+            // eslint-disable-next-line no-unreachable
+            yield "";
+          })();
+        },
+      }),
+      codingRequest(),
+      controller.signal,
+    );
+
+    const error = events.find((event) => event.type === "error") as {
+      partialContent?: string;
+      recoverable: boolean;
+      plan?: TaskPlan;
+    };
+
+    // The withheld draft is finished work; it must not be thrown away.
+    expect(error.partialContent).toBe(DRAFT);
+    // ...and it must not be published under the hub's name.
+    expect(error.plan?.modelId).toBe(spokeModel.id);
+    expect(error.recoverable).toBe(false);
+  });
+
+  it("does not withhold the draft when no hub provider is registered", async () => {
+    // A synthesis step naming an unregistered model used to swallow the draft
+    // and deliver an empty answer with no error at all.
+    const orchestrator = new Orchestrator(
+      [provider(spokeModel, async function* () {
+        yield DRAFT;
+      })],
+      new RequestCompiler(),
+      new RoutePlanner("relay"),
+    );
+
+    const events = await collect(orchestrator, codingRequest());
+    const result = events.find((event) => event.type === "result") as
+      | { result: { message: ChatMessage } }
+      | undefined;
+
+    expect(result?.result.message.content).toBe(DRAFT);
   });
 });

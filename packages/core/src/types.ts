@@ -7,7 +7,7 @@ export interface ChatMessage {
   role: MessageRole;
   content: string;
   createdAt: string;
-  provenance?: "web_grounded";
+  provenance?: "web_grounded" | "hub_synthesized";
   execution?: MessageExecutionRecord;
 }
 
@@ -32,6 +32,11 @@ export type Capability =
   | "tools";
 
 export type LocalModelRole = "general" | "coding" | "reasoning";
+
+// How many models answer one request. `route` selects a single model, which
+// answers the user directly. `relay` has a spoke draft the answer and a hub
+// rewrite it, so the user always reads one voice regardless of which spoke ran.
+export type OrchestrationMode = "route" | "relay";
 
 export interface ModelInferenceSettings {
   reasoningEffort?: "none" | "low" | "medium" | "high";
@@ -172,6 +177,9 @@ export interface PlanStep {
 
 export interface ExecutionAttempt {
   modelId: Id;
+  // Which pipeline stage ran, when more than one model answers. Absent under
+  // route, where a model change can only mean a fallback.
+  stage?: "draft" | "synthesis";
   route: "local" | "cloud";
   status: "completed" | "failed";
   contextMayHaveBeenTransmitted: boolean;
@@ -185,7 +193,10 @@ export interface TaskPlan {
   verbosity: ResponseVerbosity;
   analysis: RequestAnalysis;
   route: "local" | "cloud";
+  // The model whose words reach the user. Under relay that is the hub, and
+  // spokeModelId names the model that drafted for it.
   modelId: Id;
+  spokeModelId?: Id;
   rationale: string;
   steps: PlanStep[];
   degraded?: boolean;
