@@ -58,6 +58,12 @@ export function ExecutionPanel({
   onClose,
 }: ExecutionPanelProps) {
   const selectedModel = models.find((model) => model.id === plan?.modelId);
+  // Under relay a second model drafted, and it may be the remote one. Naming
+  // only the answering model would hide the stage that actually received the
+  // conversation.
+  const draftingModel = models.find(
+    (model) => model.id === plan?.spokeModelId,
+  );
   const modelRan = (plan?.attempts?.length ?? 0) > 0;
   const cloudUsage = describeCloudUsage(plan, models);
   const modelAttempts = describeModelAttempts(plan, models);
@@ -200,10 +206,26 @@ export function ExecutionPanel({
 
       <section className="panel-section model-summary">
         <div className="section-title">
-          <span>{modelRan ? "Model used" : "Model planned"}</span>
+          <span>
+            {draftingModel
+              ? modelRan
+                ? "Synthesized by"
+                : "Will synthesize"
+              : modelRan
+                ? "Model used"
+                : "Model planned"}
+          </span>
           <small>{selectedModel?.location ?? "—"}</small>
         </div>
         <strong>{selectedModel?.label ?? "Waiting for request"}</strong>
+        {draftingModel && (
+          <span className="model-draft-stage">
+            Drafted by {draftingModel.label} · {draftingModel.location}
+            {draftingModel.location === "cloud"
+              ? " · context left this device"
+              : ""}
+          </span>
+        )}
         <span>
           {selectedModel
             ? [

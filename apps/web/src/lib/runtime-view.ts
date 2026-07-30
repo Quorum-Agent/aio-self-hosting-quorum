@@ -173,8 +173,13 @@ export function describeCloudUsage(
       ),
     ),
   ];
+  // This label explains a cloud indicator, so it must name the model that goes
+  // to the cloud. Under relay that is the drafting spoke; plan.modelId is the
+  // local hub, which would light the badge while naming a local model.
   const selectedLabel =
-    models.find((model) => model.id === plan?.modelId)?.label ?? "cloud model";
+    models.find(
+      (model) => model.id === (plan?.spokeModelId ?? plan?.modelId),
+    )?.label ?? "cloud model";
   const webText = webContacted
     ? `Web search via ${plan?.webSearch?.provider}`
     : undefined;
@@ -226,12 +231,16 @@ export function describeModelAttempts(
   const lastAttempt = attempts.at(-1);
   if (!lastAttempt || lastAttempt.modelId !== plan.modelId) {
     const selected = models.find((model) => model.id === plan.modelId);
+    // Describe this model, not the plan. Under relay plan.route is "cloud"
+    // whenever the spoke is remote, which would label a local hub as cloud and
+    // claim its context left the device.
+    const route = selected?.location ?? plan.route;
     attempts.push({
       modelId: plan.modelId,
       label: selected?.label ?? plan.modelId,
-      route: plan.route,
+      route,
       status: "selected",
-      contextMayHaveBeenTransmitted: plan.route === "cloud",
+      contextMayHaveBeenTransmitted: route === "cloud",
     });
   }
 

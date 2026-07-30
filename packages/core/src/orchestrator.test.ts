@@ -9,6 +9,7 @@ import { WebSearchExecutionError } from "./web-search-execution-error.js";
 import type {
   ChatMessage,
   ChatRequest,
+  TaskPlan,
   ModelDescriptor,
   ModelProvider,
   ModelStreamInput,
@@ -1353,5 +1354,63 @@ describe("Orchestrator relay mode", () => {
     expect(spokeCalls).toBe(1);
     expect(streamed).not.toContain("PARTIAL-DRAFT");
     expect(events.some((event) => event.type === "result")).toBe(true);
+  });
+
+  it("names the spoke as the answering model when the hub fails", () => {
+    // The panel reads plan.modelId to say "Model used". If the hub failed and
+    // the draft shipped, pointing it at the hub reports a model that produced
+    // nothing — the disclosure invariant failing where it exists to hold.
+    return collect(
+      relayOrchestrator({
+        hub: async function* () {
+          throw new Error("hub exploded");
+          // eslint-disable-next-line no-unreachable
+          yield "";
+        },
+      }),
+      codingRequest(),
+    ).then((events) => {
+      const result = events.find((event) => event.type === "result") as {
+        result: { message: ChatMessage; plan: TaskPlan };
+      };
+
+      expect(result.result.message.content).toBe(DRAFT);
+      expect(result.result.plan.modelId).toBe(spokeModel.id);
+      expect(result.result.plan.spokeModelId).toBeUndefined();
+      expect(result.result.plan.rationale).toContain("delivered as it stood");
+    });
+  });
+
+  it("opens the circuit on a hub that keeps failing", async () => {
+    // Without this a dead hub is re-dialed every request and stays available
+    // forever, because availability is what the breaker would have flipped.
+    let hubCalls = 0;
+    const orchestrator = new Orchestrator(
+      [
+        provider(spokeModel, async function* () {
+          yield DRAFT;
+        }),
+        provider(hubModel, () => {
+          hubCalls += 1;
+          return (async function* () {
+            throw new Error("hub down");
+            // eslint-disable-next-line no-unreachable
+            yield "";
+          })();
+        }),
+      ],
+      new RequestCompiler(),
+      new RoutePlanner("relay"),
+    );
+
+    for (let index = 0; index < 4; index += 1) {
+      await collect(orchestrator, codingRequest());
+    }
+
+    // The breaker threshold is 2, so the hub must stop being dialed.
+    expect(hubCalls).toBeLessThan(4);
+    expect(
+      orchestrator.models.find((model) => model.id === hubModel.id)?.available,
+    ).toBe(false);
   });
 });

@@ -862,7 +862,23 @@ export class Orchestrator {
           detail: failure,
         });
         yield { type: "trace", trace: executionTrace(hubStep, "failed", failure) };
-        if (hubEmitted || signal?.aborted) {
+        const hubCancelled =
+          signal?.aborted === true ||
+          (error instanceof ModelExecutionError &&
+            error.kind === "cancelled");
+        // Same rule the drafting stage uses: a cancelled request and a
+        // rejected request say nothing about provider health, but a provider
+        // that keeps failing must open its circuit. Without this a dead hub is
+        // re-dialed on every request and stays available forever, because
+        // availability is exactly what the breaker would have flipped.
+        if (
+          !hubCancelled &&
+          (!(error instanceof ModelExecutionError) ||
+            error.kind === "provider")
+        ) {
+          this.#recordFailure(hubProvider);
+        }
+        if (hubEmitted || hubCancelled) {
           // Part of the synthesis already reached the user; replacing it now
           // would rewrite what they are reading.
           plan = { ...plan, attempts: [...attempts] };
@@ -874,13 +890,29 @@ export class Orchestrator {
               : `${failure} Synthesis stopped after output had begun.`,
             recoverable: !signal?.aborted,
             plan,
-            ...(content ? { partialContent: content } : {}),
+            // Fall back to the draft. Cancelling during synthesis lands in the
+            // one window where a complete answer exists but has been withheld,
+            // so reporting nothing would discard finished work the user waited
+            // for — the loss c92fcda removed, reopened by a new door.
+            ...(content || draftContent
+              ? { partialContent: content || draftContent }
+              : {}),
           };
           return;
         }
         // Nothing was shown yet, so the draft can still stand in for the
         // answer rather than losing the work entirely.
         content = draftContent;
+        // The draft is now the answer, so the plan has to say so. modelId
+        // means "whose words the user read", and leaving it pointing at the
+        // hub would make the panel report a model that produced nothing —
+        // the disclosure invariant failing in the one case it exists for.
+        const { spokeModelId: draftedBy, ...planWithoutSpoke } = plan;
+        plan = {
+          ...planWithoutSpoke,
+          ...(draftedBy ? { modelId: draftedBy } : {}),
+          rationale: `${plan.rationale} ${hubProvider.model.label} failed before writing, so the draft was delivered as it stood.`,
+        };
         yield { type: "delta", content: draftContent };
       }
       plan = { ...plan, attempts: [...attempts] };

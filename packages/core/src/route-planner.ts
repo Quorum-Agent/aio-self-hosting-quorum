@@ -139,13 +139,14 @@ export class RoutePlanner {
     }
     degraded ||= selected.id === "local:scaffold";
 
-    const hub = this.#selectHub(candidates, selected);
-    // Context leaves the device if EITHER stage is remote, so the disclosure
-    // below must reflect the whole plan rather than the answering model.
-    const route =
-      selected.location === "cloud" || hub?.location === "cloud"
-        ? "cloud"
-        : selected.location;
+    // Ranked, not raw: the hub writes the answer the user reads, so among
+    // several general models it should be the best one rather than whichever
+    // was declared first.
+    const hub = this.#selectHub(sorted, selected);
+    // #selectHub only ever returns a local model, so the spoke is the only
+    // stage that can carry context off the device. If a cloud hub is ever
+    // allowed, this must become "cloud if either stage is remote".
+    const route = selected.location;
     const selectedSpecialties = matchedSpecialties(selected, request);
     const rationale = degraded
       ? `${policy.label} mode found no model with every required capability; the local scaffold will explain the limitation.`
@@ -202,9 +203,15 @@ export class RoutePlanner {
       // The model whose words the user reads: the hub when one synthesizes.
       modelId: hub?.id ?? selected.id,
       ...(hub ? { spokeModelId: selected.id } : {}),
+      // Say when relay was configured but did not engage. Otherwise the plan
+      // is indistinguishable from route mode and a misconfiguration — a
+      // general model outranking every specialist, say — looks like normal
+      // operation forever.
       rationale: hub
         ? `${rationale} ${hub.label} will synthesize the final answer.`
-        : rationale,
+        : this.#mode === "relay"
+          ? `${rationale} No second general model could serve this request, so one model answered directly.`
+          : rationale,
       steps,
       ...(degraded ? { degraded: true } : {}),
       safety: {
