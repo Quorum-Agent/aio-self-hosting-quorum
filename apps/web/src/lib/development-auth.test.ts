@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   isNetworkDevelopmentAuthorizationValid,
+  MINIMUM_NETWORK_DEVELOPMENT_PASSWORD_LENGTH,
   NETWORK_DEVELOPMENT_USERNAME,
 } from "./development-auth.js";
 
@@ -45,8 +46,23 @@ describe("network development authorization", () => {
     expect(
       isNetworkDevelopmentAuthorizationValid(
         basicAuthorization(NETWORK_DEVELOPMENT_USERNAME, "too-short"),
-        "too-short",
+        "x".repeat(MINIMUM_NETWORK_DEVELOPMENT_PASSWORD_LENGTH - 1),
       ),
     ).toBe(false);
+  });
+
+  it("accepts a memorable password at the documented minimum", () => {
+    const minimumPassword = "x".repeat(
+      MINIMUM_NETWORK_DEVELOPMENT_PASSWORD_LENGTH,
+    );
+    expect(
+      isNetworkDevelopmentAuthorizationValid(
+        basicAuthorization(
+          NETWORK_DEVELOPMENT_USERNAME,
+          minimumPassword,
+        ),
+        minimumPassword,
+      ),
+    ).toBe(true);
   });
 });

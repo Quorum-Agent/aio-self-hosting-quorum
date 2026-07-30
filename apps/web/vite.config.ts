@@ -3,7 +3,10 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { defineConfig, type Plugin, type ProxyOptions } from "vite";
 import react from "@vitejs/plugin-react";
 
-import { isNetworkDevelopmentAuthorizationValid } from "./src/lib/development-auth.js";
+import {
+  isNetworkDevelopmentAuthorizationValid,
+  MINIMUM_NETWORK_DEVELOPMENT_PASSWORD_LENGTH,
+} from "./src/lib/development-auth.js";
 
 const DEVELOPMENT_PORT = 5173;
 const API_TARGET = "http://127.0.0.1:8787";
@@ -60,9 +63,12 @@ function networkProxy(): ProxyOptions {
 export default defineConfig(({ mode }) => {
   const networkMode = mode === "network";
   const password = process.env["QUORUM_DEV_NETWORK_PASSWORD"] ?? "";
-  if (networkMode && password.length < 16) {
+  if (
+    networkMode &&
+    password.length < MINIMUM_NETWORK_DEVELOPMENT_PASSWORD_LENGTH
+  ) {
     throw new Error(
-      "QUORUM_DEV_NETWORK_PASSWORD must contain at least 16 characters.",
+      `QUORUM_DEV_NETWORK_PASSWORD must contain at least ${MINIMUM_NETWORK_DEVELOPMENT_PASSWORD_LENGTH} characters.`,
     );
   }
 
