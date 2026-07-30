@@ -187,9 +187,54 @@ describe("OpenAICompatibleProvider", () => {
     });
     expect(JSON.parse(String(request.body))).toMatchObject({
       reasoning_effort: "none",
-      max_tokens: 1_536,
+      max_tokens: 2_048,
     });
   });
+
+  it.each(["concise", "standard", "detailed"] as const)(
+    "asks for the same output ceiling at %s verbosity",
+    async (verbosity) => {
+      // Verbosity shapes how the model answers, not how much it is allowed to
+      // say. A per-level cap made "concise" mean truncated rather than brief.
+      const fetchMock = vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: finalAnswer("Answer.") } }],
+          }),
+          { headers: { "content-type": "application/json" } },
+        ),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const provider = new OpenAICompatibleProvider({
+        id: "local:qwen3:4b",
+        label: "qwen3:4b",
+        provider: "openai-compatible",
+        location: "local",
+        baseUrl: "http://127.0.0.1:11434/v1",
+        apiKey: "ollama",
+        model: "qwen3:4b",
+        contextWindow: 16_384,
+        qualityRating: 40,
+        capabilities: ["chat"],
+        reasoningEffort: "none",
+      });
+
+      for await (const _ of provider.stream(
+        modelInput([], "balanced", verbosity),
+      )) {
+        // drain
+      }
+
+      const body = JSON.parse(
+        String((fetchMock.mock.calls[0]?.[1] as RequestInit).body),
+      );
+      expect(body.max_tokens).toBe(2_048);
+      expect(String(body.messages[0]?.content)).toContain(
+        `Response detail is ${verbosity}`,
+      );
+    },
+  );
 
   it("budgets multibyte text more conservatively than ASCII", () => {
     expect(estimateInputTokens([{ content: "😀".repeat(12) }])).toBeGreaterThan(
@@ -356,7 +401,7 @@ describe("OpenAICompatibleProvider", () => {
       think: false,
       keep_alive: "30m",
       options: {
-        num_predict: 768,
+        num_predict: 2_048,
       },
     });
     expect(body.messages[0]?.content).toContain(
@@ -949,7 +994,7 @@ describe("OpenAICompatibleProvider", () => {
 
     expect(chunks.join("")).toContain("complete but limited");
     expect(chunks.join("")).toContain(
-      "reached Quorum's 768-token response limit",
+      "reached Quorum's 2048-token response limit",
     );
   });
 
