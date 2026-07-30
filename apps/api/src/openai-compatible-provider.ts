@@ -80,11 +80,10 @@ const DEFAULT_TIMEOUTS: ProviderTimeouts = {
   validatedOutputMs: 60_000,
   totalMs: 90_000,
 };
-const VERBOSITY_OUTPUT_LIMITS: Record<ResponseVerbosity, number> = {
-  concise: 384,
-  standard: 768,
-  detailed: 1_536,
-};
+// Verbosity shapes how the model answers, not how many tokens it is allowed.
+// The only output limit is the model's own safety ceiling, which a normal
+// answer never reaches — a cap per level made "concise" mean "guillotined at
+// 384 tokens" rather than "answered briefly".
 const MAX_ERROR_BODY_BYTES = 16 * 1024;
 const MAX_JSON_BODY_BYTES = 1024 * 1024;
 const MAX_STREAM_FRAME_BYTES = 1024 * 1024;
@@ -104,14 +103,18 @@ const PRODUCT_CONTEXT = [
 
 const RESPONSE_GUIDANCE: Record<ResponseVerbosity, string> = {
   concise:
-    "Return only the final user-facing answer. Give a direct, compact answer. " +
-    "Include only context needed for correctness or safety.",
+    "Return only the final user-facing answer. Answer directly and then stop. " +
+    "Lead with the answer itself; do not restate the question, and omit preamble, " +
+    "caveats, and alternatives unless they change the answer. Give a complete " +
+    "thought rather than a clipped one — brevity is about leaving things out, " +
+    "not about stopping early.",
   standard:
-    "Return only the final user-facing answer. Use moderate detail, clear structure, " +
-    "and explain important conclusions when useful.",
+    "Return only the final user-facing answer. Answer first, then support it. " +
+    "Include the reasoning that would change the reader's decision and leave out " +
+    "background they did not ask for. Structure it only when structure helps.",
   detailed:
     "Return only the final user-facing answer. Lead with the answer, then develop it " +
-    "with useful examples or implementation detail. " +
+    "with worked examples, implementation detail, and the trade-offs that matter. " +
     "End with a short 'Reasoning summary' that states the decisive factors and conclusion. " +
     "Never reveal hidden chain-of-thought, private scratch work, or token-by-token reasoning.",
 };
@@ -670,10 +673,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
   }
 
   async *stream(input: ModelStreamInput): AsyncIterable<string> {
-    const maxOutputTokens = Math.min(
-      this.#maxOutputTokens,
-      VERBOSITY_OUTPUT_LIMITS[input.request.verbosity],
-    );
+    const maxOutputTokens = this.#maxOutputTokens;
     const compatibleSystem = systemContext(
       this.model,
       input.runtimeModels,
