@@ -998,6 +998,94 @@ describe("OpenAICompatibleProvider", () => {
     );
   });
 
+  function ollamaLine(
+    content: string,
+    extra: Record<string, unknown> = {},
+  ): string {
+    return `${JSON.stringify({ message: { content }, ...extra })}\n`;
+  }
+
+  function limitedProvider() {
+    return new OpenAICompatibleProvider({
+      id: "local:limited",
+      label: "limited",
+      provider: "openai-compatible",
+      location: "local",
+      baseUrl: "http://127.0.0.1:11434/v1",
+      apiKey: "ollama",
+      model: "limited",
+      contextWindow: 8_192,
+      qualityRating: 10,
+      capabilities: ["chat"],
+      nativeOllama: true,
+    });
+  }
+
+  it("keeps the answer written before a structured response was cut short", async () => {
+    // Schema-constrained JSON is only well formed once generation completes, so
+    // hitting the ceiling used to discard the entire answer.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          ollamaLine('{"answer": "The first half survived') +
+            ollamaLine("", { done: true, done_reason: "length" }),
+          { headers: { "content-type": "application/x-ndjson" } },
+        ),
+      ),
+    );
+
+    const chunks: string[] = [];
+    for await (const chunk of limitedProvider().stream(modelInput())) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks.join("")).toContain("The first half survived");
+    expect(chunks.join("")).toContain("response limit");
+  });
+
+  it("stops before an escape sequence that was cut in half", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          ollamaLine('{"answer": "before the cut \\u00e') +
+            ollamaLine("", { done: true, done_reason: "length" }),
+          { headers: { "content-type": "application/x-ndjson" } },
+        ),
+      ),
+    );
+
+    const chunks: string[] = [];
+    for await (const chunk of limitedProvider().stream(modelInput())) {
+      chunks.push(chunk);
+    }
+
+    const answer = chunks.join("");
+    expect(answer).toContain("before the cut");
+    expect(answer).not.toContain("\\u");
+  });
+
+  it("still rejects malformed output that was not truncated", async () => {
+    // Salvage is for a cut-off answer, not general tolerance of broken output.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          ollamaLine('{"answer": "finished cleanly') +
+            ollamaLine("", { done: true, done_reason: "stop" }),
+          { headers: { "content-type": "application/x-ndjson" } },
+        ),
+      ),
+    );
+
+    await expect(async () => {
+      for await (const _ of limitedProvider().stream(modelInput())) {
+        // drain
+      }
+    }).rejects.toThrow(/no valid structured public answer/);
+  });
+
   it("rejects an SSE stream without a terminal marker before exposing content", async () => {
     vi.stubGlobal(
       "fetch",
