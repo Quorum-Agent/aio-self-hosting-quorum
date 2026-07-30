@@ -16,8 +16,25 @@ import {
   isNamedSoftwareFollowUp,
 } from "./software-taxonomy.js";
 
+// Named model families, so "the most recent advisor from Qwen" is recognised as
+// a moving public subject without the tiny classifier having to vouch for it —
+// classifier output is deliberately not allowed to authorize network access.
+// This list ages; a miss costs a search that did not fire, never a wrong answer.
+const MODEL_FAMILY =
+  String.raw`(?:qwen|llama|mistral|mixtral|gemma|deepseek|falcon|phi-\d|gpt(?:-\w+)?|claude|gemini|grok)`;
 const TIME_SENSITIVE_SUBJECT =
-  String.raw`(?:news|events?|laws?|regulations?|prices?|weather|versions?|releases?|exchange rates?|schedules?|scores?|officeholders?|presidents?|ceos?)`;
+  String.raw`(?:news|events?|laws?|regulations?|prices?|weather|versions?|releases?|models?|llms?|${MODEL_FAMILY}|exchange rates?|schedules?|scores?|officeholders?|presidents?|ceos?)`;
+// A superlative asserts a present-tense ranking, which is time-sensitive on its
+// own — but only about a subject that is explicitly public. Both halves are
+// required: a public scope with no ranking ("how does open source licensing
+// work") is timeless, and a ranking with no public scope ("best way to sort
+// this array") is not about the outside world.
+const SUPERLATIVE_CLAIM = String.raw`(?:best|top|leading|strongest|fastest|newest|most (?:capable|advanced|powerful|recent)|state[- ]of[- ]the[- ]art|cutting[- ]edge)`;
+const PUBLIC_SCOPE_CLAIM = String.raw`(?:publicly |commercially )?available|on the market|open[- ]weights?|open[- ]source|in the (?:public )?(?:market|wild)`;
+const RANKED_PUBLIC_PATTERN = new RegExp(
+  String.raw`\b${SUPERLATIVE_CLAIM}\b[^.!?\n]{0,80}\b(?:${PUBLIC_SCOPE_CLAIM})\b|\b(?:${PUBLIC_SCOPE_CLAIM})\b[^.!?\n]{0,80}\b${SUPERLATIVE_CLAIM}\b`,
+  "i",
+);
 const EXPLICIT_FRESHNESS_PATTERN = new RegExp(
   String.raw`(?:\b(?:latest|recent|live|current(?:ly)?|today|this week|up[- ]to[- ]date)\b[^.!?\n]{0,60}\b${TIME_SENSITIVE_SUBJECT}\b|\b${TIME_SENSITIVE_SUBJECT}\b[^.!?\n]{0,60}\b(?:latest|recent|live|current(?:ly)?|today|this week|up[- ]to[- ]date)\b)`,
   "i",
@@ -114,7 +131,8 @@ interface IntentClassification {
 function requiresFreshness(prompt: string): boolean {
   return (
     EXPLICIT_FRESHNESS_PATTERN.test(prompt) ||
-    CONTEXTUAL_CURRENT_PATTERN.test(prompt)
+    CONTEXTUAL_CURRENT_PATTERN.test(prompt) ||
+    RANKED_PUBLIC_PATTERN.test(prompt)
   );
 }
 

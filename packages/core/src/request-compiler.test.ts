@@ -120,6 +120,56 @@ describe("RequestCompiler", () => {
     ]);
   });
 
+  it.each([
+    // The model landscape moves faster than anything else this product routes
+    // over, and "model" was absent from the time-sensitive vocabulary, so no
+    // phrasing of "which model is best" could ever reach the web.
+    "What is the most recent coding model advisor from Qwen?",
+    "So qwen3.5:9B is the best spoke publicly available?",
+    "What is the best publicly available model?",
+    "What is the state of the art open weight model?",
+  ])("searches for a present-tense ranking of public options: %s", (prompt) => {
+    const compiled = compiler.compile(request(prompt));
+
+    expect(compiled.requirements.requiresFreshness).toBe(true);
+    expect(compiled.requirements.capabilities).toContain("web");
+  });
+
+  it.each([
+    // A named family is a moving public subject, so a time word is enough.
+    "What is the latest from Qwen?",
+    "What is the newest Llama available?",
+  ])("recognises a named model family as time-sensitive: %s", (prompt) => {
+    const compiled = compiler.compile(request(prompt));
+
+    expect(compiled.requirements.capabilities).toContain("web");
+  });
+
+  it.each([
+    // A public scope with no ranking is timeless.
+    "How does open source licensing work?",
+    // A family named without any time signal is ordinary explanation.
+    "Explain how Llama attention works.",
+    // A ranking with no public scope is not about the outside world.
+    "What is the best way to sort this array?",
+    "What are the best practices for error handling?",
+  ])("leaves a half-signal alone: %s", (prompt) => {
+    const compiled = compiler.compile(request(prompt));
+
+    expect(compiled.requirements.requiresFreshness).toBe(false);
+    expect(compiled.requirements.capabilities).not.toContain("web");
+  });
+
+  it("still withholds the web from a personal question that reads as fresh", () => {
+    // Q-15: the personal-scope block, not the freshness rule, is what keeps
+    // this sentence on the device. Widening freshness must not bypass it.
+    const compiled = compiler.compile(
+      request("What is my current medication schedule?"),
+    );
+
+    expect(compiled.requirements.capabilities).not.toContain("web");
+  });
+
   it("treats an explicit citation request as research without inventing freshness", () => {
     const compiled = compiler.compile(
       request("Cite sources supporting this architectural recommendation."),

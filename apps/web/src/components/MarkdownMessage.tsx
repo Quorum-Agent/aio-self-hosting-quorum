@@ -1,6 +1,8 @@
 import { Check, Copy } from "lucide-react";
 import { Fragment, type ReactNode, useState } from "react";
 
+import { copyText } from "../lib/clipboard";
+
 function safeLink(value: string): string | undefined {
   try {
     const url = new URL(value);
@@ -44,8 +46,14 @@ function inlineMarkdown(value: string): ReactNode[] {
   return parts;
 }
 
+const COPY_LABELS = {
+  idle: "Copy",
+  copied: "Copied",
+  failed: "Copy failed",
+} as const;
+
 function CodeBlock({ code, language }: { code: string; language?: string }) {
-  const [copied, setCopied] = useState(false);
+  const [status, setStatus] = useState<keyof typeof COPY_LABELS>("idle");
   return (
     <div className="markdown-code">
       <div>
@@ -53,16 +61,26 @@ function CodeBlock({ code, language }: { code: string; language?: string }) {
         <button
           type="button"
           onClick={() => {
-            void navigator.clipboard.writeText(code).then(() => {
-              setCopied(true);
-              window.setTimeout(() => setCopied(false), 1_500);
+            setStatus("idle");
+            void copyText(code).then((copiedToClipboard) => {
+              setStatus(copiedToClipboard ? "copied" : "failed");
+              // Success announces itself and clears; a failure stays until the
+              // next attempt so it cannot pass by unnoticed.
+              if (copiedToClipboard) {
+                window.setTimeout(() => setStatus("idle"), 1_500);
+              }
             });
           }}
           aria-label="Copy code"
         >
-          {copied ? <Check size={14} /> : <Copy size={14} />}
-          {copied ? "Copied" : "Copy"}
+          {status === "copied" ? <Check size={14} /> : <Copy size={14} />}
+          {COPY_LABELS[status]}
         </button>
+        {/* Outside the button: a button's descendants are presentational, so a
+            live region nested inside it is not reliably announced. */}
+        <span className="visually-hidden" role="status">
+          {status === "idle" ? "" : COPY_LABELS[status]}
+        </span>
       </div>
       <pre>
         <code>{code}</code>

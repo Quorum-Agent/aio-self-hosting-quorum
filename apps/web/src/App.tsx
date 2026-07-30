@@ -39,6 +39,7 @@ import {
   type ConversationRecord,
   type RuntimeInfo,
 } from "./lib/api";
+import { createRandomId } from "./lib/random-id";
 import {
   describeRuntimeStatus,
   selectablePolicies,
@@ -96,7 +97,7 @@ function savedPolicy(): PolicyMode {
 }
 
 function createConversationId() {
-  return crypto.randomUUID();
+  return createRandomId();
 }
 
 function coalesceTrace(
@@ -318,7 +319,7 @@ export default function App() {
     if (!content || busy || runtimePreparing) return;
 
     const userMessage: ChatMessage = {
-      id: crypto.randomUUID(),
+      id: createRandomId(),
       role: "user",
       content,
       createdAt: new Date().toISOString(),
@@ -763,12 +764,18 @@ export default function App() {
         onSaved={refreshRuntime}
       />
 
-      {sidebarOpen && (
+      {/* Both drawers overlay the conversation below 841px. The scrim is
+          display: none above that, where the inspector is a real column. */}
+      {(sidebarOpen || executionOpen) && (
         <button
           className="mobile-scrim"
           type="button"
-          aria-label="Close navigation"
-          onClick={() => setSidebarOpen(false)}
+          aria-label={
+            sidebarOpen ? "Close navigation" : "Close request inspector"
+          }
+          onClick={() =>
+            sidebarOpen ? setSidebarOpen(false) : setExecutionOpen(false)
+          }
         />
       )}
     </div>

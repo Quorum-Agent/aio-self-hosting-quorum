@@ -66,12 +66,22 @@ trusted LAN, use the explicit authenticated gateway:
 npm run dev:network
 ```
 
-Quorum generates and prints a strong password for that launch; sign in with username
-`quorum`. To choose a repeatable password instead, set
-`QUORUM_DEV_NETWORK_PASSWORD` to at least 16 characters before starting. Vite will
-print the available network URLs. The API remains bound to loopback and is reached
-through the authenticated Vite proxy. This development gateway uses plain HTTP; use a
-VPN or encrypted tunnel outside a trusted LAN. `npm run dev -- --host` is
+Quorum generates and prints an easy-to-type `XXXX-XXXX` pairing code for that launch;
+sign in with username `quorum`. The generated code is the recommended path — it is
+random and lasts only for that launch. To reuse one password instead, invent a phrase
+of at least 24 characters and add it to the ignored `.env` file:
+
+```dotenv
+QUORUM_DEV_NETWORK_PASSWORD=<invent-your-own-phrase-here>
+```
+
+Choose your own value rather than copying one from documentation: this gateway has no
+lockout, so a password that appears in a public repository is the first one an
+unwelcome guest on the LAN will try.
+
+Vite will print the available network URLs. The API remains bound to loopback and is
+reached through the authenticated Vite proxy. This development gateway uses plain
+HTTP; use a VPN or encrypted tunnel outside a trusted LAN. `npm run dev -- --host` is
 intentionally rejected with guidance to this command.
 
 Quorum remains usable if no model is installed: it selects the in-process scaffold

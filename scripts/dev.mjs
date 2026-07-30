@@ -1,9 +1,47 @@
-import { randomBytes } from "node:crypto";
+import { randomInt } from "node:crypto";
+import { readFileSync } from "node:fs";
 
 import { concurrently } from "concurrently";
+import { parse as parseEnvironment } from "dotenv";
 
 const NETWORK_FLAG = "--network";
 const HOST_FLAGS = new Set(["--host", "-H"]);
+// The generated pairing code is short but random. A password a human chooses
+// and reuses has to be long enough to survive an unthrottled LAN guesser.
+const MINIMUM_CONFIGURED_PASSWORD_LENGTH = 24;
+const PAIRING_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+function configuredNetworkPassword() {
+  const inherited = process.env["QUORUM_DEV_NETWORK_PASSWORD"];
+  if (inherited !== undefined) return inherited;
+  try {
+    return parseEnvironment(readFileSync(".env"))[
+      "QUORUM_DEV_NETWORK_PASSWORD"
+    ];
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      error.code === "ENOENT"
+    ) {
+      return undefined;
+    }
+    throw error;
+  }
+}
+
+function pairingCodePart() {
+  let part = "";
+  for (let index = 0; index < 4; index += 1) {
+    part += PAIRING_CODE_ALPHABET[randomInt(PAIRING_CODE_ALPHABET.length)];
+  }
+  return part;
+}
+
+function generatePairingCode() {
+  return `${pairingCodePart()}-${pairingCodePart()}`;
+}
+
 const argumentsList = process.argv.slice(2);
 const networkMode =
   argumentsList.length === 1 && argumentsList[0] === NETWORK_FLAG;
@@ -19,7 +57,7 @@ if (
   console.error(
     [
       "Quorum does not expose its unauthenticated API with Vite's --host flag.",
-      "Use `npm run dev:network` with QUORUM_DEV_NETWORK_PASSWORD instead.",
+      "Use `npm run dev:network` instead.",
     ].join("\n"),
   );
   process.exit(1);
@@ -34,15 +72,20 @@ if (argumentsList.length > 0 && !networkMode) {
 
 let networkPassword;
 if (networkMode) {
-  const configuredPassword = process.env["QUORUM_DEV_NETWORK_PASSWORD"];
-  if (configuredPassword !== undefined && configuredPassword.length < 16) {
+  const configuredPassword = configuredNetworkPassword();
+  if (
+    configuredPassword !== undefined &&
+    configuredPassword.length < MINIMUM_CONFIGURED_PASSWORD_LENGTH
+  ) {
     console.error(
-      "When set, QUORUM_DEV_NETWORK_PASSWORD must contain at least 16 characters.",
+      [
+        `When set, QUORUM_DEV_NETWORK_PASSWORD must contain at least ${MINIMUM_CONFIGURED_PASSWORD_LENGTH} characters.`,
+        "Unset it to use a generated per-launch pairing code instead.",
+      ].join("\n"),
     );
     process.exit(1);
   }
-  networkPassword =
-    configuredPassword ?? randomBytes(24).toString("base64url");
+  networkPassword = configuredPassword ?? generatePairingCode();
   console.log(
     [
       "Starting Quorum's authenticated development gateway.",
@@ -50,8 +93,8 @@ if (networkMode) {
       "  Username: quorum",
       `  Password: ${networkPassword}`,
       configuredPassword === undefined
-        ? "This password was generated for this launch only."
-        : "This password came from QUORUM_DEV_NETWORK_PASSWORD.",
+        ? "This pairing code was generated for this launch only."
+        : "This dedicated password came from QUORUM_DEV_NETWORK_PASSWORD.",
       "This is plain HTTP for a trusted LAN; use a VPN or encrypted tunnel on untrusted networks.",
     ].join("\n"),
   );
@@ -76,7 +119,6 @@ const { result } = concurrently(
       ...(networkPassword
         ? {
             env: {
-              ...process.env,
               QUORUM_DEV_NETWORK_PASSWORD: networkPassword,
             },
           }

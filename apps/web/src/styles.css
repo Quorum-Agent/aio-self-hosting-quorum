@@ -62,6 +62,15 @@ button {
   cursor: pointer;
 }
 
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .app-shell {
   display: grid;
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr) 0;
@@ -1819,9 +1828,12 @@ button {
 }
 
 @media (max-width: 840px) {
+  /* The sidebar and execution panel are position: fixed here, leaving .main
+     as the only in-flow grid child; a single track keeps it full-width
+     instead of auto-placing it into a collapsed first column. */
   .app-shell,
   .app-shell.execution-visible {
-    grid-template-columns: 0 minmax(0, 1fr) 0;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .sidebar {
