@@ -82,6 +82,7 @@ describe("chat execution persistence", () => {
       cloudConfigured: false,
       warmupStatus,
       warmup: Promise.resolve(warmupStatus),
+      async refreshLocalModels() {},
     };
     const config: AppConfig = {
       host: "127.0.0.1",
@@ -145,6 +146,91 @@ describe("chat execution persistence", () => {
   });
 });
 
+describe("conversation lifecycle routes", () => {
+  it("renames, exports, and deletes a conversation through the API", async () => {
+    const dataDirectory = mkdtempSync(join(tmpdir(), "quorum-lifecycle-"));
+    temporaryDirectories.push(dataDirectory);
+    const warmupStatus: QuorumRuntime["warmupStatus"] = {
+      state: "disabled",
+      models: [],
+    };
+    const runtime: QuorumRuntime = {
+      orchestrator: { models: [] } as unknown as Orchestrator,
+      localRuntime: {
+        state: "unavailable",
+        endpointConnected: false,
+        roles: [],
+      },
+      cloudConfigured: false,
+      warmupStatus,
+      warmup: Promise.resolve(warmupStatus),
+      async refreshLocalModels() {},
+    };
+    const app = await buildServer(
+      {
+        host: "127.0.0.1",
+        port: 8787,
+        logLevel: "silent",
+        dataDirectory,
+        local: {
+          baseUrl: "http://127.0.0.1:11434/v1",
+          apiKey: "ollama",
+          models: [],
+          promptAnalyzer: {
+            name: "classifier",
+            contextWindow: 4_096,
+          },
+          warmOnStartup: false,
+        },
+      },
+      runtime,
+    );
+
+    expect(
+      (
+        await app.inject({
+          method: "POST",
+          url: "/api/conversations",
+          payload: { id: "conversation-1", title: "Original" },
+        })
+      ).statusCode,
+    ).toBe(201);
+    const renamed = await app.inject({
+      method: "PATCH",
+      url: "/api/conversations/conversation-1",
+      payload: { title: "Renamed conversation" },
+    });
+    expect(renamed.json().conversation.title).toBe("Renamed conversation");
+
+    const exported = await app.inject({
+      method: "GET",
+      url: "/api/conversations/conversation-1/export",
+    });
+    expect(exported.headers["content-disposition"]).toContain(
+      "Renamed-conversation.json",
+    );
+    expect(exported.json().conversation.id).toBe("conversation-1");
+
+    expect(
+      (
+        await app.inject({
+          method: "DELETE",
+          url: "/api/conversations/conversation-1",
+        })
+      ).statusCode,
+    ).toBe(204);
+    expect(
+      (
+        await app.inject({
+          method: "GET",
+          url: "/api/conversations/conversation-1/messages",
+        })
+      ).statusCode,
+    ).toBe(404);
+    await app.close();
+  });
+});
+
 describe("web-search settings", () => {
   function runtimeWithSearch(
     provider: ConfigurableWebSearchProvider,
@@ -169,6 +255,7 @@ describe("web-search settings", () => {
       webSearchProvider: provider,
       warmupStatus,
       warmup: Promise.resolve(warmupStatus),
+      async refreshLocalModels() {},
     };
   }
 

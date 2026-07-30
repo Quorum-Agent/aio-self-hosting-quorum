@@ -152,14 +152,14 @@ button {
 }
 
 .new-chat:disabled,
-.conversation-item:disabled {
+.conversation-item button:disabled {
   cursor: not-allowed;
   opacity: 0.55;
 }
 
 .sidebar-label {
   padding: 24px 9px 8px;
-  color: #6d746c;
+  color: #9da69d;
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.1em;
@@ -173,17 +173,25 @@ button {
 }
 
 .conversation-item {
+  position: relative;
+  display: flex;
+  width: 100%;
+  margin: 2px 0;
+  color: #aeb3ac;
+  background: transparent;
+  border-radius: 7px;
+}
+
+.conversation-select {
   display: grid;
+  flex: 1;
   grid-template-columns: 16px minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
-  width: 100%;
-  margin: 2px 0;
+  min-width: 0;
   padding: 8px 9px;
-  color: #aeb3ac;
+  color: inherit;
   text-align: left;
-  background: transparent;
-  border-radius: 7px;
 }
 
 .conversation-item span {
@@ -204,13 +212,41 @@ button {
   background: rgba(255, 255, 255, 0.06);
 }
 
+.conversation-actions {
+  display: flex;
+  align-items: center;
+  padding-right: 4px;
+  pointer-events: none;
+  opacity: 0;
+}
+
+.conversation-item:hover .conversation-actions,
+.conversation-item:focus-within .conversation-actions,
+.conversation-item.is-active .conversation-actions {
+  pointer-events: auto;
+  opacity: 1;
+}
+
+.conversation-actions button {
+  display: grid;
+  width: 25px;
+  height: 25px;
+  color: #c4cbc3;
+  place-items: center;
+  border-radius: 5px;
+}
+
+.conversation-actions button:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
 .conversation-item.is-active {
   box-shadow: inset 2px 0 #76a181;
 }
 
 .sidebar-empty {
   margin: 4px 9px;
-  color: #6f766f;
+  color: #a1aaa1;
   font-size: 11px;
   line-height: 1.55;
 }
@@ -548,6 +584,113 @@ button {
   white-space: pre-wrap;
 }
 
+.markdown-message {
+  min-width: 0;
+}
+
+.markdown-message > :first-child {
+  margin-top: 0;
+}
+
+.markdown-message > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown-message h1,
+.markdown-message h2,
+.markdown-message h3,
+.markdown-message h4 {
+  margin: 1.2em 0 0.45em;
+  color: #26312a;
+  font-size: 1.08em;
+  line-height: 1.35;
+}
+
+.markdown-message ul,
+.markdown-message ol {
+  margin: 0.6em 0;
+  padding-left: 1.5em;
+}
+
+.markdown-message li {
+  margin: 0.25em 0;
+}
+
+.markdown-message blockquote {
+  margin: 0.8em 0;
+  padding: 0.2em 0 0.2em 0.9em;
+  color: #536159;
+  border-left: 3px solid #9cb9a4;
+}
+
+.markdown-message code {
+  padding: 0.12em 0.32em;
+  font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+  font-size: 0.92em;
+  background: #e9ece7;
+  border-radius: 4px;
+}
+
+.markdown-code {
+  overflow: hidden;
+  margin: 0.85em 0;
+  color: #e8eee9;
+  background: #171c19;
+  border: 1px solid #2b332e;
+  border-radius: 9px;
+}
+
+.markdown-code > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 10px;
+  color: #bdc8c0;
+  font-size: 12px;
+  background: #222925;
+}
+
+.markdown-code button {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: inherit;
+}
+
+.markdown-code pre {
+  overflow-x: auto;
+  margin: 0;
+  padding: 13px;
+}
+
+.markdown-code pre code {
+  padding: 0;
+  color: inherit;
+  white-space: pre;
+  background: transparent;
+}
+
+.markdown-table-wrap {
+  overflow-x: auto;
+  margin: 0.85em 0;
+}
+
+.markdown-message table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.markdown-message th,
+.markdown-message td {
+  padding: 7px 9px;
+  text-align: left;
+  border: 1px solid #d7dcd5;
+}
+
+.markdown-message th {
+  background: #edf1ec;
+}
+
 .execution-activity {
   margin: 0 0 24px 46px;
   color: #555b53;
@@ -664,7 +807,7 @@ button {
 .activity-traces span {
   margin-top: 2px;
   overflow-wrap: anywhere;
-  color: #92978f;
+  color: #5e675f;
   font-size: 8px;
   line-height: 1.45;
   text-transform: capitalize;
@@ -715,7 +858,7 @@ button {
 .activity-web-search span,
 .activity-web-search small {
   margin-top: 2px;
-  color: #92978f;
+  color: #5e675f;
   font-size: 10px;
   line-height: 1.45;
   overflow-wrap: anywhere;
@@ -726,6 +869,10 @@ button {
   padding-left: 15px;
   font-size: 10px;
   line-height: 1.5;
+}
+
+.activity-web-search a {
+  unicode-bidi: isolate;
 }
 
 .web-attempt-list {
@@ -834,6 +981,8 @@ button {
   border: 0;
   outline: 0;
   font-size: 13px;
+  overflow-y: auto;
+  resize: none;
   line-height: 1.5;
 }
 
@@ -1184,19 +1333,20 @@ button {
 .web-source-list {
   margin: 8px 0 0;
   padding-left: 17px;
-  color: #777d74;
+  color: #4f5951;
   font-size: 10px;
   line-height: 1.55;
 }
 
 .web-source-list a {
   color: #4d7059;
+  unicode-bidi: isolate;
   overflow-wrap: anywhere;
 }
 
 .web-search-summary > p {
   margin: 7px 0 0;
-  color: #8e938a;
+  color: #5e675f;
   font-size: 10px;
   line-height: 1.45;
 }
@@ -1259,7 +1409,7 @@ button {
 
 .attempt-item span {
   margin-top: 2px;
-  color: #8e938a;
+  color: #5e675f;
   font-size: 8px;
   text-transform: capitalize;
 }
@@ -1807,4 +1957,53 @@ button {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+body {
+  font-size: 14px;
+}
+
+:where(
+  .sidebar,
+  .execution-panel,
+  .execution-activity,
+  .settings-dialog,
+  .composer-wrap
+) :where(span, small, time, p, label, button, select, input) {
+  font-size: max(12px, 1em);
+}
+
+:where(
+  .sidebar,
+  .execution-panel,
+  .execution-activity,
+  .settings-dialog,
+  .composer-wrap
+) :where(strong, a, li) {
+  font-size: max(12px, 1em);
+}
+
+.message-avatar,
+.route-node {
+  font-size: 12px;
+}
+
+.message p,
+.composer textarea {
+  font-size: 14px;
+}
+
+.activity-disclosure {
+  display: grid;
+  gap: 3px;
+  margin-top: 10px;
+  padding: 9px 10px;
+  color: #304f3b;
+  background: #e5efe7;
+  border: 1px solid #c9ddcd;
+  border-radius: 8px;
+}
+
+.activity-disclosure span {
+  color: #496353;
 }

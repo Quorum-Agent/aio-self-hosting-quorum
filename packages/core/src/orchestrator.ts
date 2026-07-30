@@ -24,6 +24,18 @@ import type {
   WebSearchResponse,
 } from "./types.js";
 
+const DISPLAY_CONTROL_PATTERN =
+  /[\u0000-\u001f\u007f-\u009f]|\p{Cf}/gu;
+
+function safeDisplayText(value: string, maximumLength = 240): string {
+  return value
+    .normalize("NFKC")
+    .replace(DISPLAY_CONTROL_PATTERN, " ")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, maximumLength);
+}
+
 function traceFor(
   requestId: string,
   step: PlanStep,
@@ -51,7 +63,7 @@ export class Orchestrator {
   readonly #compiler: RequestCompiler;
   readonly #planner: RoutePlanner;
   readonly #providers: Map<string, ModelProvider>;
-  readonly #promptAnalyzer: PromptAnalyzer | undefined;
+  #promptAnalyzer: PromptAnalyzer | undefined;
   readonly #webSearch: WebSearchProvider | undefined;
   readonly #failures = new Map<
     string,
@@ -82,6 +94,14 @@ export class Orchestrator {
         ? { ...provider.model, available: false }
         : provider.model;
     });
+  }
+
+  registerProvider(provider: ModelProvider): void {
+    this.#providers.set(provider.model.id, provider);
+  }
+
+  setPromptAnalyzer(promptAnalyzer: PromptAnalyzer | undefined): void {
+    this.#promptAnalyzer = promptAnalyzer;
   }
 
   #providerIdentity(provider: ModelProvider): string {
@@ -218,10 +238,11 @@ export class Orchestrator {
         return;
       }
       if (request.requirements.containsSensitiveData) {
+        const categories =
+          request.requirements.sensitiveDataCategories.join(", ");
         yield {
           type: "error",
-          message:
-            "Web search was blocked because the request appears to contain sensitive data.",
+          message: `Web search was blocked by the privacy guard. Detected categories: ${categories || "sensitive data"}. Remove that data or keep the request local.`,
           recoverable: true,
         };
         return;
@@ -236,26 +257,7 @@ export class Orchestrator {
         return;
       }
 
-      const priorContext =
-        request.requirements.intentSource === "conversation"
-          ? [...request.messages]
-              .slice(0, -1)
-              .reverse()
-              .find((message) => message.execution?.plan.analysis.taskSummary)
-              ?.execution?.plan.analysis.taskSummary ??
-            [...request.messages]
-              .slice(0, -1)
-              .reverse()
-              .find((message) => message.role === "user" && message.content.trim())
-              ?.content
-          : undefined;
-      const searchQuery = (
-        request.analysis.source === "local_model"
-          ? request.analysis.taskSummary
-          : priorContext
-            ? `${priorContext} Follow-up: ${request.prompt}`
-            : request.prompt
-      )
+      const searchQuery = request.prompt
         .replace(/[\u0000-\u001f\u007f]+/gu, " ")
         .replace(/\s+/gu, " ")
         .trim()
@@ -522,7 +524,7 @@ export class Orchestrator {
           contextMayHaveLeftDevice:
             this.#webSearch.tool.contextMayLeaveDevice,
           sources: webSearchResponse.results.map((result) => ({
-            title: result.title,
+            title: safeDisplayText(result.title),
             url: result.url,
             ...(result.publishedAt
                 ? { publishedAt: result.publishedAt }
@@ -540,7 +542,7 @@ export class Orchestrator {
         query: webSearchResponse.query,
         sources: webSearchResponse.results.map((result, index) => ({
           source: index + 1,
-          title: result.title,
+          title: safeDisplayText(result.title),
           url: result.url,
           snippet: result.snippet,
           ...(result.publishedAt
@@ -626,20 +628,6 @@ export class Orchestrator {
       }
 
       if (!executionError) {
-        if (webSearchResponse) {
-          const sources = webSearchResponse.results
-            .map(
-              (source, index) =>
-                `[${index + 1}] ${source.title} — ${source.url}`,
-            )
-            .join("\n");
-          const sourceAppendix =
-            "\n\nSources\n" +
-            "External destinations are not network-verified; inspect links before opening.\n" +
-            sources;
-          content += sourceAppendix;
-          yield { type: "delta", content: sourceAppendix };
-        }
         this.#recordSuccess(provider);
         attempts.push({
           modelId: provider.model.id,
@@ -698,6 +686,21 @@ export class Orchestrator {
         return;
       }
 
+      if (
+        executionError instanceof ModelExecutionError &&
+        executionError.kind === "request"
+      ) {
+        plan = { ...plan, attempts: [...attempts] };
+        yield { type: "plan", plan };
+        yield {
+          type: "error",
+          message: failureMessage,
+          recoverable: true,
+          plan,
+        };
+        return;
+      }
+
       this.#excludePhysicalProvider(provider, excludedModelIds);
       let fallbackPlan: TaskPlan;
       try {
@@ -738,7 +741,7 @@ export class Orchestrator {
                 contextMayHaveLeftDevice:
                   this.#webSearch.tool.contextMayLeaveDevice,
                 sources: webSearchResponse.results.map((result) => ({
-                  title: result.title,
+                  title: safeDisplayText(result.title),
                   url: result.url,
                   ...(result.publishedAt
                       ? { publishedAt: result.publishedAt }
@@ -780,6 +783,7 @@ export class Orchestrator {
       role: "assistant",
       content,
       createdAt: new Date().toISOString(),
+      ...(webSearchResponse ? { provenance: "web_grounded" as const } : {}),
     };
 
     yield {

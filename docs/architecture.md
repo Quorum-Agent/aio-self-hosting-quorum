@@ -45,7 +45,8 @@ The compiler converts a conversational request into explicit requirements:
 - required model capabilities;
 - confidence and whether intent came from the current turn or conversation context;
 - freshness requirement;
-- sensitive-data signal across the complete context that can be dispatched.
+- normalized sensitive-data categories found in user-authored context;
+- whether retained assistant context was derived from web retrieval.
 
 The compiler combines deterministic, contextual signals with a configurable local
 prompt expert. The tiny model emits only a bounded intent, confidence, and faithful
@@ -120,6 +121,8 @@ erased by a later local result.
 
 Detailed UI mode renders these authoritative events as an expandable in-conversation
 activity rail with elapsed time, request classification, task steps, and model swaps.
+Cloud contact, privacy-guard decisions, web-grounded-history guards, and terminal
+failures remain visible at Standard verbosity as durable disclosures.
 The final plan and coalesced traces are stored with the assistant message so each rail
 survives conversation changes and application reloads. This is execution evidence,
 not model-authored chain-of-thought.
@@ -148,10 +151,13 @@ validated-answer, and end-to-end timeouts. Optional reasoning settings are retri
 without the extension only if a compatible server identifies that exact field as
 unsupported. Cloud endpoints require HTTPS.
 
-On process startup, Quorum warms the local classifier followed by the default general
-model. Ollama's native keep-alive route is used when available, with a bounded
-OpenAI-compatible fallback for other loopback runtimes. Warmup shares the local
-inference scheduler so it cannot race a user request.
+On process startup, Quorum discovers local models with bounded retry/backoff, then
+warms the local classifier followed by the default general model. Ollama's native
+keep-alive route is used when available, with a bounded OpenAI-compatible fallback
+for other loopback runtimes. While warmup owns the local scheduler, the API returns a
+recoverable preparing response instead of accepting work that cannot run. Runtime
+status reads and chat dispatch also re-probe missing configured models, so a model
+server that starts later can join without restarting Quorum.
 
 For model generation, Quorum discards structured private-thinking fields. Native
 Ollama requests use its JSON-schema `format` field and accept exactly one visible
@@ -284,6 +290,7 @@ The resulting decision belongs in a local usage ledger.
 
 - A policy may be tightened automatically, never weakened silently.
 - Sensitive classification excludes cloud routes even in Best quality mode.
+- Web-grounded assistant history excludes cloud routes on later turns.
 - Offline mode excludes loopback endpoints as well as remote endpoints.
 - A provider is registered only when its configured model is discoverable.
 - A local provider URL must be explicit loopback and redirects are forbidden.
@@ -294,5 +301,7 @@ The resulting decision belongs in a local usage ledger.
   timestamps, or IDs, are authoritative model context.
 - Tool authorization must be evaluated outside model output.
 - Execution disclosure is derived from the actual plan, not decorative UI state.
+- The current loopback HTTP API is not an authorization boundary for other local
+  non-browser processes; the desktop sidecar must add a per-launch secret.
 
 These invariants should remain covered by tests as the capability graph grows.

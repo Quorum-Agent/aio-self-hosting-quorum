@@ -35,6 +35,7 @@ export function isPrivateHostname(hostname: string): boolean {
   ) {
     return true;
   }
+  if (/^127(?:\.\d{1,3}){0,3}$/u.test(normalized)) return true;
   if (
     ipVersion === 0 &&
     (normalized === "localtest.me" ||

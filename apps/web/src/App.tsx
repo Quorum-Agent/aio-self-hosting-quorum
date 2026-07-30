@@ -25,12 +25,16 @@ import { Composer } from "./components/Composer";
 import { ExecutionActivity } from "./components/ExecutionActivity";
 import { ExecutionPanel } from "./components/ExecutionPanel";
 import { MessageExecutionActivity } from "./components/MessageExecutionActivity";
+import { MarkdownMessage } from "./components/MarkdownMessage";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { Sidebar } from "./components/Sidebar";
 import {
+  deleteConversation,
+  exportConversation,
   getConversations,
   getMessages,
   getRuntime,
+  renameConversation,
   streamChat,
   type ConversationRecord,
   type RuntimeInfo,
@@ -125,6 +129,8 @@ export default function App() {
   const [activityStartedAt, setActivityStartedAt] = useState<number>();
   const [activityCompletedAt, setActivityCompletedAt] = useState<number>();
   const [activityMessageId, setActivityMessageId] = useState<string>();
+  const [activityStatus, setActivityStatus] =
+    useState<"running" | "completed" | "failed" | "cancelled">();
   const [error, setError] = useState<string>();
   const [executionOpen, setExecutionOpen] = useState(() =>
     window.matchMedia("(min-width: 841px)").matches,
@@ -135,6 +141,12 @@ export default function App() {
   const streamingContentRef = useRef("");
   const conversationElement = useRef<HTMLElement | null>(null);
   const followOutput = useRef(true);
+  const conversationIdRef = useRef(conversationId);
+  const requestGenerationRef = useRef(0);
+
+  useEffect(() => {
+    conversationIdRef.current = conversationId;
+  }, [conversationId]);
 
   const refreshConversations = useCallback(async () => {
     setConversations(await getConversations());
@@ -188,10 +200,19 @@ export default function App() {
   }, [error, messages, streamingContent]);
 
   useEffect(() => {
-    const interval = window.setInterval(() => {
+    const refreshWhenVisible = () => {
+      if (document.visibilityState !== "visible") return;
       void refreshRuntime().catch(() => setRuntimeFailed(true));
-    }, runtime?.warmup.state === "warming" ? 1_000 : 5_000);
-    return () => window.clearInterval(interval);
+    };
+    const interval = window.setInterval(
+      refreshWhenVisible,
+      runtime?.warmup.state === "warming" ? 1_000 : 15_000,
+    );
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
   }, [refreshRuntime, runtime?.warmup.state]);
 
   const activePolicy = useMemo(
@@ -252,15 +273,27 @@ export default function App() {
 
   const selectConversation = async (id: string) => {
     if (busy) return;
-    setConversationId(id);
-    setMessages(await getMessages(id));
-    setStreamingContent("");
-    setPlan(undefined);
-    setTraces([]);
-    setActivityStartedAt(undefined);
-    setActivityCompletedAt(undefined);
-    setActivityMessageId(undefined);
-    setSidebarOpen(false);
+    try {
+      const selectedMessages = await getMessages(id);
+      setConversationId(id);
+      setMessages(selectedMessages);
+      setStreamingContent("");
+      setPlan(undefined);
+      setTraces([]);
+      setActivityStartedAt(undefined);
+      setActivityCompletedAt(undefined);
+      setActivityMessageId(undefined);
+      setActivityStatus(undefined);
+      setError(undefined);
+      setSidebarOpen(false);
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "Could not open that conversation.",
+      );
+      await refreshConversations().catch(() => setRuntimeFailed(true));
+    }
   };
 
   const newConversation = () => {
@@ -275,6 +308,7 @@ export default function App() {
     setActivityStartedAt(undefined);
     setActivityCompletedAt(undefined);
     setActivityMessageId(undefined);
+    setActivityStatus(undefined);
     setError(undefined);
     setSidebarOpen(false);
   };
@@ -292,6 +326,8 @@ export default function App() {
     const nextMessages = [...messages, userMessage];
     const controller = new AbortController();
     const requestStartedAt = Date.now();
+    const requestGeneration = requestGenerationRef.current + 1;
+    requestGenerationRef.current = requestGeneration;
     abortController.current = controller;
 
     setMessages(nextMessages);
@@ -303,10 +339,10 @@ export default function App() {
     setActivityStartedAt(Date.now());
     setActivityCompletedAt(undefined);
     setActivityMessageId(undefined);
+    setActivityStatus("running");
     setError(undefined);
     setBusy(true);
     followOutput.current = true;
-    setExecutionOpen(window.matchMedia("(min-width: 841px)").matches);
 
     try {
       await streamChat(
@@ -330,6 +366,7 @@ export default function App() {
             streamingContentRef.current = "";
             setActivityCompletedAt(Date.now());
             setActivityMessageId(event.result.message.id);
+            setActivityStatus("completed");
           } else if (event.type === "error") {
             if (event.executionMessage) {
               const executionMessage = event.executionMessage;
@@ -339,8 +376,12 @@ export default function App() {
               ]);
               setPlan(executionMessage.execution?.plan ?? event.plan);
               setActivityMessageId(executionMessage.id);
+              setActivityStatus(executionMessage.execution?.status ?? "failed");
               setError(undefined);
             } else {
+              setActivityStatus(
+                controller.signal.aborted ? "cancelled" : "failed",
+              );
               setError(event.message);
             }
             setStreamingContent("");
@@ -352,14 +393,14 @@ export default function App() {
       );
     } catch (reason) {
       if (controller.signal.aborted) {
+        setActivityStatus("cancelled");
         let reconciled = false;
-        for (let attempt = 0; attempt < 10; attempt += 1) {
-          await new Promise((resolve) => window.setTimeout(resolve, 100));
+        const reconcile = async (): Promise<boolean> => {
           let persistedMessages: ChatMessage[];
           try {
             persistedMessages = await getMessages(conversationId);
           } catch {
-            break;
+            return false;
           }
           const savedExecution = [...persistedMessages]
             .reverse()
@@ -368,22 +409,33 @@ export default function App() {
                 message.role === "assistant" &&
                 message.execution &&
                 message.execution.startedAt >= requestStartedAt &&
-                !message.content.includes(
-                  "No terminal execution record was received.",
-                ),
+                message.execution.status !== "running",
             );
-          if (!savedExecution?.execution) continue;
+          if (
+            !savedExecution?.execution ||
+            conversationIdRef.current !== conversationId ||
+            requestGenerationRef.current !== requestGeneration
+          ) {
+            return false;
+          }
           setMessages(persistedMessages);
           setPlan(savedExecution.execution.plan);
           setTraces(savedExecution.execution.traces);
           setActivityStartedAt(savedExecution.execution.startedAt);
           setActivityCompletedAt(savedExecution.execution.completedAt);
           setActivityMessageId(savedExecution.id);
+          setActivityStatus(savedExecution.execution.status ?? "completed");
           setError(undefined);
           setStreamingContent("");
           streamingContentRef.current = "";
-          reconciled = true;
-          break;
+          return true;
+        };
+        for (let attempt = 0; attempt < 5; attempt += 1) {
+          await new Promise((resolve) => window.setTimeout(resolve, 200));
+          if (await reconcile()) {
+            reconciled = true;
+            break;
+          }
         }
         if (!reconciled) {
           const partial = streamingContentRef.current;
@@ -393,8 +445,21 @@ export default function App() {
               : "",
           );
           setError("Stopped. Quorum could not yet confirm the saved execution record.");
+          void (async () => {
+            for (let attempt = 0; attempt < 118; attempt += 1) {
+              await new Promise((resolve) => window.setTimeout(resolve, 500));
+              if (
+                conversationIdRef.current !== conversationId ||
+                requestGenerationRef.current !== requestGeneration
+              ) {
+                return;
+              }
+              if (await reconcile()) return;
+            }
+          })();
         }
       } else {
+        setActivityStatus("failed");
         setError(reason instanceof Error ? reason.message : "The request failed.");
         setStreamingContent("");
         streamingContentRef.current = "";
@@ -422,6 +487,7 @@ export default function App() {
         busy={busy}
         startedAt={activityStartedAt}
         completedAt={activityCompletedAt}
+        {...(activityStatus ? { status: activityStatus } : {})}
       />
     ) : null;
 
@@ -437,6 +503,51 @@ export default function App() {
         disabled={busy}
         onNew={newConversation}
         onSelect={(id) => void selectConversation(id)}
+        onRename={(conversation) => {
+          const title = window
+            .prompt("Rename conversation", conversation.title)
+            ?.trim();
+          if (!title || title === conversation.title) return;
+          void renameConversation(conversation.id, title)
+            .then(refreshConversations)
+            .catch((reason) =>
+              setError(
+                reason instanceof Error
+                  ? reason.message
+                  : "Could not rename the conversation.",
+              ),
+            );
+        }}
+        onExport={(conversation) => {
+          void exportConversation(conversation.id).catch((reason) =>
+            setError(
+              reason instanceof Error
+                ? reason.message
+                : "Could not export the conversation.",
+            ),
+          );
+        }}
+        onDelete={(conversation) => {
+          if (
+            !window.confirm(
+              `Delete "${conversation.title}" and its local history?`,
+            )
+          ) {
+            return;
+          }
+          void deleteConversation(conversation.id)
+            .then(async () => {
+              if (conversation.id === conversationId) newConversation();
+              await refreshConversations();
+            })
+            .catch((reason) =>
+              setError(
+                reason instanceof Error
+                  ? reason.message
+                  : "Could not delete the conversation.",
+              ),
+            );
+        }}
         onSettings={() => {
           setSettingsOpen(true);
           setSidebarOpen(false);
@@ -576,15 +687,17 @@ export default function App() {
                     models={runtime?.models ?? []}
                     defaultExpanded={message.id === latestExecutionMessageId}
                   />
-                  <article className={`message message-${message.role}`}>
-                    <div className="message-avatar">
-                      {message.role === "user" ? "You" : <Sparkles size={15} />}
-                    </div>
-                    <div>
-                      <span>{message.role === "user" ? "You" : "Quorum"}</span>
-                      <p>{message.content}</p>
-                    </div>
-                  </article>
+                  {message.content.trim() && (
+                    <article className={`message message-${message.role}`}>
+                      <div className="message-avatar">
+                        {message.role === "user" ? "You" : <Sparkles size={15} />}
+                      </div>
+                      <div>
+                        <span>{message.role === "user" ? "You" : "Quorum"}</span>
+                        <MarkdownMessage content={message.content} />
+                      </div>
+                    </article>
+                  )}
                 </div>
               ))}
               {!activityMessageId && detailedActivity}
@@ -600,10 +713,12 @@ export default function App() {
                   </div>
                   <div>
                     <span>Quorum</span>
-                    <p>
-                      {streamingContent || "Generating and validating…"}
+                    <div>
+                      <MarkdownMessage
+                        content={streamingContent || "Generating and validating…"}
+                      />
                       <i className="cursor" />
-                    </p>
+                    </div>
                   </div>
                 </article>
               )}

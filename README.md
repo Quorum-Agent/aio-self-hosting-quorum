@@ -113,19 +113,25 @@ Set these values in `.env`:
 QUORUM_CLOUD_BASE_URL=https://api.openai.com/v1
 QUORUM_CLOUD_MODEL=gpt-4.1-mini
 QUORUM_CLOUD_API_KEY=your-key
+QUORUM_CLOUD_CONTEXT_WINDOW=128000
+QUORUM_CLOUD_QUALITY_RATING=80
 ```
 
 The cloud provider is not registered when the key is blank. Private and Offline modes
 never select a cloud model. Requests detected as sensitive never use cloud; when no
-capable local model exists, the in-process scaffold reports the limitation.
+capable local model exists, Quorum reports the failure instead of fabricating a
+scaffold answer. Set the context window and quality rating to match the provider you
+actually configure; routing does not assume that every cloud model is equally capable.
 
 ### Web search
 
 Web search is automatic for requests that need current information or external
 sources. It is not used for ordinary explanation or analysis. Quorum retrieves a
 small bounded source set, passes it to a local model as explicitly framed untrusted
-evidence, appends source links to the answer, and records the provider and sources
-in the execution inspector. Retrieved web data is never forwarded to a cloud model.
+evidence, and renders its source links from structured execution data rather than
+concatenating untrusted titles into the answer. The provider and sources remain in
+the durable execution record. Retrieved web data and later turns derived from it are
+kept away from cloud models.
 
 Search is enabled out of the box. With no configuration, Auto mode uses keyless
 DuckDuckGo. Configure the master toggle, provider, result count, SearXNG URL, and
@@ -159,7 +165,9 @@ QUORUM_FIRECRAWL_SEARCH_API_KEY=your-key
 ```
 
 Set `QUORUM_WEB_SEARCH_PROVIDER` to a provider ID instead of `auto` to require
-that provider and disable automatic provider fallback.
+that provider and disable automatic provider fallback. Setting
+`QUORUM_WEB_SEARCH_ENABLED=false` is an operator kill switch: saved UI settings cannot
+turn search back on.
 
 SearXNG accepts explicit loopback HTTP or HTTPS URLs; remote instances are rejected
 to keep the configurable endpoint out of Quorum's server-side request boundary.
@@ -249,8 +257,17 @@ npm run evaluate:prompt -w @quorum/api -- qwen3.5:2b
 | `GET` | `/api/runtime` | Policies, registered models, and runtime state |
 | `GET` | `/api/conversations` | Locally persisted conversations |
 | `POST` | `/api/conversations` | Create a conversation |
+| `PATCH` | `/api/conversations/:id` | Rename a conversation |
+| `DELETE` | `/api/conversations/:id` | Delete a conversation and its messages |
 | `GET` | `/api/conversations/:id/messages` | Conversation history |
+| `GET` | `/api/conversations/:id/export` | Export a conversation as JSON |
 | `POST` | `/api/chat` | Stream plan, trace, delta, result, and error events |
+
+The development API binds to loopback and rejects non-loopback Host headers, but it
+does not yet authenticate local clients. Browser cross-origin access is blocked by
+the absence of CORS, while another non-browser process running as the same user can
+read the API. The desktop-shell design adds a per-launch authenticated sidecar
+channel; do not treat loopback binding alone as an authorization boundary.
 
 ## Policy semantics
 

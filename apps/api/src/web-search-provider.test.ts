@@ -391,6 +391,52 @@ describe("web search providers", () => {
     expect(JSON.stringify(provider.storedSettings())).not.toContain("secret");
   });
 
+  it("keeps an environment search kill switch authoritative over stored settings", async () => {
+    const provider = new ConfigurableWebSearchProvider({
+      enabled: false,
+      provider: "auto",
+      resultLimit: 5,
+      apiKeys: {},
+    });
+    provider.configureStored({
+      enabled: true,
+      provider: "duckduckgo",
+      resultLimit: 5,
+    });
+
+    expect(provider.settings().enabled).toBe(false);
+    await expect(provider.search("must stay offline")).rejects.toThrow(
+      "disabled",
+    );
+  });
+
+  it("records a bad provider configuration and continues Auto fallback", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(`
+        <div class="result results_links">
+          <a class="result__a" href="https://example.com/fallback">Fallback</a>
+          <a class="result__snippet">Safe fallback result.</a>
+        </div>
+      `),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const provider = new ConfigurableWebSearchProvider({
+      enabled: true,
+      provider: "auto",
+      resultLimit: 5,
+      apiKeys: {},
+      searxngBaseUrl: "https://remote.example.com",
+    });
+
+    const response = await provider.search("fallback query");
+
+    expect(response.provider).toBe("DuckDuckGo");
+    expect(response.attempts).toEqual([
+      expect.objectContaining({ provider: "SearXNG", status: "failed" }),
+      expect.objectContaining({ provider: "DuckDuckGo", status: "completed" }),
+    ]);
+  });
+
   it("accepts loopback SearXNG but rejects all remote targets", () => {
     const provider = new ConfigurableWebSearchProvider();
     expect(() =>

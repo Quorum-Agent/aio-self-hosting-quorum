@@ -83,6 +83,8 @@ export interface AppConfig {
     baseUrl: string;
     model: string;
     apiKey: string;
+    contextWindow: number;
+    qualityRating: number;
   };
   webSearch?: WebSearchConfig;
 }
@@ -244,6 +246,17 @@ export function loadConfig(): AppConfig {
             ),
             model: process.env["QUORUM_CLOUD_MODEL"] ?? "gpt-4.1-mini",
             apiKey: cloudApiKey,
+            contextWindow: positiveInteger(
+              process.env["QUORUM_CLOUD_CONTEXT_WINDOW"],
+              128_000,
+            ),
+            qualityRating: Math.min(
+              100,
+              positiveInteger(
+                process.env["QUORUM_CLOUD_QUALITY_RATING"],
+                80,
+              ),
+            ),
           },
         }
       : {}),

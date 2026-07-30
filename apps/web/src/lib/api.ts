@@ -126,6 +126,49 @@ export async function getMessages(conversationId: string): Promise<ChatMessage[]
   return response.messages;
 }
 
+export async function renameConversation(
+  conversationId: string,
+  title: string,
+): Promise<ConversationRecord> {
+  const response = await readJson<{ conversation: ConversationRecord }>(
+    await fetch(`/api/conversations/${encodeURIComponent(conversationId)}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title }),
+    }),
+  );
+  return response.conversation;
+}
+
+export async function deleteConversation(
+  conversationId: string,
+): Promise<void> {
+  const response = await fetch(
+    `/api/conversations/${encodeURIComponent(conversationId)}`,
+    { method: "DELETE" },
+  );
+  if (!response.ok) await readJson<never>(response);
+}
+
+export async function exportConversation(
+  conversationId: string,
+): Promise<void> {
+  const response = await fetch(
+    `/api/conversations/${encodeURIComponent(conversationId)}/export`,
+  );
+  if (!response.ok) await readJson<never>(response);
+  const blob = await response.blob();
+  const disposition = response.headers.get("content-disposition") ?? "";
+  const filename =
+    disposition.match(/filename="([^"]+)"/i)?.[1] ?? "quorum-conversation.json";
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
 function parseEventFrame(frame: string): OrchestrationEvent | undefined {
   const data = frame
     .split(/\r?\n/)

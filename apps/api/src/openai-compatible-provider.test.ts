@@ -50,6 +50,8 @@ function modelInput(
         capabilities: ["chat"],
         requiresFreshness: false,
         containsSensitiveData: false,
+        sensitiveDataCategories: [],
+        containsWebGroundedData: false,
       },
     },
     runtimeModels,
@@ -754,8 +756,66 @@ describe("OpenAICompatibleProvider", () => {
       }
     };
 
-    await expect(consume()).rejects.toThrow("context is too large");
+    await expect(consume()).rejects.toThrow("cannot fit the latest request");
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("uses a recent sliding window instead of permanently failing a long conversation", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: finalAnswer("Recent context used.") } }],
+        }),
+        { headers: { "content-type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const provider = new OpenAICompatibleProvider({
+      id: "local:bounded",
+      label: "bounded",
+      provider: "openai-compatible",
+      location: "local",
+      baseUrl: "http://127.0.0.1:11434/v1",
+      apiKey: "ollama",
+      model: "bounded",
+      contextWindow: 2_048,
+      maxOutputTokens: 64,
+      qualityRating: 10,
+      capabilities: ["chat"],
+    });
+    const input = modelInput();
+    input.messages = [
+      ...Array.from({ length: 12 }, (_, index) => ({
+        id: `old-${index}`,
+        role: (index % 2 === 0 ? "user" : "assistant") as
+          | "user"
+          | "assistant",
+        content: `old-${index} ${"x".repeat(500)}`,
+        createdAt: new Date(index).toISOString(),
+      })),
+      {
+        id: "current",
+        role: "user",
+        content: "Answer the latest request.",
+        createdAt: new Date(20).toISOString(),
+      },
+    ];
+
+    const chunks: string[] = [];
+    for await (const chunk of provider.stream(input)) chunks.push(chunk);
+
+    expect(chunks.join("")).toBe("Recent context used.");
+    const body = JSON.parse(
+      String((fetchMock.mock.calls[0]?.[1] as RequestInit).body),
+    ) as { messages: Array<{ content: string }> };
+    expect(body.messages.some((message) => message.content.includes("old-0"))).toBe(
+      false,
+    );
+    expect(
+      body.messages.some((message) =>
+        message.content.includes("Answer the latest request."),
+      ),
+    ).toBe(true);
   });
 
   it("parses a terminal SSE frame even when the stream closes without a blank line", async () => {

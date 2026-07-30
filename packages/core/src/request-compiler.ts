@@ -9,6 +9,7 @@ import type {
   RequestAnalysis,
   RequestIntent,
   RequestRequirements,
+  SensitiveDataCategory,
 } from "./types.js";
 import {
   detectSoftwareReference,
@@ -28,7 +29,7 @@ const CONTEXTUAL_CURRENT_PATTERN = new RegExp(
 const EXPLICIT_CHAT_PATTERN =
   /\b(tell me a joke|just chat|casual conversation|new topic|let'?s (?:just )?talk)\b/i;
 const CODE_DOMAIN_PATTERN =
-  /\b(compiler|stack trace|source code|codebase|repository|api endpoint|rest endpoint|database schema|unit tests?|http\s+[45]\d{2})\b/i;
+  /\b(compiler|stack trace|source code|codebase|repository|api endpoint|rest endpoint|database schema|unit tests?|microservices?|programmatically|http\s+[45]\d{2})\b/i;
 const CODE_ACTION_PATTERN =
   /\b(write|implement|refactor|debug|fix|compile|program|code|containeri[sz]e|optimi[sz]e|review|test|add|change|edit|build|design|create|analy[sz]e|undo|use)\b/i;
 const CODE_TARGET_PATTERN =
@@ -46,8 +47,14 @@ const ANALYTICAL_DECISION_PATTERN =
   /\b(?:compare|evaluate|assess|weigh)\b[^.!?\n]{0,160}\b(?:architectures?|approaches?|options?|trade[- ]offs?|designs?|strategies?|patterns?)\b|\b(?:recommend|choose|decide)\b[^.!?\n]{0,160}\b(?:architecture|approach|option|design|strategy|pattern|starting point)\b/i;
 const DOCUMENT_PATTERN =
   /\b(?:attached|this|the)\s+(?:pdf|document|invoice|contract|spreadsheet|attachment|file)\b|\b(?:summari[sz]e|extract|parse|review|read)\b[^.!?\n]{0,40}\b(?:pdf|document|invoice|contract|spreadsheet|attachment|file)\b/i;
-const VISION_PATTERN =
-  /\b(image|photo|picture|diagram|screenshot|visual|pcb)\b/i;
+const VISUAL_SUBJECT =
+  String.raw`(?:image|photo|picture|diagram|screenshot|pcb)`;
+const REFERENCED_VISUAL =
+  String.raw`(?:(?:this|that|attached|uploaded)\s+${VISUAL_SUBJECT}|${VISUAL_SUBJECT}\s+(?:attached|uploaded))`;
+const VISION_PATTERN = new RegExp(
+  String.raw`(?:\b(?:analy[sz]e|inspect|describe|read|extract|identify|recognize|interpret|look at)\b[^.!?\n]{0,80}\b${REFERENCED_VISUAL}\b|\b(?:this|that|attached|uploaded)\s+${VISUAL_SUBJECT}\b[^.!?\n]{0,80}\b(?:explain|show|contain|depict|mean|say)\b|\bwhat(?:'s| is| are| does| do)\b[^.!?\n]{0,40}\b(?:in|on)\s+${REFERENCED_VISUAL}\b)`,
+  "i",
+);
 const EXPLICIT_RESEARCH_PATTERN =
   /\b(?:research|compare interpretations|search (?:the )?web|browse (?:the )?web|look (?:it |this |that )?up online)\b/i;
 const EXPLICIT_WEB_REQUEST_PATTERN =
@@ -55,12 +62,26 @@ const EXPLICIT_WEB_REQUEST_PATTERN =
 const EVIDENCE_REQUEST_PATTERN =
   /\b(?:provide|include|cite|show|give)\b[^.!?\n]{0,40}\b(?:an?\s+|the\s+)?(?:sources?|citations?)\b|\bwhat (?:sources?|citations?)\b|\bsources?\s+(?:for|on|about|supporting)\b/i;
 const NETWORK_DENIAL_PATTERN =
-  /\b(?:(?:do not|don'?t|never)\s+(?:use|search|access|contact)|without\s+(?:using\s+|accessing\s+)?|no\s+)(?:the\s+)?(?:internet|web|network|online services?|external services?)\b|\boffline(?:[ -]only)?\b|\b(?:local[ -]only|only (?:my|the) local)\b/i;
+  /\b(?:(?:do not|don'?t|never)\s+(?:use|search|access|contact)\s+|without\s+(?:using\s+|accessing\s+)?|no\s+)(?:the\s+)?(?:internet|web|network|online services?|external services?)\b|\boffline(?:[ -]only)?\b|\b(?:local[ -]only|only (?:my|the) local)\b/i;
 const LOCAL_SCOPE_PATTERN =
   /\b(?:my|the|only)\s+local\s+(?:notes?|files?|documents?|database|sources?|context)\b|\blocal\s+(?:notes?|files?|documents?|database|sources?|context)\s+only\b/i;
-const SENSITIVE_PATTERN =
-  /\b(password|secret|private key|api[ _-]?key|credentials?|access[ _-]?token|bearer[ _-]?token|ssn|social security|medical|confidential|proprietary|account number|internal only|do not distribute|restricted data)\b|-----BEGIN [A-Z ]*PRIVATE KEY-----|AKIA[0-9A-Z]{16}|\bsk-(?:[A-Za-z0-9_-]{10,})\b|\bsk_(?:live|test)_[A-Za-z0-9_-]{12,}\b|\bgh[pousr]_[A-Za-z0-9]{20,}\b|\bxox[baprs]-[A-Za-z0-9-]{20,}\b|\bauthorization\s*:\s*(?:basic|bearer)\s+[A-Za-z0-9._~+/=-]+\b|\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b|\b(?:accountkey|sharedaccesssignature)\s*=\s*[^;\s]+|\b(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|redis):\/\/[^@\s/]+:[^@\s/]+@|\b\d{3}-\d{2}-\d{4}\b/i;
 const PAYMENT_CARD_CANDIDATE_PATTERN = /(?:\d[ -]*?){13,19}/g;
+const PERSONAL_SCOPE_PATTERN =
+  /\b(?:my|our|me|mine|ours|patient(?:'s)?)\b[^.!?\n]{0,80}\b(?:address|appointment|bank|benefits?|birthday|date of birth|diagnosis|email|health|hiv|insurance|medication|medical|payroll|phone|prescription|price|record|salary|schedule|ssn|social security|treatment)\b/i;
+const UNICODE_FORMAT_PATTERN = /\p{Cf}/gu;
+const CONFUSABLE_ASCII: Readonly<Record<string, string>> = {
+  а: "a",
+  е: "e",
+  о: "o",
+  р: "p",
+  с: "c",
+  х: "x",
+  у: "y",
+  к: "k",
+  м: "m",
+  т: "t",
+  н: "h",
+};
 const COURTESY_PREFIX_PATTERN =
   /^(?:(?:thank you|thanks(?:\s+(?:so much|a lot))?|okay|ok|great|got it|understood|makes sense|perfect)[\s.!,:;-]+)+/i;
 const FOLLOW_UP_PATTERN =
@@ -97,6 +118,185 @@ function requiresFreshness(prompt: string): boolean {
   );
 }
 
+function normalizeForSensitiveDetection(content: string): string {
+  return [...content.normalize("NFKC").replace(UNICODE_FORMAT_PATTERN, "")]
+    .map((character) => CONFUSABLE_ASCII[character.toLowerCase()] ?? character)
+    .join("");
+}
+
+function luhnValid(candidate: string): boolean {
+  const digits = candidate.replace(/\D/g, "");
+  if (digits.length < 13 || digits.length > 19) return false;
+  let sum = 0;
+  let doubleDigit = false;
+  for (let index = digits.length - 1; index >= 0; index -= 1) {
+    let value = Number(digits[index]);
+    if (doubleDigit) {
+      value *= 2;
+      if (value > 9) value -= 9;
+    }
+    sum += value;
+    doubleDigit = !doubleDigit;
+  }
+  return sum % 10 === 0;
+}
+
+function hasHighEntropyToken(content: string): boolean {
+  return [...content.matchAll(/[A-Za-z0-9+/_=-]{40,}/g)].some((match) => {
+    const token = match[0].replace(/=+$/u, "");
+    const characterClasses = [
+      /[a-z]/.test(token),
+      /[A-Z]/.test(token),
+      /\d/.test(token),
+      /[+/_-]/.test(token),
+    ].filter(Boolean).length;
+    if (characterClasses < 3) return false;
+    const frequencies = new Map<string, number>();
+    for (const character of token) {
+      frequencies.set(character, (frequencies.get(character) ?? 0) + 1);
+    }
+    const entropy = [...frequencies.values()].reduce((sum, count) => {
+      const probability = count / token.length;
+      return sum - probability * Math.log2(probability);
+    }, 0);
+    return entropy >= 4.25;
+  });
+}
+
+export function detectSensitiveContent(
+  content: string,
+): SensitiveDataCategory[] {
+  const normalized = normalizeForSensitiveDetection(content);
+  const categories = new Set<SensitiveDataCategory>();
+
+  if (
+    /\b(?:password|passwd|passphrase|db[_ -]?pass|api[_ -]?key|secret|access[_ -]?token|bearer[_ -]?token|credentials?)\s*(?::|=|is)\s*(?!an?\b|the\b|used\b|needed\b|defined\b|a\s+way\b)\S{4,}/i.test(
+      normalized,
+    ) ||
+    /\bAKIA[0-9A-Z]{16}\b/.test(normalized) ||
+    /\bAIza[0-9A-Za-z_-]{35}\b/.test(normalized) ||
+    /\bsk-(?:[A-Za-z0-9_-]{10,})\b/.test(normalized) ||
+    /\bsk_(?:live|test)_[A-Za-z0-9_-]{12,}\b/i.test(normalized) ||
+    /\bgh[pousr]_[A-Za-z0-9]{20,}\b/.test(normalized) ||
+    /\bxox[baprs]-[A-Za-z0-9-]{20,}\b/.test(normalized) ||
+    /\bauthorization\s*:\s*(?:basic|bearer)\s+[A-Za-z0-9._~+/=-]+\b/i.test(
+      normalized,
+    ) ||
+    /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/.test(
+      normalized,
+    ) ||
+    /\b(?:accountkey|sharedaccesssignature)\s*=\s*[^;\s]+/i.test(normalized) ||
+    /\b(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|redis):\/\/[^@\s/]+:[^@\s/]+@/i.test(
+      normalized,
+    ) ||
+    /\b[A-Z][A-Z0-9_]*(?:SECRET|PASSWORD|PASS|API_KEY|TOKEN|CREDENTIAL)[A-Z0-9_]*\s*=\s*\S{4,}/.test(
+      normalized,
+    ) ||
+    /\b(?:my|this|the)\s+(?:password|secret|private[ _-]?key|api[ _-]?key|credentials?|access[ _-]?token)\b/i.test(
+      normalized,
+    ) ||
+    /\buse\s+(?:this|the|my)\s+(?:api[ _-]?key|password|secret|credentials?)\b/i.test(
+      normalized,
+    ) ||
+    hasHighEntropyToken(normalized)
+  ) {
+    categories.add("credentials");
+  }
+
+  if (
+    /-----BEGIN [A-Z ]*PRIVATE KEY-----/i.test(normalized) ||
+    /\bMII[A-Za-z0-9+/]{45,}={0,2}\b/.test(normalized) ||
+    /\bprivate[ _-]?key\s*(?::|=|is)\s*[A-Za-z0-9+/=\s]{48,}/i.test(
+      normalized,
+    )
+  ) {
+    categories.add("private_key");
+  }
+
+  if (
+    /\b\d{3}-\d{2}-\d{4}\b/.test(normalized) ||
+    /\b(?:ssn|social security(?: number)?)\s*(?::|=|is)?\s*\d{9}\b/i.test(
+      normalized,
+    )
+  ) {
+    categories.add("government_id");
+  }
+
+  if (
+    /\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b/i.test(normalized) ||
+    /\b(?:account|routing|iban)\s*(?:number|no\.?)?\s*(?::|=|is)\s*[A-Z0-9 -]{8,34}/i.test(
+      normalized,
+    )
+  ) {
+    categories.add("financial");
+  }
+  const cardContext =
+    /\b(?:card|credit|debit|payment)\b/i.test(normalized) ||
+    /\d[ -]+\d/.test(normalized);
+  if (
+    cardContext &&
+    (normalized.match(PAYMENT_CARD_CANDIDATE_PATTERN) ?? []).some(luhnValid)
+  ) {
+    categories.add("financial");
+  }
+
+  if (
+    /\b(?:email|phone|telephone|mobile|address|date of birth|dob)\s*(?::|=|is)\s*\S{5,}/i.test(
+      normalized,
+    ) ||
+    [
+      /\b(?:born|birth(?:day)?)\s+(?:on\s+)?\d{4}-\d{2}-\d{2}\b/i.test(
+        normalized,
+      ),
+      /\b\d{1,5}\s+[A-Za-z0-9.' -]{2,40}\s+(?:st(?:reet)?|ave(?:nue)?|rd|road|blvd|boulevard|lane|ln|drive|dr)\b/i.test(
+        normalized,
+      ),
+      /\b(?:\+?1[ .-]?)?\(?\d{3}\)?[ .-]\d{3}[ .-]\d{4}\b/.test(
+        normalized,
+      ),
+    ].filter(Boolean).length >= 2
+  ) {
+    categories.add("personal_contact");
+  }
+  if (
+    /\b(?:i|we|my|our|me|mine|ours|patient(?:'s)?)\b[^.!?\n]{0,80}\b(?:appointment|benefits?|diagnos(?:is|ed)|health|hiv|insurance|medication|medical|prescription|record|schedule|treatment)\b/i.test(
+      normalized,
+    ) ||
+    /\b(?:diagnosis|medical record|patient id|prescription)\s*(?::|=|is)\s*\S+/i.test(
+      normalized,
+    )
+  ) {
+    categories.add("health");
+  }
+  if (
+    /\b(?:my|our|me|mine|ours)\b[^.!?\n]{0,80}\b(?:bank|payroll|price|salary)\b/i.test(
+      normalized,
+    )
+  ) {
+    categories.add("financial");
+  }
+  if (
+    /\b(?:my|our|me|mine|ours)\b[^.!?\n]{0,80}\b(?:address|birthday|date of birth|email|phone)\b/i.test(
+      normalized,
+    )
+  ) {
+    categories.add("personal_contact");
+  }
+  if (
+    /\b(?:confidential|proprietary|restricted data|do not distribute)\s*(?::|=)\s*\S+/i.test(
+      normalized,
+    ) ||
+    /\b(?:INTERNAL ONLY|DO NOT DISTRIBUTE|RESTRICTED DATA)\b/.test(normalized) ||
+    /\b(?:summari[sz]e|review|analy[sz]e|read|upload)\b[^.!?\n]{0,60}\bconfidential\b/i.test(
+      normalized,
+    )
+  ) {
+    categories.add("confidential");
+  }
+
+  return [...categories];
+}
+
 function classifyPrompt(prompt: string): IntentClassification {
   const freshInformationRequired = requiresFreshness(prompt);
   const softwareReference = detectSoftwareReference(prompt);
@@ -126,14 +326,6 @@ function classifyPrompt(prompt: string): IntentClassification {
       explicitReset: false,
     };
   }
-  if (VISION_PATTERN.test(prompt)) {
-    return {
-      intent: "vision",
-      confidence: 0.94,
-      requiresFreshness: false,
-      explicitReset: false,
-    };
-  }
   if (DOCUMENT_PATTERN.test(prompt)) {
     return {
       intent: "document",
@@ -152,6 +344,15 @@ function classifyPrompt(prompt: string): IntentClassification {
           : softwareReference === "contextual"
             ? 0.82
             : 0.86,
+      requiresFreshness: false,
+      explicitReset: false,
+    };
+  }
+
+  if (VISION_PATTERN.test(prompt)) {
+    return {
+      intent: "vision",
+      confidence: 0.94,
       requiresFreshness: false,
       explicitReset: false,
     };
@@ -280,23 +481,32 @@ function deriveRequirements(
         .reverse()
         .find((message) => message.role === "user" && message.content.trim())
         ?.content ?? "";
+    const latestPriorNetworkDirective =
+      classification.source === "conversation"
+        ? [...messages]
+            .slice(0, -1)
+            .reverse()
+            .filter(
+              (message) => message.role === "user" && message.content.trim(),
+            )
+            .map((message) => ({
+              blocks:
+                NETWORK_DENIAL_PATTERN.test(message.content) ||
+                LOCAL_SCOPE_PATTERN.test(message.content),
+              authorizes:
+                requiresFreshness(message.content) ||
+                EXPLICIT_WEB_REQUEST_PATTERN.test(message.content) ||
+                EVIDENCE_REQUEST_PATTERN.test(message.content),
+            }))
+            .find((directive) => directive.blocks || directive.authorizes)
+        : undefined;
     const priorPromptAuthorizesWeb =
-      classification.source === "conversation" &&
-      [...messages]
-        .slice(0, -1)
-        .reverse()
-        .filter((message) => message.role === "user" && message.content.trim())
-        .some(
-          (message) =>
-            !NETWORK_DENIAL_PATTERN.test(message.content) &&
-            !LOCAL_SCOPE_PATTERN.test(message.content) &&
-            (requiresFreshness(message.content) ||
-              EXPLICIT_WEB_REQUEST_PATTERN.test(message.content) ||
-              EVIDENCE_REQUEST_PATTERN.test(message.content)),
-        );
+      latestPriorNetworkDirective?.authorizes === true &&
+      !latestPriorNetworkDirective.blocks;
     const currentPromptBlocksWeb =
       NETWORK_DENIAL_PATTERN.test(latestUserPrompt) ||
-      LOCAL_SCOPE_PATTERN.test(latestUserPrompt);
+      LOCAL_SCOPE_PATTERN.test(latestUserPrompt) ||
+      PERSONAL_SCOPE_PATTERN.test(latestUserPrompt);
     const currentPromptAuthorizesWeb =
       !currentPromptBlocksWeb &&
       (classification.requiresFreshness ||
@@ -311,37 +521,34 @@ function deriveRequirements(
     }
   }
 
+  const sensitiveDataCategories = [
+    ...new Set(
+      messages
+        .filter((message) => message.role === "user")
+        .flatMap((message) => detectSensitiveContent(message.content)),
+    ),
+  ];
+  const containsWebGroundedData = messages.some(
+    (message) =>
+      message.role === "assistant" &&
+      (message.provenance === "web_grounded" ||
+        (message.execution?.plan.webSearch?.sources.length ?? 0) > 0),
+  );
+
   return {
     intent,
     intentConfidence: classification.confidence,
     intentSource: classification.source,
     capabilities,
     requiresFreshness: classification.requiresFreshness,
-    containsSensitiveData: messages.some((message) =>
-      containsSensitiveContent(message.content),
-    ),
+    containsSensitiveData: sensitiveDataCategories.length > 0,
+    sensitiveDataCategories,
+    containsWebGroundedData,
   };
 }
 
 export function containsSensitiveContent(content: string): boolean {
-  if (SENSITIVE_PATTERN.test(content)) return true;
-  const candidates = content.match(PAYMENT_CARD_CANDIDATE_PATTERN) ?? [];
-  return candidates.some((candidate) => {
-    const digits = candidate.replace(/\D/g, "");
-    if (digits.length < 13 || digits.length > 19) return false;
-    let sum = 0;
-    let doubleDigit = false;
-    for (let index = digits.length - 1; index >= 0; index -= 1) {
-      let value = Number(digits[index]);
-      if (doubleDigit) {
-        value *= 2;
-        if (value > 9) value -= 9;
-      }
-      sum += value;
-      doubleDigit = !doubleDigit;
-    }
-    return sum % 10 === 0;
-  });
+  return detectSensitiveContent(content).length > 0;
 }
 
 function compactSummary(prompt: string): string {

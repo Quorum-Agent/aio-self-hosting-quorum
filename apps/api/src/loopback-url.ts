@@ -1,11 +1,4 @@
-function isLoopbackHostname(hostname: string): boolean {
-  const normalized = hostname.toLowerCase().replace(/^\[|\]$/g, "");
-  return (
-    normalized === "localhost" ||
-    normalized === "::1" ||
-    /^127(?:\.\d{1,3}){3}$/.test(normalized)
-  );
-}
+import { isLoopbackHostname } from "./outbound-url.js";
 
 export function normalizeLoopbackBaseUrl(
   value: string,

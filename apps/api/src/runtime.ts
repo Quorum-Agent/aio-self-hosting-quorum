@@ -36,6 +36,34 @@ export interface QuorumRuntime {
   webSearchProvider?: ConfigurableWebSearchProvider;
   warmup: Promise<ModelWarmupStatus>;
   warmupStatus: ModelWarmupStatus;
+  refreshLocalModels(force?: boolean): Promise<void>;
+}
+
+function modelIsInstalled(
+  configuredName: string,
+  installedModelIds: readonly string[],
+): boolean {
+  return (
+    installedModelIds.includes(configuredName) ||
+    (!configuredName.includes(":") &&
+      installedModelIds.includes(`${configuredName}:latest`))
+  );
+}
+
+async function discoverLocalModelsWithRetry(
+  baseUrl: string,
+  apiKey: string,
+): ReturnType<typeof discoverModels> {
+  const retryDelays = [0, 100, 250, 500];
+  let latest = { connected: false, modelIds: [] as string[] };
+  for (const delayMs of retryDelays) {
+    if (delayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+    latest = await discoverModels(baseUrl, apiKey);
+    if (latest.connected) return latest;
+  }
+  return latest;
 }
 
 export function createLocalProviders(
@@ -44,7 +72,7 @@ export function createLocalProviders(
   scheduler = new InferenceScheduler(),
 ): ModelProvider[] {
   return config.local.models
-    .filter((model) => installedModelIds.includes(model.name))
+    .filter((model) => modelIsInstalled(model.name, installedModelIds))
     .map(
       (model) =>
         new OpenAICompatibleProvider({
@@ -133,7 +161,7 @@ export function currentLocalRuntime(
 
 export async function createRuntime(config: AppConfig): Promise<QuorumRuntime> {
   const scheduler = new InferenceScheduler();
-  const localDiscovery = await discoverModels(
+  const localDiscovery = await discoverLocalModelsWithRetry(
     config.local.baseUrl,
     config.local.apiKey,
   );
@@ -144,8 +172,11 @@ export async function createRuntime(config: AppConfig): Promise<QuorumRuntime> {
   );
   const promptAnalyzerAvailable =
     localDiscovery.connected &&
-    localDiscovery.modelIds.includes(config.local.promptAnalyzer.name);
-  const localRuntime = describeLocalRuntime(
+    modelIsInstalled(
+      config.local.promptAnalyzer.name,
+      localDiscovery.modelIds,
+    );
+  let localRuntime = describeLocalRuntime(
     config,
     localDiscovery.connected,
     providers,
@@ -173,8 +204,8 @@ export async function createRuntime(config: AppConfig): Promise<QuorumRuntime> {
         baseUrl: config.cloud.baseUrl,
         apiKey: config.cloud.apiKey,
         model: config.cloud.model,
-        contextWindow: 128_000,
-        qualityRating: 90,
+        contextWindow: config.cloud.contextWindow,
+        qualityRating: config.cloud.qualityRating,
         capabilities: ["chat", "reasoning", "coding", "documents"],
       }),
     );
@@ -190,10 +221,77 @@ export async function createRuntime(config: AppConfig): Promise<QuorumRuntime> {
     promptAnalyzer,
     webSearch,
   );
+  let refreshInFlight: Promise<void> | undefined;
+  let lastRefreshAt = 0;
+  const refreshLocalModels = async (force = false): Promise<void> => {
+    if (
+      localRuntime.endpointConnected &&
+      localRuntime.roles.every((role) => role.available) &&
+      localRuntime.promptAnalyzer?.available !== false
+    ) {
+      return;
+    }
+    if (refreshInFlight) return refreshInFlight;
+    if (!force && Date.now() - lastRefreshAt < 5_000) return;
+    lastRefreshAt = Date.now();
+    refreshInFlight = (async () => {
+      const refreshed = await discoverModels(
+        config.local.baseUrl,
+        config.local.apiKey,
+      );
+      if (!refreshed.connected) {
+        localRuntime = describeLocalRuntime(config, false, [], false);
+        return;
+      }
+      const refreshedProviders = createLocalProviders(
+        config,
+        refreshed.modelIds,
+        scheduler,
+      );
+      const registeredProviderIds = new Set(
+        orchestrator.models.map((model) => model.id),
+      );
+      for (const provider of refreshedProviders) {
+        if (!registeredProviderIds.has(provider.model.id)) {
+          orchestrator.registerProvider(provider);
+        }
+      }
+      const analyzerAvailable = modelIsInstalled(
+        config.local.promptAnalyzer.name,
+        refreshed.modelIds,
+      );
+      const analyzerWasAvailable =
+        localRuntime.promptAnalyzer?.available === true;
+      if (analyzerAvailable && !analyzerWasAvailable) {
+        orchestrator.setPromptAnalyzer(
+          new LocalPromptAnalyzer({
+            id: `local:classifier:${config.local.promptAnalyzer.name}`,
+            label: config.local.promptAnalyzer.name,
+            baseUrl: config.local.baseUrl,
+            apiKey: config.local.apiKey,
+            model: config.local.promptAnalyzer.name,
+            contextWindow: config.local.promptAnalyzer.contextWindow,
+            scheduler,
+          }),
+        );
+      } else if (!analyzerAvailable && analyzerWasAvailable) {
+        orchestrator.setPromptAnalyzer(undefined);
+      }
+      localRuntime = describeLocalRuntime(
+        config,
+        true,
+        refreshedProviders,
+        analyzerAvailable,
+      );
+    })().finally(() => {
+      refreshInFlight = undefined;
+    });
+    return refreshInFlight;
+  };
   const generalModel = config.local.models.find(
     (model) =>
       model.role === "general" &&
-      localDiscovery.modelIds.includes(model.name),
+      modelIsInstalled(model.name, localDiscovery.modelIds),
   );
   const warmupStatus: ModelWarmupStatus = {
     state: config.local.warmOnStartup
@@ -265,5 +363,6 @@ export async function createRuntime(config: AppConfig): Promise<QuorumRuntime> {
     get warmupStatus() {
       return warmupStatus;
     },
+    refreshLocalModels,
   };
 }

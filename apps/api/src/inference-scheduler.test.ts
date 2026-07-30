@@ -54,4 +54,34 @@ describe("InferenceScheduler", () => {
     expect(scheduler.queued).toBe(0);
     release();
   });
+
+  it("honors an explicit caller wait budget instead of clamping it to the default", async () => {
+    vi.useFakeTimers();
+    const scheduler = new InferenceScheduler(1, 1, 10);
+    const release = await scheduler.acquire();
+    const queued = scheduler.acquire(undefined, 50);
+    let settled = false;
+    void queued.finally(() => {
+      settled = true;
+    });
+
+    await vi.advanceTimersByTimeAsync(11);
+    expect(settled).toBe(false);
+    release();
+    const releaseQueued = await queued;
+    releaseQueued();
+  });
+
+  it("reports the wait duration that it actually enforces", async () => {
+    vi.useFakeTimers();
+    const scheduler = new InferenceScheduler(1, 1, 10);
+    const release = await scheduler.acquire();
+    const queuedExpectation = expect(
+      scheduler.acquire(undefined, 50),
+    ).rejects.toThrow("queue wait exceeded 50ms");
+
+    await vi.advanceTimersByTimeAsync(51);
+    await queuedExpectation;
+    release();
+  });
 });

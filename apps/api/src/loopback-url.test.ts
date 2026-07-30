@@ -9,6 +9,7 @@ describe("normalizeLoopbackBaseUrl", () => {
   it.each([
     "http://127.0.0.1:11434/v1",
     "http://127.42.0.9:11434/v1/",
+    "http://127.1:11434/v1",
     "http://localhost:11434/v1",
     "http://[::1]:11434/v1",
   ])("accepts an explicit loopback endpoint: %s", (value) => {

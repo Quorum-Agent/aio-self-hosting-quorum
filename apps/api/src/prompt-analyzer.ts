@@ -186,9 +186,11 @@ export class LocalPromptAnalyzer implements PromptAnalyzer {
     input: PromptAnalyzerInput,
     signal?: AbortSignal,
   ): Promise<PromptAnalyzerResult> {
+    const startedAt = Date.now();
     const release = await this.#scheduler.acquire(signal, ANALYSIS_TIMEOUT_MS);
+    const remainingMs = Math.max(1, ANALYSIS_TIMEOUT_MS - (Date.now() - startedAt));
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), ANALYSIS_TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(), remainingMs);
     const forwardAbort = () => controller.abort(signal?.reason);
     signal?.addEventListener("abort", forwardAbort, { once: true });
 

@@ -9,7 +9,7 @@ import type {
   TaskPlan,
 } from "./types.js";
 
-const SPECIALTY_BONUS = 12;
+const SPECIALTY_BONUS = 18;
 
 function supports(model: ModelDescriptor, request: CompiledRequest): boolean {
   return request.requirements.capabilities.every((capability) =>
@@ -55,11 +55,14 @@ export class RoutePlanner {
       return true;
     });
 
-    const safeEligible = request.requirements.containsSensitiveData
+    const requiresLocalProcessing =
+      request.requirements.containsSensitiveData ||
+      request.requirements.containsWebGroundedData;
+    const safeEligible = requiresLocalProcessing
       ? eligible.filter((model) => model.location === "local")
       : eligible;
 
-    let candidates = request.requirements.containsSensitiveData ? safeEligible : eligible;
+    let candidates = requiresLocalProcessing ? safeEligible : eligible;
     let degraded = false;
     if (candidates.length === 0) {
       candidates = models.filter(
@@ -145,6 +148,12 @@ export class RoutePlanner {
       rationale,
       steps,
       ...(degraded ? { degraded: true } : {}),
+      safety: {
+        sensitiveDataCategories:
+          request.requirements.sensitiveDataCategories,
+        containsWebGroundedData:
+          request.requirements.containsWebGroundedData,
+      },
       ...(route === "cloud"
         ? {
             cloudDisclosure:
