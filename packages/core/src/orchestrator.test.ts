@@ -186,9 +186,10 @@ describe("Orchestrator resilience", () => {
     );
     expect(
       result?.type === "result" && result.result.message.content,
-    ).toContain(
-      "Sources\nExternal destinations are not network-verified; inspect links before opening.\n[1] Current source — https://example.com/current",
-    );
+    ).toBe("The current release is 2.0 [1].");
+    expect(
+      result?.type === "result" && result.result.message.provenance,
+    ).toBe("web_grounded");
   });
 
   it("blocks network search under Private mode before contacting a provider", async () => {
@@ -284,12 +285,12 @@ describe("Orchestrator resilience", () => {
     expect(events).toContainEqual({
       type: "error",
       message:
-        "Web search was blocked because the request appears to contain sensitive data.",
+        "Web search was blocked by the privacy guard. Detected categories: government_id. Remove that data or keep the request local.",
       recoverable: true,
     });
   });
 
-  it("uses the local analyzer's resolved task summary for a contextual search", async () => {
+  it("never uses the local analyzer's free-text summary as an outbound query", async () => {
     let searchedQuery = "";
     const webSearch: WebSearchProvider = {
       tool: {
@@ -353,10 +354,58 @@ describe("Orchestrator resilience", () => {
       },
     );
 
-    expect(searchedQuery).toBe("Find the latest PostgreSQL release.");
+    expect(searchedQuery).toBe("What's the latest?");
   });
 
-  it("uses prior user context for a search when the analyzer is unavailable", async () => {
+  it("strips bidirectional controls from source titles before display", async () => {
+    const webSearch: WebSearchProvider = {
+      tool: {
+        id: "web-search:test",
+        label: "Test Search",
+        capabilities: ["web"],
+        location: "cloud",
+        available: true,
+        contextMayLeaveDevice: true,
+      },
+      async search(query) {
+        return {
+          query,
+          results: [
+            {
+              title: "Trusted\u200B\u202Egpj.exe\u2066",
+              url: "https://example.com/current",
+              snippet: "Current information.",
+            },
+          ],
+        };
+      },
+    };
+    const orchestrator = new Orchestrator(
+      [provider(generalModel, () => answer("Grounded answer [1]."))],
+      undefined,
+      undefined,
+      undefined,
+      webSearch,
+    );
+
+    const events = await collect(
+      orchestrator,
+      chatRequest("Research the latest Quorum release."),
+    );
+    const result = events.find((event) => event.type === "result");
+
+    expect(
+      result?.type === "result"
+        ? result.result.plan.webSearch?.sources[0]?.title
+        : undefined,
+    ).toBe("Trusted gpj.exe");
+    expect(
+      result?.type === "result" ? result.result.message.content : "",
+    ).not.toContain("gpj.exe");
+    expect(JSON.stringify(result)).not.toMatch(/[\u200B\u202E\u2066]/u);
+  });
+
+  it("does not append prior user content to a referential outbound query", async () => {
     let searchedQuery = "";
     const webSearch: WebSearchProvider = {
       tool: {
@@ -407,9 +456,7 @@ describe("Orchestrator resilience", () => {
       ],
     });
 
-    expect(searchedQuery).toBe(
-      "Search the web for PostgreSQL releases. Follow-up: What's the latest?",
-    );
+    expect(searchedQuery).toBe("What's the latest?");
   });
 
   it("does not egress a query when no capable post-search model exists", async () => {
@@ -1007,6 +1054,37 @@ describe("Orchestrator resilience", () => {
       orchestrator.models.find((model) => model.id === codingModel.id)
         ?.available,
     ).toBe(true);
+  });
+
+  it("does not replace a request failure with a scaffold answer", async () => {
+    async function* queueFailure() {
+      throw new ModelExecutionError(
+        "Local inference queue wait exceeded 50000ms.",
+        "request",
+      );
+    }
+    const orchestrator = new Orchestrator([
+      provider(codingModel, queueFailure),
+      new DemoProvider(),
+    ]);
+
+    const events = await collect(
+      orchestrator,
+      chatRequest("Write a TypeScript function."),
+    );
+
+    expect(events.some((event) => event.type === "result")).toBe(false);
+    expect(
+      events.find((event) => event.type === "error"),
+    ).toMatchObject({
+      type: "error",
+      message: "Local inference queue wait exceeded 50000ms.",
+    });
+    expect(
+      events
+        .filter((event) => event.type === "plan")
+        .some((event) => event.plan.modelId === "local:scaffold"),
+    ).toBe(false);
   });
 
   it("counts only provider failures across an intervening unsafe output", async () => {

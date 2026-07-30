@@ -1,4 +1,12 @@
-import { MessageSquare, Plus, Settings, Sparkles } from "lucide-react";
+import {
+  Download,
+  MessageSquare,
+  Pencil,
+  Plus,
+  Settings,
+  Sparkles,
+  Trash2,
+} from "lucide-react";
 
 import type { ConversationRecord } from "../lib/api";
 
@@ -9,6 +17,9 @@ interface SidebarProps {
   onNew: () => void;
   onSelect: (id: string) => void;
   onSettings: () => void;
+  onRename: (conversation: ConversationRecord) => void;
+  onDelete: (conversation: ConversationRecord) => void;
+  onExport: (conversation: ConversationRecord) => void;
 }
 
 function relativeTime(value: string): string {
@@ -26,6 +37,9 @@ export function Sidebar({
   onNew,
   onSelect,
   onSettings,
+  onRename,
+  onDelete,
+  onExport,
 }: SidebarProps) {
   return (
     <aside className="sidebar">
@@ -55,19 +69,49 @@ export function Sidebar({
           <p className="sidebar-empty">Your conversations stay on this machine.</p>
         ) : (
           conversations.map((conversation) => (
-            <button
+            <div
               className={`conversation-item ${
                 conversation.id === activeId ? "is-active" : ""
               }`}
               key={conversation.id}
-              type="button"
-              disabled={disabled}
-              onClick={() => onSelect(conversation.id)}
             >
-              <MessageSquare size={15} />
-              <span>{conversation.title}</span>
-              <time>{relativeTime(conversation.updatedAt)}</time>
-            </button>
+              <button
+                className="conversation-select"
+                type="button"
+                disabled={disabled}
+                onClick={() => onSelect(conversation.id)}
+              >
+                <MessageSquare size={15} />
+                <span>{conversation.title}</span>
+                <time>{relativeTime(conversation.updatedAt)}</time>
+              </button>
+              <div className="conversation-actions">
+                <button
+                  type="button"
+                  disabled={disabled}
+                  aria-label={`Rename ${conversation.title}`}
+                  onClick={() => onRename(conversation)}
+                >
+                  <Pencil size={13} />
+                </button>
+                <button
+                  type="button"
+                  disabled={disabled}
+                  aria-label={`Export ${conversation.title}`}
+                  onClick={() => onExport(conversation)}
+                >
+                  <Download size={13} />
+                </button>
+                <button
+                  type="button"
+                  disabled={disabled}
+                  aria-label={`Delete ${conversation.title}`}
+                  onClick={() => onDelete(conversation)}
+                >
+                  <Trash2 size={13} />
+                </button>
+              </div>
+            </div>
           ))
         )}
       </nav>

@@ -87,6 +87,31 @@ describe("RoutePlanner", () => {
     ).toThrow("No available model");
   });
 
+  it("does not forward prior web-grounded output to a cloud model", () => {
+    const compiled = compiler.compile({
+      ...request("quality", "Compare that with another approach."),
+      messages: [
+        {
+          id: "assistant-web",
+          role: "assistant",
+          content: "Grounded in an earlier web search.",
+          provenance: "web_grounded",
+          createdAt: new Date(0).toISOString(),
+        },
+        {
+          id: "message-2",
+          role: "user",
+          content: "Compare that with another approach.",
+          createdAt: new Date(1).toISOString(),
+        },
+      ],
+    });
+    const plan = planner.plan(compiled, [localModel, cloudModel]);
+
+    expect(plan.route).toBe("local");
+    expect(plan.safety?.containsWebGroundedData).toBe(true);
+  });
+
   it("only uses an in-process provider in offline mode", () => {
     const inProcessModel: ModelDescriptor = {
       ...localModel,

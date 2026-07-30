@@ -120,6 +120,43 @@ describe("MessageExecutionActivity", () => {
     expect(markup).toContain("<details class=\"execution-activity\" open=\"\"");
   });
 
+  it("uses the persisted execution outcome when no model attempt began", () => {
+    const message = historicalMessage("standard");
+    if (!message.execution) throw new Error("Expected execution metadata.");
+    message.execution.status = "failed";
+    message.execution.plan.attempts = [];
+
+    const markup = renderToStaticMarkup(
+      <MessageExecutionActivity
+        message={message}
+        models={[]}
+        defaultExpanded={false}
+      />,
+    );
+
+    expect(markup).toContain("Failed after 1.5s");
+    expect(markup).not.toContain("Worked for");
+  });
+
+  it("keeps cloud disclosure visible on a standard historical response", () => {
+    const message = historicalMessage("standard");
+    if (!message.execution) throw new Error("Expected execution metadata.");
+    message.execution.plan.cloudDisclosure =
+      "The conversation context required by the selected model left this device.";
+
+    const markup = renderToStaticMarkup(
+      <MessageExecutionActivity
+        message={message}
+        models={[]}
+        defaultExpanded={false}
+      />,
+    );
+
+    expect(markup).toContain("Cloud model used");
+    expect(markup).toContain("left this device");
+    expect(markup).toContain("<details class=\"execution-activity\" open=\"\"");
+  });
+
   it("labels a cancelled execution as stopped rather than as a fallback", () => {
     const message = historicalMessage("standard");
     if (!message.execution) throw new Error("Expected execution metadata.");
@@ -132,6 +169,7 @@ describe("MessageExecutionActivity", () => {
         detail: "The request was cancelled.",
       },
     ];
+    message.execution.status = "cancelled";
 
     const markup = renderToStaticMarkup(
       <MessageExecutionActivity
@@ -143,6 +181,29 @@ describe("MessageExecutionActivity", () => {
 
     expect(markup).toContain("Stopped after 1.5s");
     expect(markup).not.toContain("Completed with fallback");
+  });
+
+  it("labels a persisted running record as interrupted after reload", () => {
+    const message = historicalMessage("standard");
+    if (!message.execution) throw new Error("Expected execution metadata.");
+    message.execution.status = "running";
+    message.execution.plan.webSearch = {
+      provider: "DuckDuckGo",
+      query: "interrupted search",
+      contextMayHaveLeftDevice: true,
+      sources: [],
+    };
+
+    const markup = renderToStaticMarkup(
+      <MessageExecutionActivity
+        message={message}
+        models={[]}
+        defaultExpanded={false}
+      />,
+    );
+
+    expect(markup).toContain("Interrupted after 1.5s");
+    expect(markup).not.toContain("Working for");
   });
 
   it("keeps web-search sources and egress disclosure in historical activity", () => {

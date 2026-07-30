@@ -53,6 +53,7 @@ const KEYED_PROVIDER_IDS = [
 
 let activeSearches = 0;
 let recentSearches: number[] = [];
+const chargedSearchSignals = new WeakSet<AbortSignal>();
 
 const searxngSchema = z.object({
   results: z
@@ -252,7 +253,7 @@ function compactText(value: string, maximum: number): string {
     .slice(0, maximum);
 }
 
-function acquireSearchSlot(): () => void {
+function acquireSearchSlot(signal?: AbortSignal): () => void {
   const now = Date.now();
   recentSearches = recentSearches.filter(
     (startedAt) => now - startedAt < 60_000,
@@ -260,11 +261,17 @@ function acquireSearchSlot(): () => void {
   if (activeSearches >= MAX_CONCURRENT_SEARCHES) {
     throw new Error("Web search is busy; try again shortly.");
   }
-  if (recentSearches.length >= MAX_SEARCHES_PER_MINUTE) {
+  const alreadyCharged = signal
+    ? chargedSearchSignals.has(signal)
+    : false;
+  if (!alreadyCharged && recentSearches.length >= MAX_SEARCHES_PER_MINUTE) {
     throw new Error("Web search rate limit reached; try again in a minute.");
   }
   activeSearches += 1;
-  recentSearches.push(now);
+  if (!alreadyCharged) {
+    recentSearches.push(now);
+    if (signal) chargedSearchSignals.add(signal);
+  }
   let released = false;
   return () => {
     if (released) return;
@@ -352,7 +359,7 @@ async function fetchSearch(
   signal?: AbortSignal,
 ): Promise<string> {
   if (signal?.aborted) throw new Error("Web search was cancelled.");
-  const release = acquireSearchSlot();
+  const release = acquireSearchSlot(signal);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), SEARCH_TIMEOUT_MS);
   const forwardAbort = () => controller.abort(signal?.reason);
@@ -1069,15 +1076,14 @@ export class ConfigurableWebSearchProvider implements WebSearchProvider {
     }
 
     const attempts: WebSearchAttempt[] = [];
-    const autoController =
-      settings.provider === "auto" ? new AbortController() : undefined;
-    const forwardAbort = () => autoController?.abort(signal?.reason);
+    const searchController = new AbortController();
+    const forwardAbort = () => searchController.abort(signal?.reason);
     signal?.addEventListener("abort", forwardAbort, { once: true });
     if (signal?.aborted) forwardAbort();
-    const autoTimer = autoController
-      ? setTimeout(() => autoController.abort(), SEARCH_TIMEOUT_MS)
+    const autoTimer = settings.provider === "auto"
+      ? setTimeout(() => searchController.abort(), SEARCH_TIMEOUT_MS)
       : undefined;
-    const searchSignal = autoController?.signal ?? signal;
+    const searchSignal = searchController.signal;
 
     try {
       for (const providerId of candidateIds) {
@@ -1087,19 +1093,24 @@ export class ConfigurableWebSearchProvider implements WebSearchProvider {
             attempts,
           );
         }
-        if (autoController?.signal.aborted) {
+        if (searchController.signal.aborted) {
           throw new WebSearchExecutionError(
             `Automatic web search exceeded its ${SEARCH_TIMEOUT_MS / 1_000}-second limit.`,
             attempts,
           );
         }
-        const provider = this.#createProvider(providerId, settings);
-        await onAttempt?.({
-          provider: provider.tool.label,
-          status: "running",
-        });
+        let provider: WebSearchProvider | undefined;
         try {
-          const response = await provider.search(input, searchSignal);
+          provider = this.#createProvider(providerId, settings);
+          await onAttempt?.({
+            provider: provider.tool.label,
+            status: "running",
+          });
+          const response = await provider.search(
+            input,
+            searchSignal,
+            onAttempt,
+          );
           if (response.results.length === 0) {
             throw new Error("Provider returned no usable sources.");
           }
@@ -1116,14 +1127,20 @@ export class ConfigurableWebSearchProvider implements WebSearchProvider {
         } catch (error) {
           const cancelledByUser = signal?.aborted === true;
           const reachedAutoDeadline =
-            !cancelledByUser && autoController?.signal.aborted === true;
+            !cancelledByUser &&
+            settings.provider === "auto" &&
+            searchController.signal.aborted;
+          const providerLabel =
+            provider?.tool.label ??
+            this.#definition(providerId)?.label ??
+            providerId;
           const detail = cancelledByUser
             ? "Web search was cancelled."
             : reachedAutoDeadline
               ? `Automatic web search exceeded its ${SEARCH_TIMEOUT_MS / 1_000}-second limit.`
               : failureDetail(error);
           attempts.push({
-            provider: provider.tool.label,
+            provider: providerLabel,
             status: "failed",
             detail,
           });
@@ -1133,7 +1150,7 @@ export class ConfigurableWebSearchProvider implements WebSearchProvider {
           }
           if (settings.provider !== "auto") {
             throw new WebSearchExecutionError(
-              `${provider.tool.label} search failed: ${detail}`,
+              `${providerLabel} search failed: ${detail}`,
               attempts,
             );
           }
@@ -1156,7 +1173,8 @@ export class ConfigurableWebSearchProvider implements WebSearchProvider {
       this.#sessionApiKeys,
   ): EffectiveWebSearchSettings {
     return {
-      enabled: stored.enabled ?? this.#bootstrap.enabled,
+      enabled:
+        this.#bootstrap.enabled && (stored.enabled ?? this.#bootstrap.enabled),
       provider: stored.provider ?? this.#bootstrap.provider,
       resultLimit: stored.resultLimit ?? this.#bootstrap.resultLimit,
       apiKeys: {

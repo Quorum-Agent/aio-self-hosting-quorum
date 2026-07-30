@@ -1,5 +1,5 @@
 import { ArrowUp, Square } from "lucide-react";
-import { type KeyboardEvent, useRef } from "react";
+import { type KeyboardEvent, useLayoutEffect, useRef } from "react";
 
 interface ComposerProps {
   value: string;
@@ -24,7 +24,15 @@ export function Composer({
 }: ComposerProps) {
   const textarea = useRef<HTMLTextAreaElement>(null);
 
+  useLayoutEffect(() => {
+    const element = textarea.current;
+    if (!element) return;
+    element.style.height = "auto";
+    element.style.height = `${Math.min(element.scrollHeight, 180)}px`;
+  }, [value]);
+
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.nativeEvent.isComposing) return;
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       if (!busy && !disabled && value.trim()) onSend();

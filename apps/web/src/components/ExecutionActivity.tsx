@@ -24,6 +24,7 @@ interface ExecutionActivityProps {
   busy: boolean;
   startedAt: number;
   completedAt: number | undefined;
+  status?: "running" | "completed" | "failed" | "cancelled";
   defaultExpanded?: boolean;
 }
 
@@ -51,6 +52,7 @@ export function ExecutionActivity({
   busy,
   startedAt,
   completedAt,
+  status,
   defaultExpanded = true,
 }: ExecutionActivityProps) {
   const [now, setNow] = useState(() => Date.now());
@@ -64,19 +66,17 @@ export function ExecutionActivity({
     (attempt) => attempt.status === "completed",
   );
   const failedAttempt = attempts.some((attempt) => attempt.status === "failed");
-  const cancelled =
-    !completedAttempt &&
-    attempts.some(
-      (attempt) =>
-        attempt.status === "failed" &&
-        /\bcancel(?:led|ed|ation)?\b/i.test(attempt.detail ?? ""),
-    );
+  const cancelled = status === "cancelled";
+  const interrupted = status === "running" && !busy;
   const completedWithFallback =
     completedAttempt &&
     (plan?.fallbackFromModelId !== undefined || failedAttempt);
-  const failed = !completedAttempt && failedAttempt && !cancelled;
-  const completionLabel = busy
-    ? "Working for"
+  const failed =
+    status === "failed" || (!completedAttempt && failedAttempt && !cancelled);
+  const completionLabel = busy || status === "running"
+    ? interrupted
+      ? "Interrupted after"
+      : "Working for"
     : cancelled
       ? "Stopped after"
       : failed
@@ -192,6 +192,32 @@ export function ExecutionActivity({
                 <small>The search query may have left this device.</small>
               )}
             </div>
+          </div>
+        )}
+
+        {plan?.cloudDisclosure && (
+          <div className="activity-disclosure" role="note">
+            <strong>Cloud model used</strong>
+            <span>{plan.cloudDisclosure}</span>
+          </div>
+        )}
+
+        {(plan?.safety?.sensitiveDataCategories.length ?? 0) > 0 && (
+          <div className="activity-disclosure" role="note">
+            <strong>Kept local by privacy guard</strong>
+            <span>
+              Detected categories:{" "}
+              {plan?.safety?.sensitiveDataCategories.join(", ")}
+            </span>
+          </div>
+        )}
+
+        {plan?.safety?.containsWebGroundedData && (
+          <div className="activity-disclosure" role="note">
+            <strong>Web-grounded history kept local</strong>
+            <span>
+              Prior retrieved material was not forwarded to a cloud model.
+            </span>
           </div>
         )}
 

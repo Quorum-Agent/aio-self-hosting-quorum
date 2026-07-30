@@ -271,6 +271,73 @@ export function estimateInputTokens(
   return contentTokens + messages.length * 4 + 2;
 }
 
+function fitConversationToContext(
+  messages: ChatMessage[],
+  compatibleSystem: { role: "system"; content: string },
+  nativeSystem: { role: "system"; content: string },
+  inputBudget: number,
+  modelLabel: string,
+): Array<ReturnType<typeof toProviderMessage>> {
+  const latestUserIndex = messages.findLastIndex(
+    (message) => message.role === "user",
+  );
+  const mandatoryIndexes = new Set<number>([
+    messages.length - 1,
+    latestUserIndex,
+  ]);
+  mandatoryIndexes.delete(-1);
+  const selectedIndexes = [...mandatoryIndexes].sort((left, right) => left - right);
+  const fits = (indexes: number[], includeNotice = false) => {
+    const conversation = indexes.map((index) => toProviderMessage(messages[index]!));
+    const notice = includeNotice
+      ? [
+          {
+            role: "system" as const,
+            content:
+              "Quorum omitted older conversation turns to fit this model's context window.",
+          },
+        ]
+      : [];
+    return (
+      Math.max(
+        estimateInputTokens([compatibleSystem, ...notice, ...conversation]),
+        estimateInputTokens([nativeSystem, ...notice, ...conversation]),
+      ) <= inputBudget
+    );
+  };
+
+  if (!fits(selectedIndexes)) {
+    throw new ModelExecutionError(
+      `${modelLabel} cannot fit the latest request and required tool evidence in its ` +
+        `${inputBudget}-token input budget. Shorten the latest message or use a model with a larger context window.`,
+      "request",
+    );
+  }
+
+  let truncated = false;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (mandatoryIndexes.has(index)) continue;
+    const candidate = [...selectedIndexes, index].sort((left, right) => left - right);
+    if (!fits(candidate)) {
+      truncated = true;
+      break;
+    }
+    selectedIndexes.splice(0, selectedIndexes.length, ...candidate);
+  }
+
+  const selected = selectedIndexes.map((index) => toProviderMessage(messages[index]!));
+  return truncated && fits(selectedIndexes, true)
+    ? [
+        {
+          role: "system",
+          content:
+            "Quorum omitted older conversation turns to fit this model's context window.",
+        },
+        ...selected,
+      ]
+    : selected;
+}
+
 function parseCompletionFrame(frame: string): {
   contents: string[];
   terminal: boolean;
@@ -607,36 +674,44 @@ export class OpenAICompatibleProvider implements ModelProvider {
       this.#maxOutputTokens,
       VERBOSITY_OUTPUT_LIMITS[input.request.verbosity],
     );
-    const conversationMessages = input.messages.map(toProviderMessage);
+    const compatibleSystem = systemContext(
+      this.model,
+      input.runtimeModels,
+      input.request.policy,
+      input.request.verbosity,
+      input.request.analysis,
+      input.runtimeTools,
+      "envelope",
+    );
+    const nativeSystem = systemContext(
+      this.model,
+      input.runtimeModels,
+      input.request.policy,
+      input.request.verbosity,
+      input.request.analysis,
+      input.runtimeTools,
+      "structured",
+    );
+    const inputBudget = this.model.contextWindow - maxOutputTokens;
+    const conversationMessages = fitConversationToContext(
+      input.messages,
+      compatibleSystem,
+      nativeSystem,
+      inputBudget,
+      this.model.label,
+    );
     const compatibleMessages = [
-      systemContext(
-        this.model,
-        input.runtimeModels,
-        input.request.policy,
-        input.request.verbosity,
-        input.request.analysis,
-        input.runtimeTools,
-        "envelope",
-      ),
+      compatibleSystem,
       ...conversationMessages,
     ];
     const nativeMessages = [
-      systemContext(
-        this.model,
-        input.runtimeModels,
-        input.request.policy,
-        input.request.verbosity,
-        input.request.analysis,
-        input.runtimeTools,
-        "structured",
-      ),
+      nativeSystem,
       ...conversationMessages,
     ];
     const estimatedInputTokens = Math.max(
       estimateInputTokens(compatibleMessages),
       estimateInputTokens(nativeMessages),
     );
-    const inputBudget = this.model.contextWindow - maxOutputTokens;
     if (estimatedInputTokens > inputBudget) {
       throw new ModelExecutionError(
         `${this.model.label} context is too large: estimated ${estimatedInputTokens} ` +

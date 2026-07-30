@@ -222,7 +222,9 @@ export function SettingsDialog({
       : selectedKeyChange === null
         ? selectedProvider?.environmentConfigured === true
         : typeof selectedKeyChange === "string"
-          ? Boolean(selectedKeyChange.trim())
+          ? Boolean(
+              selectedKeyChange.trim() || selectedProvider?.configured,
+            )
           : selectedProvider?.configured === true);
   const canSave = canSaveWebSearchSettings(
     settings !== undefined,
@@ -367,11 +369,13 @@ export function SettingsDialog({
                       setResultLimit(Number(event.target.value))
                     }
                   >
-                    {[3, 5, 8, 10].map((count) => (
-                      <option key={count} value={count}>
-                        {count}
-                      </option>
-                    ))}
+                    {Array.from({ length: 8 }, (_, index) => index + 3).map(
+                      (count) => (
+                        <option key={count} value={count}>
+                          {count}
+                        </option>
+                      ),
+                    )}
                   </select>
                 </label>
               </div>

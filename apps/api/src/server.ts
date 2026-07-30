@@ -138,14 +138,17 @@ export async function buildServer(config: AppConfig, runtime: QuorumRuntime) {
     webSearch: runtime.webSearch,
   }));
 
-  app.get("/api/runtime", async () => ({
-    policies: exposedPolicies,
-    models: runtime.orchestrator.models,
-    localRuntime: runtime.localRuntime,
-    warmup: runtime.warmupStatus,
-    cloudConfigured: runtime.cloudConfigured,
-    webSearch: runtime.webSearch,
-  }));
+  app.get("/api/runtime", async () => {
+    await runtime.refreshLocalModels();
+    return {
+      policies: exposedPolicies,
+      models: runtime.orchestrator.models,
+      localRuntime: runtime.localRuntime,
+      warmup: runtime.warmupStatus,
+      cloudConfigured: runtime.cloudConfigured,
+      webSearch: runtime.webSearch,
+    };
+  });
 
   app.get("/api/settings/web-search", async (_request, reply) => {
     if (!runtime.webSearchProvider) {
@@ -212,6 +215,45 @@ export async function buildServer(config: AppConfig, runtime: QuorumRuntime) {
     return { messages: database.listMessages(id) };
   });
 
+  app.patch("/api/conversations/:id", async (request, reply) => {
+    const { id } = z.object({ id: z.string().min(1) }).parse(request.params);
+    const { title } = z
+      .object({ title: z.string().trim().min(1).max(160) })
+      .parse(request.body);
+    const conversation = database.renameConversation(id, title);
+    return conversation
+      ? { conversation }
+      : reply.code(404).send({ message: "Conversation not found." });
+  });
+
+  app.delete("/api/conversations/:id", async (request, reply) => {
+    const { id } = z.object({ id: z.string().min(1) }).parse(request.params);
+    if (!database.deleteConversation(id)) {
+      return reply.code(404).send({ message: "Conversation not found." });
+    }
+    return reply.code(204).send();
+  });
+
+  app.get("/api/conversations/:id/export", async (request, reply) => {
+    const { id } = z.object({ id: z.string().min(1) }).parse(request.params);
+    const conversation = database.getConversation(id);
+    if (!conversation) {
+      return reply.code(404).send({ message: "Conversation not found." });
+    }
+    const safeName =
+      conversation.title.replace(/[^a-z0-9_-]+/gi, "-").replace(/^-|-$/g, "") ||
+      "conversation";
+    reply.header(
+      "content-disposition",
+      `attachment; filename="${safeName.slice(0, 80)}.json"`,
+    );
+    return {
+      exportedAt: new Date().toISOString(),
+      conversation,
+      messages: database.listMessages(id),
+    };
+  });
+
   app.post("/api/chat", async (request, reply) => {
     const parsed = chatRequestSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -222,6 +264,13 @@ export async function buildServer(config: AppConfig, runtime: QuorumRuntime) {
     }
 
     const body = parsed.data;
+    await runtime.refreshLocalModels(true);
+    if (runtime.warmupStatus.state === "warming") {
+      return reply.code(503).send({
+        message:
+          "Local models are still warming. Quorum will accept messages when the runtime is ready.",
+      });
+    }
     const latestUserMessage = [...body.messages]
       .reverse()
       .find((message) => message.role === "user");
@@ -267,17 +316,20 @@ export async function buildServer(config: AppConfig, runtime: QuorumRuntime) {
       plan: TaskPlan,
       content: string,
       source?: ChatMessage,
+      status: NonNullable<ChatMessage["execution"]>["status"] = "completed",
     ): ChatMessage => ({
       id: webAuditMessageId ?? source?.id ?? randomUUID(),
       role: "assistant",
       content,
       createdAt:
         webAuditCreatedAt ?? source?.createdAt ?? new Date().toISOString(),
+      ...(source?.provenance ? { provenance: source.provenance } : {}),
       execution: {
         plan,
         traces: [...executionTraces.values()],
         startedAt: executionStartedAt,
         completedAt: Date.now(),
+        status,
       },
     });
     const persistExecutionMessage = (message: ChatMessage) => {
@@ -317,7 +369,9 @@ export async function buildServer(config: AppConfig, runtime: QuorumRuntime) {
               body.conversationId,
               executionMessage(
                 event.plan,
-                "Web search started. No terminal execution record was received.",
+                "",
+                undefined,
+                "running",
               ),
             );
           } else if (webAuditMessageId) {
@@ -325,7 +379,9 @@ export async function buildServer(config: AppConfig, runtime: QuorumRuntime) {
               body.conversationId,
               executionMessage(
                 event.plan,
-                "Web search started. No terminal execution record was received.",
+                "",
+                undefined,
+                "running",
               ),
             );
           }
@@ -354,6 +410,8 @@ export async function buildServer(config: AppConfig, runtime: QuorumRuntime) {
             event.partialContent
               ? `${event.partialContent}\n\n[Generation stopped: ${event.message}]`
               : `Request failed: ${event.message}`,
+            undefined,
+            controller.signal.aborted ? "cancelled" : "failed",
           );
           persistExecutionMessage(persistedMessage);
           writeIfOpen({
@@ -373,6 +431,8 @@ export async function buildServer(config: AppConfig, runtime: QuorumRuntime) {
           streamedContent
             ? `${streamedContent}\n\n[Generation stopped: ${message}]`
             : `Request failed: ${message}`,
+          undefined,
+          controller.signal.aborted ? "cancelled" : "failed",
         );
         persistExecutionMessage(persistedMessage);
         writeIfOpen({

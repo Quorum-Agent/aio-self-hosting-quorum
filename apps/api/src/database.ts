@@ -46,7 +46,20 @@ function mapConversation(row: ConversationRow): ConversationRecord {
 function parseExecution(value: string | null): MessageExecutionRecord | undefined {
   if (!value) return undefined;
   try {
-    return JSON.parse(value) as MessageExecutionRecord;
+    const execution = JSON.parse(value) as MessageExecutionRecord;
+    if (execution.plan.webSearch) {
+      execution.plan.webSearch.sources = execution.plan.webSearch.sources.map(
+        (source) => ({
+          ...source,
+          title: source.title
+            .normalize("NFKC")
+            .replace(/[\u0000-\u001f\u007f-\u009f]|\p{Cf}/gu, " ")
+            .replace(/\s+/gu, " ")
+            .trim(),
+        }),
+      );
+    }
+    return execution;
   } catch {
     return undefined;
   }
@@ -163,6 +176,24 @@ export class QuorumDatabase {
     return { id, title, createdAt: timestamp, updatedAt: timestamp };
   }
 
+  renameConversation(id: string, title: string): ConversationRecord | undefined {
+    const timestamp = new Date().toISOString();
+    const result = this.#database
+      .prepare(
+        "UPDATE conversations SET title = ?, updated_at = ? WHERE id = ?",
+      )
+      .run(title, timestamp, id);
+    return result.changes === 1 ? this.getConversation(id) : undefined;
+  }
+
+  deleteConversation(id: string): boolean {
+    return (
+      this.#database
+        .prepare("DELETE FROM conversations WHERE id = ?")
+        .run(id).changes === 1
+    );
+  }
+
   listMessages(conversationId: string): ChatMessage[] {
     const rows = this.#database
       .prepare(
@@ -175,11 +206,14 @@ export class QuorumDatabase {
 
     return rows.map((row) => {
       const execution = parseExecution(row.execution_json);
+      const webGrounded =
+        (execution?.plan.webSearch?.sources.length ?? 0) > 0;
       return {
         id: row.id,
         role: row.role,
         content: row.content,
         createdAt: row.created_at,
+        ...(webGrounded ? { provenance: "web_grounded" as const } : {}),
         ...(execution ? { execution } : {}),
       };
     });

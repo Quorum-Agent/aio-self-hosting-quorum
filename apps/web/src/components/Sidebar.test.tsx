@@ -14,6 +14,9 @@ describe("Sidebar", () => {
         onNew={() => undefined}
         onSelect={() => undefined}
         onSettings={onSettings}
+        onRename={() => undefined}
+        onDelete={() => undefined}
+        onExport={() => undefined}
       />,
     );
 
@@ -30,6 +33,9 @@ describe("Sidebar", () => {
         onNew={() => undefined}
         onSelect={() => undefined}
         onSettings={() => undefined}
+        onRename={() => undefined}
+        onDelete={() => undefined}
+        onExport={() => undefined}
       />,
     );
 

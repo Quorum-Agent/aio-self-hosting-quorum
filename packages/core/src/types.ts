@@ -7,6 +7,7 @@ export interface ChatMessage {
   role: MessageRole;
   content: string;
   createdAt: string;
+  provenance?: "web_grounded";
   execution?: MessageExecutionRecord;
 }
 
@@ -97,7 +98,18 @@ export interface RequestRequirements {
   capabilities: Capability[];
   requiresFreshness: boolean;
   containsSensitiveData: boolean;
+  sensitiveDataCategories: SensitiveDataCategory[];
+  containsWebGroundedData: boolean;
 }
+
+export type SensitiveDataCategory =
+  | "credentials"
+  | "private_key"
+  | "financial"
+  | "government_id"
+  | "personal_contact"
+  | "health"
+  | "confidential";
 
 export interface PromptAnalyzerResult {
   intent: RequestIntent;
@@ -180,6 +192,10 @@ export interface TaskPlan {
   fallbackFromModelId?: Id;
   attempts?: ExecutionAttempt[];
   cloudDisclosure?: string;
+  safety?: {
+    sensitiveDataCategories: SensitiveDataCategory[];
+    containsWebGroundedData: boolean;
+  };
   webSearch?: {
     provider: string;
     query: string;
@@ -210,6 +226,7 @@ export interface MessageExecutionRecord {
   traces: ExecutionTrace[];
   startedAt: number;
   completedAt: number;
+  status?: "running" | "completed" | "failed" | "cancelled";
 }
 
 export interface ChatRequest {

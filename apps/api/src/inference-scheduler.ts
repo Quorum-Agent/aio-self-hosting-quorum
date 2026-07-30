@@ -47,10 +47,11 @@ export class InferenceScheduler {
 
   acquire(
     signal?: AbortSignal,
-    maximumWaitMs = this.#queueWaitMs,
+    maximumWaitMs?: number,
   ): Promise<() => void> {
     if (signal?.aborted) return Promise.reject(abortError());
-    if (!Number.isFinite(maximumWaitMs) || maximumWaitMs <= 0) {
+    const enforcedWaitMs = maximumWaitMs ?? this.#queueWaitMs;
+    if (!Number.isFinite(enforcedWaitMs) || enforcedWaitMs <= 0) {
       return Promise.reject(
         new ModelExecutionError(
           "Local inference queue wait budget is invalid.",
@@ -94,11 +95,11 @@ export class InferenceScheduler {
         }
         reject(
           new ModelExecutionError(
-            `Local inference queue wait exceeded ${maximumWaitMs}ms.`,
+            `Local inference queue wait exceeded ${enforcedWaitMs}ms.`,
             "request",
           ),
         );
-      }, Math.min(this.#queueWaitMs, maximumWaitMs));
+      }, enforcedWaitMs);
       this.#queue.push(waiter);
     });
   }

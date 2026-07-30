@@ -10,7 +10,10 @@ export function buildAuthoritativeContext(
 ): ChatMessage[] {
   const trustedHistory = storedMessages.filter(
     (message) =>
-      message.role === "user" || message.role === "assistant",
+      message.role === "user" ||
+      (message.role === "assistant" &&
+        message.content.trim().length > 0 &&
+        message.execution?.status !== "running"),
   );
   return [
     ...trustedHistory,

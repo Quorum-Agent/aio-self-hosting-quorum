@@ -112,6 +112,60 @@ describe("QuorumDatabase", () => {
     reopened.close();
   });
 
+  it("derives durable web-grounded provenance from persisted execution evidence", () => {
+    const directory = mkdtempSync(join(tmpdir(), "quorum-"));
+    temporaryDirectories.push(directory);
+    const database = new QuorumDatabase(directory);
+    database.createConversation("conversation-1", "Web research");
+    const execution = executionRecord();
+    execution.plan.webSearch = {
+      provider: "DuckDuckGo",
+      query: "current release",
+      contextMayHaveLeftDevice: true,
+      sources: [
+        {
+          title: "Current\u200B\u202E release\u2066",
+          url: "https://example.com/release",
+        },
+      ],
+    };
+    database.saveMessage("conversation-1", {
+      id: "message-1",
+      role: "assistant",
+      content: "The current release is 2.0.",
+      createdAt: new Date(3_000).toISOString(),
+      execution,
+    });
+
+    const [message] = database.listMessages("conversation-1");
+    expect(message?.provenance).toBe("web_grounded");
+    expect(message?.execution?.plan.webSearch?.sources[0]?.title).toBe(
+      "Current release",
+    );
+    database.close();
+  });
+
+  it("renames and deletes conversations with their messages", () => {
+    const directory = mkdtempSync(join(tmpdir(), "quorum-"));
+    temporaryDirectories.push(directory);
+    const database = new QuorumDatabase(directory);
+    database.createConversation("conversation-1", "Old title");
+    database.saveMessage("conversation-1", {
+      id: "message-1",
+      role: "user",
+      content: "Local history.",
+      createdAt: new Date(0).toISOString(),
+    });
+
+    expect(database.renameConversation("conversation-1", "New title")?.title).toBe(
+      "New title",
+    );
+    expect(database.deleteConversation("conversation-1")).toBe(true);
+    expect(database.getConversation("conversation-1")).toBeUndefined();
+    expect(database.listMessages("conversation-1")).toEqual([]);
+    database.close();
+  });
+
   it("updates a write-ahead execution message only within its conversation", () => {
     const directory = mkdtempSync(join(tmpdir(), "quorum-"));
     temporaryDirectories.push(directory);

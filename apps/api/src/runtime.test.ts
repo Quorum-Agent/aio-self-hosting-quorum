@@ -1,8 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AppConfig } from "./config.js";
 import {
   createLocalProviders,
+  createRuntime,
   currentLocalRuntime,
   describeLocalRuntime,
 } from "./runtime.js";
@@ -50,6 +51,10 @@ const config: AppConfig = {
   },
 };
 
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
 describe("createLocalProviders", () => {
   it("registers only installed configured experts", () => {
     const providers = createLocalProviders(config, ["general", "code"]);
@@ -71,6 +76,18 @@ describe("createLocalProviders", () => {
 
   it("registers no phantom provider for a missing model", () => {
     expect(createLocalProviders(config, [])).toEqual([]);
+  });
+
+  it("matches an omitted configured tag to Ollama's explicit latest tag", () => {
+    const providers = createLocalProviders(config, [
+      "general:latest",
+      "code:latest",
+    ]);
+
+    expect(providers.map((provider) => provider.model.role)).toEqual([
+      "general",
+      "coding",
+    ]);
   });
 
   it("is ready only when every configured role is available", () => {
@@ -147,6 +164,50 @@ describe("createLocalProviders", () => {
         configuredModel: "classifier",
         available: false,
       },
+    });
+  });
+
+  it("discovers every configured role when the model server starts after Quorum", async () => {
+    let online = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        online
+          ? new Response(
+              JSON.stringify({
+                data: [
+                  { id: "classifier" },
+                  { id: "general" },
+                  { id: "code" },
+                  { id: "reasoning" },
+                ],
+              }),
+              {
+                status: 200,
+                headers: { "content-type": "application/json" },
+              },
+            )
+          : new Response("not ready", { status: 503 }),
+      ),
+    );
+    const runtime = await createRuntime({
+      ...config,
+      local: { ...config.local, warmOnStartup: false },
+    });
+
+    expect(runtime.localRuntime.state).toBe("unavailable");
+    online = true;
+    await runtime.refreshLocalModels();
+
+    expect(runtime.localRuntime).toMatchObject({
+      state: "ready",
+      endpointConnected: true,
+      roles: [
+        { role: "general", available: true },
+        { role: "coding", available: true },
+        { role: "reasoning", available: true },
+      ],
+      promptAnalyzer: { available: true },
     });
   });
 });

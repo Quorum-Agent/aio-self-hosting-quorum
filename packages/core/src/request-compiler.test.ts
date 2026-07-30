@@ -82,6 +82,8 @@ describe("RequestCompiler", () => {
       capabilities: ["chat"],
       requiresFreshness: false,
       containsSensitiveData: false,
+      sensitiveDataCategories: [],
+      containsWebGroundedData: false,
     });
     expect(compiled.verbosity).toBe("standard");
     expect(compiled.analysis).toEqual({
@@ -249,6 +251,30 @@ describe("RequestCompiler", () => {
     "Take a screenshot programmatically in Node.",
   ])("recognizes concrete coding work without broad keywords: %s", (prompt) => {
     expect(compiler.compile(request(prompt)).requirements.intent).toBe("coding");
+  });
+
+  it("keeps the most recent standing network denial across later follow-ups", () => {
+    const compiled = compiler.compile(
+      conversationRequest([
+        "Search the web for the latest Quorum release.",
+        "From now on, do not use the internet.",
+        "Also tell me more.",
+      ]),
+    );
+
+    expect(compiled.requirements.intent).toBe("research");
+    expect(compiled.requirements.capabilities).not.toContain("web");
+  });
+
+  it.each([
+    "What is my current medication schedule?",
+    "Give me the sources for my HIV medication.",
+    "What are my current payroll prices?",
+  ])("does not send personal-scope freshness language to web search: %s", (prompt) => {
+    const compiled = compiler.compile(request(prompt));
+
+    expect(compiled.requirements.capabilities).not.toContain("web");
+    expect(compiled.requirements.containsSensitiveData).toBe(true);
   });
 
   it("routes coding domains despite abstract visual language", () => {
@@ -737,6 +763,85 @@ describe("RequestCompiler", () => {
     "AccountKey=abcdefghijklmnopqrstuvwxyz012345",
   ])("detects common credential and restricted-data forms: %s", (value) => {
     expect(containsSensitiveContent(value)).toBe(true);
+  });
+
+  it.each([
+    ["AWS_SECRET_ACCESS_KEY=abcdefghijklmnopqrstuvwxyz1234567890ABCD", "credentials"],
+    ["GOOGLE_API_KEY=AIzaSyA123456789012345678901234567890123", "credentials"],
+    ["SSN 123456789", "government_id"],
+    ["DB_PASS=hunter2-example", "credentials"],
+    ["IBAN: GB82WEST12345698765432", "financial"],
+    ["email: person@example.com", "personal_contact"],
+    ["my medical diagnosis is private", "health"],
+    ["pаssword\u200B=hidden-value", "credentials"],
+    [
+      "Jane Q. Doe, born 1984-03-11, 12 Elm St, 555-867-5309",
+      "personal_contact",
+    ],
+    ["I was just diagnosed with stage 2 lymphoma", "health"],
+    [
+      "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDgL7SFnKcY3Q8u",
+      "private_key",
+    ],
+  ])("detects normalized sensitive %s data", (value, category) => {
+    const compiled = compiler.compile(request(value));
+
+    expect(compiled.requirements.containsSensitiveData).toBe(true);
+    expect(compiled.requirements.sensitiveDataCategories).toContain(category);
+  });
+
+  it.each([
+    "How do I hash a password with bcrypt in Node?",
+    "Explain what an API key is.",
+    "What does 'confidential' mean in a legal contract?",
+    "Order number 4532015112830366 shipped today",
+  ])("does not poison a conversation for non-secret language: %s", (value) => {
+    expect(containsSensitiveContent(value)).toBe(false);
+  });
+
+  it("does not treat assistant-authored secret terminology as user data", () => {
+    const compiled = compiler.compile({
+      ...request("Can you expand on that?"),
+      messages: [
+        {
+          id: "assistant-1",
+          role: "assistant",
+          content: "A password is an authentication secret.",
+          createdAt: new Date(0).toISOString(),
+        },
+        {
+          id: "user-2",
+          role: "user",
+          content: "Can you expand on that?",
+          createdAt: new Date(1).toISOString(),
+        },
+      ],
+    });
+
+    expect(compiled.requirements.containsSensitiveData).toBe(false);
+  });
+
+  it("marks prior web-grounded assistant output as local-only context", () => {
+    const compiled = compiler.compile({
+      ...request("Compare that with the alternative."),
+      messages: [
+        {
+          id: "assistant-1",
+          role: "assistant",
+          content: "A web-grounded answer.",
+          provenance: "web_grounded",
+          createdAt: new Date(0).toISOString(),
+        },
+        {
+          id: "user-2",
+          role: "user",
+          content: "Compare that with the alternative.",
+          createdAt: new Date(1).toISOString(),
+        },
+      ],
+    });
+
+    expect(compiled.requirements.containsWebGroundedData).toBe(true);
   });
 
   it("uses a confident local prompt analysis for an ambiguous request", () => {

@@ -16,6 +16,8 @@ const originalGeneralContext = process.env["QUORUM_LOCAL_CONTEXT_WINDOW"];
 const originalLocalBaseUrl = process.env["QUORUM_LOCAL_BASE_URL"];
 const originalCloudBaseUrl = process.env["QUORUM_CLOUD_BASE_URL"];
 const originalCloudApiKey = process.env["QUORUM_CLOUD_API_KEY"];
+const originalCloudContext = process.env["QUORUM_CLOUD_CONTEXT_WINDOW"];
+const originalCloudQuality = process.env["QUORUM_CLOUD_QUALITY_RATING"];
 const originalWebSearchProvider =
   process.env["QUORUM_WEB_SEARCH_PROVIDER"];
 const originalWebSearchEnabled =
@@ -48,6 +50,8 @@ afterEach(() => {
     ["QUORUM_LOCAL_BASE_URL", originalLocalBaseUrl],
     ["QUORUM_CLOUD_BASE_URL", originalCloudBaseUrl],
     ["QUORUM_CLOUD_API_KEY", originalCloudApiKey],
+    ["QUORUM_CLOUD_CONTEXT_WINDOW", originalCloudContext],
+    ["QUORUM_CLOUD_QUALITY_RATING", originalCloudQuality],
     ["QUORUM_WEB_SEARCH_PROVIDER", originalWebSearchProvider],
     ["QUORUM_WEB_SEARCH_ENABLED", originalWebSearchEnabled],
     ["QUORUM_WEB_SEARCH_RESULT_LIMIT", originalWebSearchResultLimit],
@@ -189,6 +193,17 @@ describe("loadConfig", () => {
     expect(() => loadConfig()).toThrow(
       "QUORUM_CLOUD_BASE_URL must use HTTPS",
     );
+  });
+
+  it("uses the configured cloud model's real context and quality values", () => {
+    process.env["QUORUM_CLOUD_API_KEY"] = "configured";
+    process.env["QUORUM_CLOUD_CONTEXT_WINDOW"] = "32768";
+    process.env["QUORUM_CLOUD_QUALITY_RATING"] = "72";
+
+    expect(loadConfig().cloud).toMatchObject({
+      contextWindow: 32_768,
+      qualityRating: 72,
+    });
   });
 
   it("configures a loopback SearXNG search provider", () => {
