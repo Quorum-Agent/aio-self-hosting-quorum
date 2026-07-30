@@ -14,6 +14,13 @@ const originalPromptContext = process.env["QUORUM_LOCAL_PROMPT_CONTEXT_WINDOW"];
 const originalWarmup = process.env["QUORUM_LOCAL_WARMUP"];
 const originalGeneralContext = process.env["QUORUM_LOCAL_CONTEXT_WINDOW"];
 const originalLocalBaseUrl = process.env["QUORUM_LOCAL_BASE_URL"];
+const originalLocalTransport = process.env["QUORUM_LOCAL_TRANSPORT"];
+const originalManagedLlamaServer =
+  process.env["QUORUM_MANAGED_LLAMA_SERVER"];
+const originalManagedLlamaModels =
+  process.env["QUORUM_MANAGED_LLAMA_MODELS"];
+const originalManagedLlamaStartupTimeout =
+  process.env["QUORUM_MANAGED_LLAMA_STARTUP_TIMEOUT_MS"];
 const originalCloudBaseUrl = process.env["QUORUM_CLOUD_BASE_URL"];
 const originalCloudApiKey = process.env["QUORUM_CLOUD_API_KEY"];
 const originalCloudContext = process.env["QUORUM_CLOUD_CONTEXT_WINDOW"];
@@ -48,6 +55,13 @@ afterEach(() => {
     ["QUORUM_LOCAL_WARMUP", originalWarmup],
     ["QUORUM_LOCAL_CONTEXT_WINDOW", originalGeneralContext],
     ["QUORUM_LOCAL_BASE_URL", originalLocalBaseUrl],
+    ["QUORUM_LOCAL_TRANSPORT", originalLocalTransport],
+    ["QUORUM_MANAGED_LLAMA_SERVER", originalManagedLlamaServer],
+    ["QUORUM_MANAGED_LLAMA_MODELS", originalManagedLlamaModels],
+    [
+      "QUORUM_MANAGED_LLAMA_STARTUP_TIMEOUT_MS",
+      originalManagedLlamaStartupTimeout,
+    ],
     ["QUORUM_CLOUD_BASE_URL", originalCloudBaseUrl],
     ["QUORUM_CLOUD_API_KEY", originalCloudApiKey],
     ["QUORUM_CLOUD_CONTEXT_WINDOW", originalCloudContext],
@@ -106,7 +120,44 @@ describe("loadConfig", () => {
       name: "qwen3.5:2b",
       contextWindow: 4_096,
     });
+    expect(config.local.transport).toBe("ollama");
     expect(config.local.warmOnStartup).toBe(true);
+  });
+
+  it("configures a managed llama.cpp runtime without packaging models", () => {
+    process.env["QUORUM_MANAGED_LLAMA_SERVER"] = "./runtime/llama-server";
+    process.env["QUORUM_MANAGED_LLAMA_MODELS"] =
+      "./config/managed-models.local.json";
+    process.env["QUORUM_MANAGED_LLAMA_STARTUP_TIMEOUT_MS"] = "45000";
+
+    expect(loadConfig().managedLlama).toEqual({
+      executablePath: resolve(PROJECT_ROOT, "runtime/llama-server"),
+      manifestPath: resolve(
+        PROJECT_ROOT,
+        "config/managed-models.local.json",
+      ),
+      startupTimeoutMs: 45_000,
+    });
+  });
+
+  it("requires both managed llama.cpp paths", () => {
+    process.env["QUORUM_MANAGED_LLAMA_SERVER"] = "./runtime/llama-server";
+    delete process.env["QUORUM_MANAGED_LLAMA_MODELS"];
+
+    expect(() => loadConfig()).toThrow(
+      "QUORUM_MANAGED_LLAMA_SERVER and QUORUM_MANAGED_LLAMA_MODELS",
+    );
+  });
+
+  it("allows an explicitly OpenAI-compatible local transport", () => {
+    process.env["QUORUM_LOCAL_TRANSPORT"] = "openai-compatible";
+
+    expect(loadConfig().local.transport).toBe("openai-compatible");
+
+    process.env["QUORUM_LOCAL_TRANSPORT"] = "mystery";
+    expect(() => loadConfig()).toThrow(
+      "QUORUM_LOCAL_TRANSPORT must be ollama or openai-compatible",
+    );
   });
 
   it("registers answer specialists only when explicitly configured", () => {

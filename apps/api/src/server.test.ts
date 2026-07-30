@@ -92,6 +92,7 @@ describe("chat execution persistence", () => {
       local: {
         baseUrl: "http://127.0.0.1:11434/v1",
         apiKey: "ollama",
+        transport: "ollama",
         models: [],
         promptAnalyzer: {
           name: "classifier",
@@ -175,6 +176,7 @@ describe("conversation lifecycle routes", () => {
         local: {
           baseUrl: "http://127.0.0.1:11434/v1",
           apiKey: "ollama",
+          transport: "ollama",
           models: [],
           promptAnalyzer: {
             name: "classifier",
@@ -268,6 +270,7 @@ describe("web-search settings", () => {
       local: {
         baseUrl: "http://127.0.0.1:11434/v1",
         apiKey: "ollama",
+        transport: "ollama",
         models: [],
         promptAnalyzer: {
           name: "classifier",

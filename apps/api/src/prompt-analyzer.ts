@@ -14,6 +14,7 @@ interface PromptAnalyzerOptions {
   apiKey: string;
   model: string;
   contextWindow: number;
+  nativeOllama?: boolean;
   scheduler: InferenceScheduler;
 }
 
@@ -170,6 +171,7 @@ export class LocalPromptAnalyzer implements PromptAnalyzer {
   readonly #apiKey: string;
   readonly #model: string;
   readonly #contextWindow: number;
+  readonly #nativeOllama: boolean;
   readonly #scheduler: InferenceScheduler;
 
   constructor(options: PromptAnalyzerOptions) {
@@ -179,6 +181,7 @@ export class LocalPromptAnalyzer implements PromptAnalyzer {
     this.#apiKey = options.apiKey;
     this.#model = options.model;
     this.#contextWindow = options.contextWindow;
+    this.#nativeOllama = options.nativeOllama ?? true;
     this.#scheduler = options.scheduler;
   }
 
@@ -206,7 +209,9 @@ export class LocalPromptAnalyzer implements PromptAnalyzer {
         },
         { role: "user", content: boundedConversation(input) },
       ];
-      const nativeUrl = nativeOllamaChatUrl(this.#baseUrl);
+      const nativeUrl = this.#nativeOllama
+        ? nativeOllamaChatUrl(this.#baseUrl)
+        : undefined;
       let content: string | undefined;
 
       if (nativeUrl) {

@@ -33,6 +33,12 @@ export interface PromptAnalyzerConfig {
   contextWindow: number;
 }
 
+export interface ManagedLlamaConfig {
+  executablePath: string;
+  manifestPath: string;
+  startupTimeoutMs: number;
+}
+
 export const WEB_SEARCH_PROVIDER_IDS = [
   "auto",
   "duckduckgo",
@@ -75,10 +81,12 @@ export interface AppConfig {
   local: {
     baseUrl: string;
     apiKey: string;
+    transport: "ollama" | "openai-compatible";
     models: LocalModelConfig[];
     promptAnalyzer: PromptAnalyzerConfig;
     warmOnStartup: boolean;
   };
+  managedLlama?: ManagedLlamaConfig;
   cloud?: {
     baseUrl: string;
     model: string;
@@ -97,6 +105,25 @@ export function loadConfig(): AppConfig {
     );
   }
   const cloudApiKey = process.env["QUORUM_CLOUD_API_KEY"]?.trim();
+  const configuredLocalTransport =
+    process.env["QUORUM_LOCAL_TRANSPORT"]?.trim().toLowerCase() ?? "ollama";
+  if (
+    configuredLocalTransport !== "ollama" &&
+    configuredLocalTransport !== "openai-compatible"
+  ) {
+    throw new Error(
+      "QUORUM_LOCAL_TRANSPORT must be ollama or openai-compatible.",
+    );
+  }
+  const managedLlamaExecutable =
+    process.env["QUORUM_MANAGED_LLAMA_SERVER"]?.trim();
+  const managedLlamaManifest =
+    process.env["QUORUM_MANAGED_LLAMA_MODELS"]?.trim();
+  if (Boolean(managedLlamaExecutable) !== Boolean(managedLlamaManifest)) {
+    throw new Error(
+      "QUORUM_MANAGED_LLAMA_SERVER and QUORUM_MANAGED_LLAMA_MODELS must be configured together.",
+    );
+  }
   const configuredWebProvider =
     process.env["QUORUM_WEB_SEARCH_PROVIDER"]?.trim().toLowerCase();
   const searxngBaseUrl = process.env["QUORUM_SEARXNG_BASE_URL"]?.trim();
@@ -224,6 +251,7 @@ export function loadConfig(): AppConfig {
           "http://127.0.0.1:11434/v1",
       ),
       apiKey: process.env["QUORUM_LOCAL_API_KEY"] ?? "ollama",
+      transport: configuredLocalTransport,
       models: localModels,
       promptAnalyzer: {
         name:
@@ -237,6 +265,18 @@ export function loadConfig(): AppConfig {
       warmOnStartup:
         process.env["QUORUM_LOCAL_WARMUP"]?.trim().toLowerCase() !== "false",
     },
+    ...(managedLlamaExecutable && managedLlamaManifest
+      ? {
+          managedLlama: {
+            executablePath: resolveFromProjectRoot(managedLlamaExecutable),
+            manifestPath: resolveFromProjectRoot(managedLlamaManifest),
+            startupTimeoutMs: positiveInteger(
+              process.env["QUORUM_MANAGED_LLAMA_STARTUP_TIMEOUT_MS"],
+              180_000,
+            ),
+          },
+        }
+      : {}),
     ...(cloudApiKey
       ? {
           cloud: {

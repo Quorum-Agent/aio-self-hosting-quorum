@@ -88,7 +88,7 @@ export function createLocalProviders(
           qualityRating: model.qualityRating,
           capabilities: model.capabilities,
           specialties: model.specialties,
-          nativeOllama: true,
+          nativeOllama: config.local.transport === "ollama",
           ...(model.reasoningEffort
             ? { reasoningEffort: model.reasoningEffort }
             : {}),
@@ -190,6 +190,7 @@ export async function createRuntime(config: AppConfig): Promise<QuorumRuntime> {
         apiKey: config.local.apiKey,
         model: config.local.promptAnalyzer.name,
         contextWindow: config.local.promptAnalyzer.contextWindow,
+        nativeOllama: config.local.transport === "ollama",
         scheduler,
       })
     : undefined;
@@ -271,6 +272,7 @@ export async function createRuntime(config: AppConfig): Promise<QuorumRuntime> {
             apiKey: config.local.apiKey,
             model: config.local.promptAnalyzer.name,
             contextWindow: config.local.promptAnalyzer.contextWindow,
+            nativeOllama: config.local.transport === "ollama",
             scheduler,
           }),
         );
@@ -332,6 +334,7 @@ export async function createRuntime(config: AppConfig): Promise<QuorumRuntime> {
           baseUrl: config.local.baseUrl,
           apiKey: config.local.apiKey,
           model: target.model,
+          nativeOllama: config.local.transport === "ollama",
           scheduler,
         });
         target.status = "ready";

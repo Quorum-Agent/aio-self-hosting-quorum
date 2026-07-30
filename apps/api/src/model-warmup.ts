@@ -4,6 +4,7 @@ interface WarmupOptions {
   baseUrl: string;
   apiKey: string;
   model: string;
+  nativeOllama?: boolean;
   scheduler: InferenceScheduler;
 }
 
@@ -44,7 +45,10 @@ export async function warmLocalModel(options: WarmupOptions): Promise<void> {
   const timer = setTimeout(() => controller.abort(), WARMUP_TIMEOUT_MS);
 
   try {
-    const ollamaUrl = nativeOllamaUrl(options.baseUrl);
+    const ollamaUrl =
+      options.nativeOllama === false
+        ? undefined
+        : nativeOllamaUrl(options.baseUrl);
     if (ollamaUrl) {
       const response = await fetch(ollamaUrl, {
         method: "POST",
@@ -83,7 +87,6 @@ export async function warmLocalModel(options: WarmupOptions): Promise<void> {
         messages: [{ role: "user", content: "Reply OK." }],
         stream: false,
         max_tokens: 2,
-        reasoning_effort: "none",
       }),
       signal: controller.signal,
       redirect: "error",
