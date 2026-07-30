@@ -407,4 +407,50 @@ describe("runtime view", () => {
 
     expect(attempts.swaps).toBe(0);
   });
+
+  it("counts a relay handoff as a pipeline stage, not a fallback swap", () => {
+    const hubModel: ModelDescriptor = {
+      ...chatModel,
+      id: "local:general:hub",
+      label: "Hub",
+    };
+    const attempts = describeModelAttempts(
+      {
+        id: "plan",
+        requestId: "request",
+        policy: "balanced",
+        analysis: requestAnalysis,
+        route: "local",
+        modelId: hubModel.id,
+        spokeModelId: chatModel.id,
+        verbosity: "standard",
+        rationale: "Spoke drafted; hub synthesized.",
+        steps: [],
+        attempts: [
+          {
+            modelId: chatModel.id,
+            stage: "draft",
+            route: "local",
+            status: "completed",
+            contextMayHaveBeenTransmitted: false,
+          },
+          {
+            modelId: hubModel.id,
+            stage: "synthesis",
+            route: "local",
+            status: "completed",
+            contextMayHaveBeenTransmitted: false,
+          },
+        ],
+      },
+      [chatModel, hubModel],
+    );
+
+    // Two different models ran, but neither replaced a failure.
+    expect(attempts.swaps).toBe(0);
+    expect(attempts.attempts.map((attempt) => attempt.stage)).toEqual([
+      "draft",
+      "synthesis",
+    ]);
+  });
 });

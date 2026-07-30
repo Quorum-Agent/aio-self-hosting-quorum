@@ -657,6 +657,7 @@ export class Orchestrator {
         this.#recordSuccess(provider);
         attempts.push({
           modelId: provider.model.id,
+          ...(drafting ? { stage: "draft" as const } : {}),
           route: provider.model.location,
           status: "completed",
           contextMayHaveBeenTransmitted: provider.model.location === "cloud",
@@ -675,6 +676,7 @@ export class Orchestrator {
           : "Model execution failed.";
       attempts.push({
         modelId: provider.model.id,
+        ...(drafting ? { stage: "draft" as const } : {}),
         route: provider.model.location,
         status: "failed",
         contextMayHaveBeenTransmitted: provider.model.location === "cloud",
@@ -840,6 +842,7 @@ export class Orchestrator {
         this.#recordSuccess(hubProvider);
         attempts.push({
           modelId: hubProvider.model.id,
+          stage: "synthesis",
           route: hubProvider.model.location,
           status: "completed",
           contextMayHaveBeenTransmitted:
@@ -851,6 +854,7 @@ export class Orchestrator {
           error instanceof Error ? error.message : "Synthesis failed.";
         attempts.push({
           modelId: hubProvider.model.id,
+          stage: "synthesis",
           route: hubProvider.model.location,
           status: "failed",
           contextMayHaveBeenTransmitted:

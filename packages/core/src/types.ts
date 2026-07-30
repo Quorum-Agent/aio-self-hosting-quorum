@@ -177,6 +177,9 @@ export interface PlanStep {
 
 export interface ExecutionAttempt {
   modelId: Id;
+  // Which pipeline stage ran, when more than one model answers. Absent under
+  // route, where a model change can only mean a fallback.
+  stage?: "draft" | "synthesis";
   route: "local" | "cloud";
   status: "completed" | "failed";
   contextMayHaveBeenTransmitted: boolean;

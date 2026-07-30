@@ -34,6 +34,7 @@ export interface CloudUsageView {
 export interface ModelAttemptView {
   modelId: string;
   label: string;
+  stage?: ExecutionAttempt["stage"];
   route: ExecutionAttempt["route"];
   status: ExecutionAttempt["status"] | "selected";
   detail?: string;
@@ -214,6 +215,7 @@ export function describeModelAttempts(
       label:
         models.find((model) => model.id === attempt.modelId)?.label ??
         attempt.modelId,
+      ...(attempt.stage ? { stage: attempt.stage } : {}),
       route: attempt.route,
       status: attempt.status,
       ...(attempt.detail ? { detail: attempt.detail } : {}),
@@ -233,13 +235,14 @@ export function describeModelAttempts(
     });
   }
 
-  const swaps = attempts.reduce(
-    (total, attempt, index) =>
-      index > 0 && attempts[index - 1]?.modelId !== attempt.modelId
-        ? total + 1
-        : total,
-    0,
-  );
+  // A swap is one model standing in for another that failed. Handing a
+  // finished draft to a hub is a pipeline stage, not a swap, so only count a
+  // model change that followed a failure.
+  const swaps = attempts.reduce((total, attempt, index) => {
+    const previous = index > 0 ? attempts[index - 1] : undefined;
+    if (!previous || previous.modelId === attempt.modelId) return total;
+    return previous.status === "failed" ? total + 1 : total;
+  }, 0);
 
   return {
     attempts,

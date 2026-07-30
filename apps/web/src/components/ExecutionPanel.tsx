@@ -248,6 +248,7 @@ export function ExecutionPanel({
                   <div>
                     <strong>{attempt.label}</strong>
                     <span>
+                      {attempt.stage ? `${attempt.stage} · ` : ""}
                       {attempt.route} · {attempt.status}
                       {attempt.contextMayHaveBeenTransmitted
                         ? " · context may have left device"
