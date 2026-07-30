@@ -46,8 +46,14 @@ function inlineMarkdown(value: string): ReactNode[] {
   return parts;
 }
 
+const COPY_LABELS = {
+  idle: "Copy",
+  copied: "Copied",
+  failed: "Copy failed",
+} as const;
+
 function CodeBlock({ code, language }: { code: string; language?: string }) {
-  const [copied, setCopied] = useState(false);
+  const [status, setStatus] = useState<keyof typeof COPY_LABELS>("idle");
   return (
     <div className="markdown-code">
       <div>
@@ -56,15 +62,14 @@ function CodeBlock({ code, language }: { code: string; language?: string }) {
           type="button"
           onClick={() => {
             void copyText(code).then((copiedToClipboard) => {
-              if (!copiedToClipboard) return;
-              setCopied(true);
-              window.setTimeout(() => setCopied(false), 1_500);
+              setStatus(copiedToClipboard ? "copied" : "failed");
+              window.setTimeout(() => setStatus("idle"), 1_500);
             });
           }}
           aria-label="Copy code"
         >
-          {copied ? <Check size={14} /> : <Copy size={14} />}
-          {copied ? "Copied" : "Copy"}
+          {status === "copied" ? <Check size={14} /> : <Copy size={14} />}
+          <span aria-live="polite">{COPY_LABELS[status]}</span>
         </button>
       </div>
       <pre>

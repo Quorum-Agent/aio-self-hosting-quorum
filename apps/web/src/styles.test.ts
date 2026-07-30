@@ -12,6 +12,28 @@ function declarations(selector: string): string {
   return match[1].replace(/\s+/g, " ").trim();
 }
 
+function mediaBlock(query: string): string {
+  const start = styles.indexOf(`@media ${query}`);
+  if (start < 0) throw new Error(`Missing media query ${query}`);
+  const open = styles.indexOf("{", start);
+  let depth = 0;
+  for (let index = open; index < styles.length; index += 1) {
+    if (styles[index] === "{") depth += 1;
+    else if (styles[index] === "}") {
+      depth -= 1;
+      if (depth === 0) return styles.slice(open + 1, index);
+    }
+  }
+  throw new Error(`Unterminated media query ${query}`);
+}
+
+function declarationsWithin(block: string, selector: string): string {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = block.match(new RegExp(`${escaped}[^{}]*\\{([^}]*)\\}`));
+  if (!match?.[1]) throw new Error(`Missing CSS rule for ${selector}`);
+  return match[1].replace(/\s+/g, " ").trim();
+}
+
 describe("conversation layout", () => {
   it("constrains the application grid to the viewport", () => {
     expect(declarations(".app-shell")).toContain(
@@ -34,6 +56,28 @@ describe("conversation layout", () => {
 
   it("wraps long generated content instead of widening the viewport", () => {
     expect(declarations(".message p")).toContain("overflow-wrap: anywhere;");
+  });
+});
+
+describe("mobile layout", () => {
+  const mobile = mediaBlock("(max-width: 840px)");
+
+  it("takes the side panels out of the grid flow", () => {
+    expect(declarationsWithin(mobile, ".sidebar")).toContain(
+      "position: fixed;",
+    );
+    expect(declarationsWithin(mobile, ".execution-panel")).toContain(
+      "position: fixed;",
+    );
+  });
+
+  it("leaves the main column a full-width track to occupy", () => {
+    // With both panels fixed, .main is the only in-flow grid child. A leading
+    // zero-width track would swallow it and blank the page, since .main also
+    // sets overflow: hidden.
+    const shell = declarationsWithin(mobile, ".app-shell");
+    expect(shell).toContain("grid-template-columns: minmax(0, 1fr);");
+    expect(shell).not.toMatch(/grid-template-columns:\s*0\b/);
   });
 });
 
