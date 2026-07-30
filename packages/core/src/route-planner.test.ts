@@ -235,6 +235,30 @@ describe("RoutePlanner", () => {
     expect(plan.rationale).toContain("coding specialist");
   });
 
+  it("routes architecture trade-off analysis to the reasoning expert", () => {
+    const reasoningExpert: ModelDescriptor = {
+      ...localModel,
+      id: "local:reasoning:qwen3.5",
+      label: "Reasoning expert",
+      capabilities: ["chat", "reasoning"],
+      specialties: ["reasoning"],
+      qualityRating: 55,
+    };
+
+    const plan = planner.plan(
+      compiler.compile(
+        request(
+          "quality",
+          "Compare a modular architecture with a monolith for a local-first assistant, then recommend a practical starting point.",
+        ),
+      ),
+      [localModel, reasoningExpert],
+    );
+
+    expect(plan.modelId).toBe(reasoningExpert.id);
+    expect(plan.rationale).toContain("reasoning specialist");
+  });
+
   it("uses the in-process scaffold transparently when no model has the capability", () => {
     const scaffold = new DemoProvider().model;
     const plan = planner.plan(

@@ -17,7 +17,8 @@ export function MessageExecutionActivity({
   if (
     message.role !== "assistant" ||
     !execution ||
-    execution.plan.verbosity !== "detailed"
+    (execution.plan.verbosity !== "detailed" &&
+      !execution.plan.webSearch)
   ) {
     return null;
   }
@@ -30,7 +31,7 @@ export function MessageExecutionActivity({
       busy={false}
       startedAt={execution.startedAt}
       completedAt={execution.completedAt}
-      defaultExpanded={defaultExpanded}
+      defaultExpanded={defaultExpanded || Boolean(execution.plan.webSearch)}
     />
   );
 }

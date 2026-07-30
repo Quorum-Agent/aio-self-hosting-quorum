@@ -6,6 +6,7 @@ interface ComposerProps {
   busy: boolean;
   disabled?: boolean;
   disabledReason?: string;
+  networkNotice: string;
   onChange: (value: string) => void;
   onSend: () => void;
   onStop: () => void;
@@ -16,6 +17,7 @@ export function Composer({
   busy,
   disabled = false,
   disabledReason = "Preparing local models…",
+  networkNotice,
   onChange,
   onSend,
   onStop,
@@ -41,7 +43,7 @@ export function Composer({
           placeholder={
             disabled
               ? disabledReason
-              : "Ask anything. Quorum routes it privately."
+              : "Ask anything. Quorum shows how it routes."
           }
           onChange={(event) => onChange(event.target.value)}
           onKeyDown={handleKeyDown}
@@ -65,7 +67,7 @@ export function Composer({
         </div>
       </div>
       <p className="composer-note">
-        Local by default <span>·</span> You control when data leaves this device
+        Local by default <span>·</span> {networkNotice}
       </p>
     </div>
   );

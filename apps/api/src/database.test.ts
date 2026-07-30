@@ -112,6 +112,41 @@ describe("QuorumDatabase", () => {
     reopened.close();
   });
 
+  it("updates a write-ahead execution message only within its conversation", () => {
+    const directory = mkdtempSync(join(tmpdir(), "quorum-"));
+    temporaryDirectories.push(directory);
+    const database = new QuorumDatabase(directory);
+    database.createConversation("conversation-1", "Web research");
+    database.saveMessage("conversation-1", {
+      id: "message-1",
+      role: "assistant",
+      content: "Web search started.",
+      createdAt: new Date(3_000).toISOString(),
+      execution: executionRecord(),
+    });
+
+    database.updateMessage("conversation-1", {
+      id: "message-1",
+      role: "assistant",
+      content: "Web research completed.",
+      createdAt: new Date(3_000).toISOString(),
+      execution: executionRecord(),
+    });
+
+    expect(database.listMessages("conversation-1")[0]?.content).toBe(
+      "Web research completed.",
+    );
+    expect(() =>
+      database.updateMessage("another-conversation", {
+        id: "message-1",
+        role: "assistant",
+        content: "Must not overwrite.",
+        createdAt: new Date(3_000).toISOString(),
+      }),
+    ).toThrow("not found in this conversation");
+    database.close();
+  });
+
   it("migrates an existing message table without losing history", () => {
     const directory = mkdtempSync(join(tmpdir(), "quorum-"));
     temporaryDirectories.push(directory);

@@ -170,4 +170,27 @@ export class QuorumDatabase {
       throw error;
     }
   }
+
+  updateMessage(conversationId: string, message: ChatMessage): void {
+    const result = this.#database
+      .prepare(
+        `UPDATE messages
+         SET role = ?, content = ?, created_at = ?, execution_json = ?
+         WHERE id = ? AND conversation_id = ?`,
+      )
+      .run(
+        message.role,
+        message.content,
+        message.createdAt,
+        message.execution ? JSON.stringify(message.execution) : null,
+        message.id,
+        conversationId,
+      );
+    if (result.changes !== 1) {
+      throw new Error("The message to update was not found in this conversation.");
+    }
+    this.#database
+      .prepare("UPDATE conversations SET updated_at = ? WHERE id = ?")
+      .run(new Date().toISOString(), conversationId);
+  }
 }

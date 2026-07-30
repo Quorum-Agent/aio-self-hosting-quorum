@@ -6,6 +6,7 @@ import {
   Cpu,
   LoaderCircle,
   Monitor,
+  Search,
   ShieldCheck,
   X,
 } from "lucide-react";
@@ -57,6 +58,7 @@ export function ExecutionPanel({
   onClose,
 }: ExecutionPanelProps) {
   const selectedModel = models.find((model) => model.id === plan?.modelId);
+  const modelRan = (plan?.attempts?.length ?? 0) > 0;
   const cloudUsage = describeCloudUsage(plan, models);
   const modelAttempts = describeModelAttempts(plan, models);
   const inspectedVerbosity = plan?.verbosity ?? verbosity;
@@ -153,9 +155,36 @@ export function ExecutionPanel({
         </p>
       </section>
 
+      {plan?.webSearch && (
+        <section className="panel-section web-search-summary">
+          <div className="section-title">
+            <span>Web search</span>
+            <small>{plan.webSearch.provider}</small>
+          </div>
+          <div className="web-search-query">
+            <Search size={13} />
+            <span>{plan.webSearch.query}</span>
+          </div>
+          <ol className="web-source-list">
+            {plan.webSearch.sources.map((source, index) => (
+              <li key={`${source.url}-${index}`}>
+                <a href={source.url} target="_blank" rel="noreferrer">
+                  [{index + 1}] {source.title}
+                </a>
+              </li>
+            ))}
+          </ol>
+          <p>
+            {plan.webSearch.contextMayHaveLeftDevice
+              ? "The search query may have left this device; the answering model route is disclosed separately."
+              : "Search stayed on this device."}
+          </p>
+        </section>
+      )}
+
       <section className="panel-section model-summary">
         <div className="section-title">
-          <span>Model used</span>
+          <span>{modelRan ? "Model used" : "Model planned"}</span>
           <small>{selectedModel?.location ?? "—"}</small>
         </div>
         <strong>{selectedModel?.label ?? "Waiting for request"}</strong>

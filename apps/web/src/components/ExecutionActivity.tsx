@@ -4,6 +4,7 @@ import {
   Circle,
   LoaderCircle,
   Repeat2,
+  Search,
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -121,11 +122,35 @@ export function ExecutionActivity({
             <Repeat2 size={13} />
             <div>
               <strong>
-                {modelAttempts.swaps === 0
+                {!busy && (plan.attempts?.length ?? 0) === 0
+                  ? "Model did not run"
+                  : modelAttempts.swaps === 0
                   ? "No model swap"
                   : `${modelAttempts.swaps} model swap${modelAttempts.swaps === 1 ? "" : "s"}`}
               </strong>
               <span>{plan.rationale}</span>
+            </div>
+          </div>
+        )}
+
+        {plan?.webSearch && (
+          <div className="activity-web-search">
+            <Search size={13} />
+            <div>
+              <strong>Web search via {plan.webSearch.provider}</strong>
+              <span>{plan.webSearch.query}</span>
+              <ol>
+                {plan.webSearch.sources.map((source, index) => (
+                  <li key={`${source.url}-${index}`}>
+                    <a href={source.url} target="_blank" rel="noreferrer">
+                      [{index + 1}] {source.title}
+                    </a>
+                  </li>
+                ))}
+              </ol>
+              {plan.webSearch.contextMayHaveLeftDevice && (
+                <small>The search query may have left this device.</small>
+              )}
             </div>
           </div>
         )}

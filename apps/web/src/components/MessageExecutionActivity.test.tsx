@@ -83,4 +83,33 @@ describe("MessageExecutionActivity", () => {
       ),
     ).toBe("");
   });
+
+  it("keeps web-search sources and egress disclosure in historical activity", () => {
+    const message = historicalMessage("standard");
+    if (!message.execution) throw new Error("Expected execution metadata.");
+    message.execution.plan.webSearch = {
+      provider: "SearXNG",
+      query: "latest Quorum release",
+      contextMayHaveLeftDevice: true,
+      sources: [
+        {
+          title: "Current release",
+          url: "https://example.com/release",
+        },
+      ],
+    };
+
+    const markup = renderToStaticMarkup(
+      <MessageExecutionActivity
+        message={message}
+        models={[]}
+        defaultExpanded
+      />,
+    );
+
+    expect(markup).toContain("Web search via SearXNG");
+    expect(markup).toContain("latest Quorum release");
+    expect(markup).toContain("https://example.com/release");
+    expect(markup).toContain("search query may have left this device");
+  });
 });

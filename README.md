@@ -18,7 +18,7 @@ use an OpenAI-compatible local or cloud model when configured.
 - Four enforced UI policies: Private, Balanced, Best quality, and Offline
 - Contextual request compilation into intents, confidence, and required capabilities
 - Persisted effective-intent handoff across referential conversation turns
-- A local 0.6B prompt expert with deterministic classification safeguards
+- A local 2B prompt expert with deterministic software-taxonomy safeguards
 - Specialty-aware model routing with fail-closed handling for sensitive content
 - A live execution inspector showing steps, route, model, and cloud usage
 - Persistent per-response Detailed activity with timing, classification, steps, and swaps
@@ -28,6 +28,8 @@ use an OpenAI-compatible local or cloud model when configured.
 - Automatic discovery of configured local models and experts
 - Role-aware ready, degraded, and unavailable runtime status
 - Serialized local inference, bounded execution time, circuit breaking, and safe fallback
+- Automatic policy-controlled web search through local SearXNG or Brave Search
+- Source citations and durable search-transmission disclosure, including failed searches
 - Loopback-only local endpoints with redirects disabled
 - Append-only execution attempts so failed cloud contact remains disclosed
 - A deterministic in-process responder when no configured model is available
@@ -35,9 +37,9 @@ use an OpenAI-compatible local or cloud model when configured.
 - Startup warmup for the prompt expert and default general model
 - Native Ollama generation that keeps private thinking separate from visible answers
 
-Attachment, microphone, settings, vision, retrieval, tools, memory, and web execution
-are planned but are not exposed as controls until they are wired. See [Roadmap](#roadmap)
-for the intended order.
+Attachment, microphone, settings, vision, project memory, and general-purpose tool
+execution are planned but are not exposed as controls until they are wired. See
+[Roadmap](#roadmap) for the intended order.
 
 ## Quick start
 
@@ -60,24 +62,24 @@ responder and exposes that decision in the execution panel.
 ### Connect Ollama
 
 The default configuration expects Ollama's OpenAI-compatible endpoint, a `qwen3:4b`
-general model, and a small `qwen3:0.6b` prompt-analysis expert:
+general model, and a `qwen3.5:2b` prompt-analysis and reasoning expert:
 
 ```bash
 ollama pull qwen3:4b
-ollama pull qwen3:0.6b
-```
-
-Two optional text experts can be installed before Quorum starts:
-
-```bash
-ollama pull qwen2.5-coder:1.5b
 ollama pull qwen3.5:2b
 ```
 
+The optional coding expert can be installed before Quorum starts:
+
+```bash
+ollama pull qwen2.5-coder:1.5b
+```
+
 The prompt expert extracts a faithful task summary and intent before routing. Strong
-deterministic signals and sensitive-data detection remain authoritative if the tiny
-model conflicts or fails. Coding work routes to the coding expert, math and logic work
-to the reasoning expert, and ordinary conversation to the general model. Best quality
+deterministic signals, a maintained software vocabulary, and sensitive-data detection
+remain authoritative if the model conflicts or fails. Coding work routes to the coding
+expert, math and logic work to the reasoning expert, and ordinary conversation to the
+general model. Best quality
 still accounts for model quality, but a matching specialist can overcome a small
 static quality gap.
 
@@ -122,6 +124,40 @@ The cloud provider is not registered when the key is blank. Private and Offline 
 never select a cloud model. Requests detected as sensitive never use cloud; when no
 capable local model exists, the in-process scaffold reports the limitation.
 
+### Optional web search
+
+Web search is automatic for requests that need current information or external
+sources. It is not used for ordinary explanation or analysis. Quorum retrieves a
+small bounded source set, passes it to a local model as lower-privilege untrusted
+evidence, appends source links to the answer, and records the provider and sources
+in the execution inspector. Retrieved web data is never forwarded to a cloud model.
+
+For a local-first setup, run a SearXNG instance on this machine, enable JSON output,
+and configure:
+
+```dotenv
+QUORUM_WEB_SEARCH_PROVIDER=searxng
+QUORUM_SEARXNG_BASE_URL=http://127.0.0.1:8080
+```
+
+The SearXNG endpoint is restricted to an explicit loopback address. SearXNG is local,
+but its upstream search requests can still disclose the query; Quorum reports that
+in the inspector.
+
+Alternatively, configure Brave Search:
+
+```dotenv
+QUORUM_WEB_SEARCH_PROVIDER=brave
+QUORUM_BRAVE_SEARCH_API_KEY=your-search-key
+```
+
+No search provider is registered when these values are absent. Private and Offline
+modes never search. Requests detected as sensitive never search. Search calls time
+out after eight seconds, do not follow redirects, allow at most two concurrent and
+30 per minute, and feed only bounded, validated public HTTPS results to a local model.
+Sensitive results are discarded before model routing, and persisted execution records
+store source titles and URLs rather than source snippets.
+
 ## Architecture
 
 ```text
@@ -139,9 +175,9 @@ store                    │
               │                     │
        Request compiler       Route planner
                                     │
-                         ┌──────────┴──────────┐
-                         │                     │
-                 Local providers       Cloud providers
+                  ┌──────┴──────┬─────────────┐
+                  │             │             │
+           Local providers  Web search  Cloud providers
 ```
 
 The core package has no dependency on Fastify, React, Ollama, or a cloud vendor.
@@ -183,6 +219,8 @@ npm test           # routing and persistence tests
 npm run build      # production bundles
 npm run check      # typecheck, test, and build
 npm start          # serve built UI and API on port 8787
+npm run evaluate:prompt -w @quorum/api -- qwen3.5:2b
+                     # benchmark production intent classification and merging
 ```
 
 ## API surface
@@ -201,7 +239,7 @@ npm start          # serve built UI and API on port 8787
 | Mode | Current routing behavior |
 | --- | --- |
 | Private | Local models only |
-| Balanced | Prefer the strongest suitable local model |
+| Balanced | Prefer the strongest suitable local model; search when freshness requires it |
 | Best quality | Select the strongest eligible route using quality plus matched specialization |
 | Offline | In-process providers only; no loopback or remote model calls |
 

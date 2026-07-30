@@ -6,6 +6,7 @@ import type {
   PolicyDefinition,
   PolicyMode,
   ResponseVerbosity,
+  RuntimeToolDescriptor,
 } from "@quorum/core";
 
 export interface ConversationRecord {
@@ -29,6 +30,7 @@ export interface RuntimeInfo {
     }>;
   };
   cloudConfigured: boolean;
+  webSearch?: RuntimeToolDescriptor;
 }
 
 async function readJson<T>(response: Response): Promise<T> {

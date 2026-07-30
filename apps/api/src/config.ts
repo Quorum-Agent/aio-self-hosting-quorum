@@ -29,6 +29,16 @@ export interface PromptAnalyzerConfig {
   contextWindow: number;
 }
 
+export type WebSearchConfig =
+  | {
+      provider: "searxng";
+      baseUrl: string;
+    }
+  | {
+      provider: "brave";
+      apiKey: string;
+    };
+
 function positiveInteger(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
@@ -51,10 +61,53 @@ export interface AppConfig {
     model: string;
     apiKey: string;
   };
+  webSearch?: WebSearchConfig;
 }
 
 export function loadConfig(): AppConfig {
   const cloudApiKey = process.env["QUORUM_CLOUD_API_KEY"]?.trim();
+  const configuredWebProvider =
+    process.env["QUORUM_WEB_SEARCH_PROVIDER"]?.trim().toLowerCase();
+  const searxngBaseUrl = process.env["QUORUM_SEARXNG_BASE_URL"]?.trim();
+  const braveSearchApiKey =
+    process.env["QUORUM_BRAVE_SEARCH_API_KEY"]?.trim();
+  const webProvider =
+    configuredWebProvider ||
+    (searxngBaseUrl ? "searxng" : braveSearchApiKey ? "brave" : undefined);
+  if (
+    webProvider !== undefined &&
+    webProvider !== "searxng" &&
+    webProvider !== "brave"
+  ) {
+    throw new Error(
+      "QUORUM_WEB_SEARCH_PROVIDER must be either searxng or brave.",
+    );
+  }
+  let webSearch: WebSearchConfig | undefined;
+  if (webProvider === "searxng") {
+    if (!searxngBaseUrl) {
+      throw new Error(
+        "QUORUM_SEARXNG_BASE_URL is required when SearXNG web search is enabled.",
+      );
+    }
+    webSearch = {
+      provider: "searxng",
+      baseUrl: normalizeLoopbackBaseUrl(
+        searxngBaseUrl,
+        "QUORUM_SEARXNG_BASE_URL",
+      ),
+    };
+  } else if (webProvider === "brave") {
+    if (!braveSearchApiKey) {
+      throw new Error(
+        "QUORUM_BRAVE_SEARCH_API_KEY is required when Brave web search is enabled.",
+      );
+    }
+    webSearch = {
+      provider: "brave",
+      apiKey: braveSearchApiKey,
+    };
+  }
   const primaryModel = process.env["QUORUM_LOCAL_MODEL"] ?? "qwen3:4b";
   const localModels: LocalModelConfig[] = [
     {
@@ -113,7 +166,7 @@ export function loadConfig(): AppConfig {
       promptAnalyzer: {
         name:
           process.env["QUORUM_LOCAL_PROMPT_MODEL"] ??
-          "qwen3:0.6b",
+          "qwen3.5:2b",
         contextWindow: positiveInteger(
           process.env["QUORUM_LOCAL_PROMPT_CONTEXT_WINDOW"],
           4_096,
@@ -134,5 +187,6 @@ export function loadConfig(): AppConfig {
           },
         }
       : {}),
+    ...(webSearch ? { webSearch } : {}),
   };
 }

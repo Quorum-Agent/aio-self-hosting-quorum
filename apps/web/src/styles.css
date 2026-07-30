@@ -49,7 +49,8 @@ textarea {
 
 button:focus-visible,
 select:focus-visible,
-textarea:focus-visible {
+textarea:focus-visible,
+a:focus-visible {
   outline: 2px solid #5f8f70;
   outline-offset: 2px;
 }
@@ -666,6 +667,46 @@ button {
   line-height: 1.45;
 }
 
+.activity-web-search {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 7px;
+  align-items: start;
+  padding-top: 3px;
+}
+
+.activity-web-search > svg {
+  margin-top: 1px;
+  color: #64806b;
+}
+
+.activity-web-search strong,
+.activity-web-search span,
+.activity-web-search small {
+  display: block;
+}
+
+.activity-web-search span,
+.activity-web-search small {
+  margin-top: 2px;
+  color: #92978f;
+  font-size: 10px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.activity-web-search ol {
+  margin: 5px 0 0;
+  padding-left: 15px;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.activity-web-search a {
+  color: #4d7059;
+  overflow-wrap: anywhere;
+}
+
 .activity-boundary {
   margin: 10px 0 0;
   color: #a0a49c;
@@ -778,7 +819,7 @@ button {
 .composer-note {
   margin: 7px 0 0;
   color: #9b9f97;
-  font-size: 8px;
+  font-size: 10px;
   text-align: center;
   letter-spacing: 0.02em;
 }
@@ -1060,6 +1101,45 @@ button {
   margin-top: 3px;
   color: #999d95;
   font-size: 9px;
+}
+
+.web-search-query {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  color: #626860;
+  font-size: 10px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.web-search-query span {
+  min-width: 0;
+}
+
+.web-search-query svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.web-source-list {
+  margin: 8px 0 0;
+  padding-left: 17px;
+  color: #777d74;
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.web-source-list a {
+  color: #4d7059;
+  overflow-wrap: anywhere;
+}
+
+.web-search-summary > p {
+  margin: 7px 0 0;
+  color: #8e938a;
+  font-size: 10px;
+  line-height: 1.45;
 }
 
 .attempt-list {

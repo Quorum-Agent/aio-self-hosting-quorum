@@ -15,6 +15,11 @@ const originalGeneralContext = process.env["QUORUM_LOCAL_CONTEXT_WINDOW"];
 const originalLocalBaseUrl = process.env["QUORUM_LOCAL_BASE_URL"];
 const originalCloudBaseUrl = process.env["QUORUM_CLOUD_BASE_URL"];
 const originalCloudApiKey = process.env["QUORUM_CLOUD_API_KEY"];
+const originalWebSearchProvider =
+  process.env["QUORUM_WEB_SEARCH_PROVIDER"];
+const originalSearxngBaseUrl = process.env["QUORUM_SEARXNG_BASE_URL"];
+const originalBraveSearchApiKey =
+  process.env["QUORUM_BRAVE_SEARCH_API_KEY"];
 
 afterEach(() => {
   const variables = [
@@ -29,6 +34,9 @@ afterEach(() => {
     ["QUORUM_LOCAL_BASE_URL", originalLocalBaseUrl],
     ["QUORUM_CLOUD_BASE_URL", originalCloudBaseUrl],
     ["QUORUM_CLOUD_API_KEY", originalCloudApiKey],
+    ["QUORUM_WEB_SEARCH_PROVIDER", originalWebSearchProvider],
+    ["QUORUM_SEARXNG_BASE_URL", originalSearxngBaseUrl],
+    ["QUORUM_BRAVE_SEARCH_API_KEY", originalBraveSearchApiKey],
   ] as const;
 
   for (const [name, value] of variables) {
@@ -78,7 +86,7 @@ describe("loadConfig", () => {
       }),
     ]);
     expect(config.local.promptAnalyzer).toEqual({
-      name: "qwen3:0.6b",
+      name: "qwen3.5:2b",
       contextWindow: 4_096,
     });
     expect(config.local.warmOnStartup).toBe(true);
@@ -145,6 +153,43 @@ describe("loadConfig", () => {
 
     expect(() => loadConfig()).toThrow(
       "QUORUM_CLOUD_BASE_URL must use HTTPS",
+    );
+  });
+
+  it("configures a loopback SearXNG search provider", () => {
+    process.env["QUORUM_WEB_SEARCH_PROVIDER"] = "searxng";
+    process.env["QUORUM_SEARXNG_BASE_URL"] = "http://127.0.0.1:8080";
+
+    expect(loadConfig().webSearch).toEqual({
+      provider: "searxng",
+      baseUrl: "http://127.0.0.1:8080",
+    });
+  });
+
+  it("rejects a remote SearXNG endpoint configured as local", () => {
+    process.env["QUORUM_WEB_SEARCH_PROVIDER"] = "searxng";
+    process.env["QUORUM_SEARXNG_BASE_URL"] = "https://search.example.com";
+
+    expect(() => loadConfig()).toThrow(
+      "QUORUM_SEARXNG_BASE_URL must resolve explicitly to localhost",
+    );
+  });
+
+  it("configures Brave Search only when its API key is present", () => {
+    process.env["QUORUM_WEB_SEARCH_PROVIDER"] = "brave";
+    process.env["QUORUM_BRAVE_SEARCH_API_KEY"] = "search-key";
+
+    expect(loadConfig().webSearch).toEqual({
+      provider: "brave",
+      apiKey: "search-key",
+    });
+  });
+
+  it("rejects an unknown web-search provider", () => {
+    process.env["QUORUM_WEB_SEARCH_PROVIDER"] = "mystery";
+
+    expect(() => loadConfig()).toThrow(
+      "QUORUM_WEB_SEARCH_PROVIDER must be either searxng or brave",
     );
   });
 });

@@ -9,6 +9,7 @@ import {
   type ChatMessage,
   type ExecutionTrace,
   type OrchestrationEvent,
+  type TaskPlan,
 } from "@quorum/core";
 import Fastify from "fastify";
 import { z } from "zod";
@@ -57,6 +58,7 @@ export async function buildServer(config: AppConfig, runtime: QuorumRuntime) {
     localRuntime: runtime.localRuntime,
     warmup: runtime.warmupStatus,
     cloudConfigured: runtime.cloudConfigured,
+    webSearch: runtime.webSearch,
   }));
 
   app.get("/api/runtime", async () => ({
@@ -65,6 +67,7 @@ export async function buildServer(config: AppConfig, runtime: QuorumRuntime) {
     localRuntime: runtime.localRuntime,
     warmup: runtime.warmupStatus,
     cloudConfigured: runtime.cloudConfigured,
+    webSearch: runtime.webSearch,
   }));
 
   app.get("/api/conversations", async () => ({
@@ -134,6 +137,37 @@ export async function buildServer(config: AppConfig, runtime: QuorumRuntime) {
     reply.raw.on("close", () => controller.abort());
     const executionStartedAt = Date.now();
     const executionTraces = new Map<string, ExecutionTrace>();
+    let latestPlan: TaskPlan | undefined;
+    let streamedContent = "";
+    let webAuditMessageId: string | undefined;
+    let webAuditCreatedAt: string | undefined;
+    const writeIfOpen = (event: OrchestrationEvent) => {
+      if (!reply.raw.destroyed) writeEvent(reply.raw, event);
+    };
+    const executionMessage = (
+      plan: TaskPlan,
+      content: string,
+      source?: ChatMessage,
+    ): ChatMessage => ({
+      id: webAuditMessageId ?? source?.id ?? randomUUID(),
+      role: "assistant",
+      content,
+      createdAt:
+        webAuditCreatedAt ?? source?.createdAt ?? new Date().toISOString(),
+      execution: {
+        plan,
+        traces: [...executionTraces.values()],
+        startedAt: executionStartedAt,
+        completedAt: Date.now(),
+      },
+    });
+    const persistExecutionMessage = (message: ChatMessage) => {
+      if (webAuditMessageId) {
+        database.updateMessage(body.conversationId, message);
+      } else {
+        database.saveMessage(body.conversationId, message);
+      }
+    };
 
     try {
       for await (const event of runtime.orchestrator.run(
@@ -141,20 +175,51 @@ export async function buildServer(config: AppConfig, runtime: QuorumRuntime) {
         controller.signal,
       )) {
         if (event.type === "trace") {
-          executionTraces.set(event.trace.stepId, event.trace);
+          const existing = executionTraces.get(event.trace.stepId);
+          executionTraces.set(
+            event.trace.stepId,
+            existing && event.trace.status !== "running"
+              ? { ...event.trace, startedAt: existing.startedAt }
+              : event.trace,
+          );
+        }
+        if (event.type === "delta") {
+          streamedContent += event.content;
+        }
+        if (event.type === "plan") {
+          latestPlan = event.plan;
+          if (
+            event.plan.webSearch?.contextMayHaveLeftDevice &&
+            !webAuditMessageId
+          ) {
+            webAuditMessageId = randomUUID();
+            webAuditCreatedAt = new Date().toISOString();
+            database.saveMessage(
+              body.conversationId,
+              executionMessage(
+                event.plan,
+                "Web search started. No terminal execution record was received.",
+              ),
+            );
+          } else if (webAuditMessageId) {
+            database.updateMessage(
+              body.conversationId,
+              executionMessage(
+                event.plan,
+                "Web search started. No terminal execution record was received.",
+              ),
+            );
+          }
         }
         if (event.type === "result") {
-          const persistedMessage: ChatMessage = {
-            ...event.result.message,
-            execution: {
-              plan: event.result.plan,
-              traces: [...executionTraces.values()],
-              startedAt: executionStartedAt,
-              completedAt: Date.now(),
-            },
-          };
-          database.saveMessage(body.conversationId, persistedMessage);
-          writeEvent(reply.raw, {
+          latestPlan = event.result.plan;
+          const persistedMessage = executionMessage(
+            event.result.plan,
+            event.result.message.content,
+            event.result.message,
+          );
+          persistExecutionMessage(persistedMessage);
+          writeIfOpen({
             ...event,
             result: {
               ...event.result,
@@ -163,14 +228,49 @@ export async function buildServer(config: AppConfig, runtime: QuorumRuntime) {
           });
           continue;
         }
-        writeEvent(reply.raw, event);
+        if (event.type === "error" && event.plan) {
+          latestPlan = event.plan;
+          const persistedMessage = executionMessage(
+            event.plan,
+            event.partialContent
+              ? `${event.partialContent}\n\n[Generation stopped: ${event.message}]`
+              : `Request failed: ${event.message}`,
+          );
+          persistExecutionMessage(persistedMessage);
+          writeIfOpen({
+            ...event,
+            executionMessage: persistedMessage,
+          });
+          continue;
+        }
+        writeIfOpen(event);
       }
     } catch (error) {
-      writeEvent(reply.raw, {
-        type: "error",
-        message: error instanceof Error ? error.message : "Unexpected orchestration failure.",
-        recoverable: true,
-      });
+      const message =
+        error instanceof Error ? error.message : "Unexpected orchestration failure.";
+      if (latestPlan) {
+        const persistedMessage = executionMessage(
+          latestPlan,
+          streamedContent
+            ? `${streamedContent}\n\n[Generation stopped: ${message}]`
+            : `Request failed: ${message}`,
+        );
+        persistExecutionMessage(persistedMessage);
+        writeIfOpen({
+          type: "error",
+          message,
+          recoverable: true,
+          plan: latestPlan,
+          ...(streamedContent ? { partialContent: streamedContent } : {}),
+          executionMessage: persistedMessage,
+        });
+      } else {
+        writeIfOpen({
+          type: "error",
+          message,
+          recoverable: true,
+        });
+      }
     } finally {
       if (!reply.raw.destroyed) reply.raw.end();
     }

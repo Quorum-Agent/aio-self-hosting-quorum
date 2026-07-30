@@ -96,6 +96,42 @@ describe("runtime view", () => {
     });
   });
 
+  it("surfaces configured web search without adding a nonfunctional control", () => {
+    expect(
+      describeRuntimeStatus(
+        status("ready", true, ["general", "coding", "reasoning"]),
+        false,
+        undefined,
+        {
+          id: "web-search:searxng",
+          label: "SearXNG",
+          capabilities: ["web"],
+          location: "local",
+          available: true,
+          contextMayLeaveDevice: true,
+        },
+      ).detail,
+    ).toBe("general, coding, reasoning, web search configured");
+  });
+
+  it("keeps web-search availability visible when optional local roles are degraded", () => {
+    expect(
+      describeRuntimeStatus(
+        status("degraded", true, ["general", "coding"]),
+        false,
+        undefined,
+        {
+          id: "web-search:searxng",
+          label: "SearXNG",
+          capabilities: ["web"],
+          location: "local",
+          available: true,
+          contextMayLeaveDevice: true,
+        },
+      ).detail,
+    ).toContain("web search configured");
+  });
+
   it("shows the model currently warming before claiming readiness", () => {
     expect(
       describeRuntimeStatus(
@@ -218,6 +254,41 @@ describe("runtime view", () => {
       selected: false,
       contacted: true,
       text: "Contacted Cloud test; final route local",
+    });
+  });
+
+  it("discloses web-search transmission when the answering model stayed local", () => {
+    const usage = describeCloudUsage(
+      {
+        id: "plan",
+        requestId: "request",
+        policy: "balanced",
+        analysis: requestAnalysis,
+        route: "local",
+        modelId: chatModel.id,
+        verbosity: "standard",
+        rationale: "Search first, answer locally.",
+        steps: [],
+        webSearch: {
+          provider: "SearXNG",
+          query: "latest release",
+          contextMayHaveLeftDevice: true,
+          sources: [
+            {
+              title: "Release",
+              url: "https://example.com/release",
+            },
+          ],
+        },
+      },
+      [chatModel],
+    );
+
+    expect(usage).toEqual({
+      activity: true,
+      selected: false,
+      contacted: true,
+      text: "Web search via SearXNG; planned model route local",
     });
   });
 

@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch --conditions=development src/index.ts",
+    "evaluate:prompt": "tsx --conditions=development src/prompt-analyzer-evaluation.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",

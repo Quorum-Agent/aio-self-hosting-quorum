@@ -69,6 +69,7 @@ const STARTERS: Array<{
 ];
 
 const VERBOSITY_STORAGE_KEY = "quorum:response-verbosity";
+const POLICY_STORAGE_KEY = "quorum:execution-policy";
 
 function savedVerbosity(): ResponseVerbosity {
   const saved = window.localStorage.getItem(VERBOSITY_STORAGE_KEY);
@@ -77,6 +78,16 @@ function savedVerbosity(): ResponseVerbosity {
     saved === "detailed"
     ? saved
     : "standard";
+}
+
+function savedPolicy(): PolicyMode {
+  const saved = window.localStorage.getItem(POLICY_STORAGE_KEY);
+  return saved === "private" ||
+    saved === "balanced" ||
+    saved === "quality" ||
+    saved === "offline"
+    ? saved
+    : "balanced";
 }
 
 function createConversationId() {
@@ -89,7 +100,11 @@ function coalesceTrace(
 ): ExecutionTrace[] {
   const existingIndex = traces.findIndex((trace) => trace.stepId === incoming.stepId);
   if (existingIndex < 0) return [...traces, incoming];
-  return traces.map((trace, index) => (index === existingIndex ? incoming : trace));
+  return traces.map((trace, index) =>
+    index === existingIndex
+      ? { ...incoming, startedAt: trace.startedAt }
+      : trace,
+  );
 }
 
 export default function App() {
@@ -100,7 +115,7 @@ export default function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [streamingContent, setStreamingContent] = useState("");
-  const [policy, setPolicy] = useState<PolicyMode>("balanced");
+  const [policy, setPolicy] = useState<PolicyMode>(savedPolicy);
   const [verbosity, setVerbosity] =
     useState<ResponseVerbosity>(savedVerbosity);
   const [plan, setPlan] = useState<TaskPlan>();
@@ -115,6 +130,9 @@ export default function App() {
   );
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const abortController = useRef<AbortController | undefined>(undefined);
+  const streamingContentRef = useRef("");
+  const conversationElement = useRef<HTMLElement | null>(null);
+  const followOutput = useRef(true);
 
   const refreshConversations = useCallback(async () => {
     setConversations(await getConversations());
@@ -158,6 +176,16 @@ export default function App() {
   }, [verbosity]);
 
   useEffect(() => {
+    window.localStorage.setItem(POLICY_STORAGE_KEY, policy);
+  }, [policy]);
+
+  useEffect(() => {
+    const element = conversationElement.current;
+    if (!element || !followOutput.current) return;
+    element.scrollTop = element.scrollHeight;
+  }, [error, messages, streamingContent]);
+
+  useEffect(() => {
     const interval = window.setInterval(() => {
       void refreshRuntime().catch(() => setRuntimeFailed(true));
     }, runtime?.warmup.state === "warming" ? 1_000 : 5_000);
@@ -181,6 +209,7 @@ export default function App() {
         runtime?.localRuntime,
         runtimeFailed,
         runtime?.warmup,
+        runtime?.webSearch,
       ),
     [runtime, runtimeFailed],
   );
@@ -200,6 +229,13 @@ export default function App() {
   );
   const runtimeWarming = runtime?.warmup.state === "warming";
   const runtimePreparing = !runtime || runtimeWarming;
+  const networkNotice = !activePolicy
+    ? "Checking network policy"
+    : !activePolicy.allowNetwork
+      ? `${activePolicy.label} keeps network access disabled`
+      : runtime?.webSearch?.available
+        ? `${activePolicy.label} may search the web automatically when current sources are needed`
+        : "Web search is not configured";
   const latestExecutionMessageId = useMemo(
     () =>
       [...messages]
@@ -230,6 +266,7 @@ export default function App() {
     setConversationId(createConversationId());
     setMessages([]);
     setStreamingContent("");
+    streamingContentRef.current = "";
     setDraft("");
     setPlan(undefined);
     setTraces([]);
@@ -252,11 +289,13 @@ export default function App() {
     };
     const nextMessages = [...messages, userMessage];
     const controller = new AbortController();
+    const requestStartedAt = Date.now();
     abortController.current = controller;
 
     setMessages(nextMessages);
     setDraft("");
     setStreamingContent("");
+    streamingContentRef.current = "";
     setPlan(undefined);
     setTraces([]);
     setActivityStartedAt(Date.now());
@@ -264,7 +303,8 @@ export default function App() {
     setActivityMessageId(undefined);
     setError(undefined);
     setBusy(true);
-    setExecutionOpen(true);
+    followOutput.current = true;
+    setExecutionOpen(window.matchMedia("(min-width: 841px)").matches);
 
     try {
       await streamChat(
@@ -276,6 +316,7 @@ export default function App() {
         },
         (event) => {
           if (event.type === "delta") {
+            streamingContentRef.current += event.content;
             setStreamingContent((current) => current + event.content);
           } else if (event.type === "trace") {
             setTraces((current) => coalesceTrace(current, event.trace));
@@ -284,26 +325,82 @@ export default function App() {
           } else if (event.type === "result") {
             setMessages((current) => [...current, event.result.message]);
             setStreamingContent("");
+            streamingContentRef.current = "";
             setActivityCompletedAt(Date.now());
             setActivityMessageId(event.result.message.id);
           } else if (event.type === "error") {
+            if (event.executionMessage) {
+              const executionMessage = event.executionMessage;
+              setMessages((current) => [
+                ...current,
+                executionMessage,
+              ]);
+              setPlan(executionMessage.execution?.plan ?? event.plan);
+              setActivityMessageId(executionMessage.id);
+              setError(undefined);
+            } else {
+              setError(event.message);
+            }
             setStreamingContent("");
-            setError(event.message);
+            streamingContentRef.current = "";
             setActivityCompletedAt(Date.now());
           }
         },
         controller.signal,
       );
-      await refreshConversations();
     } catch (reason) {
-      if (!controller.signal.aborted) {
+      if (controller.signal.aborted) {
+        let reconciled = false;
+        for (let attempt = 0; attempt < 10; attempt += 1) {
+          await new Promise((resolve) => window.setTimeout(resolve, 100));
+          let persistedMessages: ChatMessage[];
+          try {
+            persistedMessages = await getMessages(conversationId);
+          } catch {
+            break;
+          }
+          const savedExecution = [...persistedMessages]
+            .reverse()
+            .find(
+              (message) =>
+                message.role === "assistant" &&
+                message.execution &&
+                message.execution.startedAt >= requestStartedAt &&
+                !message.content.includes(
+                  "No terminal execution record was received.",
+                ),
+            );
+          if (!savedExecution?.execution) continue;
+          setMessages(persistedMessages);
+          setPlan(savedExecution.execution.plan);
+          setTraces(savedExecution.execution.traces);
+          setActivityStartedAt(savedExecution.execution.startedAt);
+          setActivityCompletedAt(savedExecution.execution.completedAt);
+          setActivityMessageId(savedExecution.id);
+          setError(undefined);
+          setStreamingContent("");
+          streamingContentRef.current = "";
+          reconciled = true;
+          break;
+        }
+        if (!reconciled) {
+          const partial = streamingContentRef.current;
+          setStreamingContent(
+            partial
+              ? `${partial}\n\n[Stopped locally; saved history is still synchronizing.]`
+              : "",
+          );
+          setError("Stopped. Quorum could not yet confirm the saved execution record.");
+        }
+      } else {
         setError(reason instanceof Error ? reason.message : "The request failed.");
+        setStreamingContent("");
+        streamingContentRef.current = "";
       }
-      setStreamingContent("");
       setActivityCompletedAt(Date.now());
     } finally {
       try {
-        await refreshRuntime();
+        await Promise.all([refreshRuntime(), refreshConversations()]);
       } catch {
         setRuntimeFailed(true);
       }
@@ -377,7 +474,7 @@ export default function App() {
               </select>
               <ChevronDown size={14} />
             </label>
-            <label className="policy-select">
+            <label className="policy-select" title={activePolicy?.description}>
               {policy === "offline" ? <WifiOff size={15} /> : <Shield size={15} />}
               <select
                 value={policy}
@@ -388,6 +485,9 @@ export default function App() {
                 {selectablePolicies(runtime?.policies ?? []).map((definition) => (
                   <option key={definition.id} value={definition.id}>
                     {definition.label}
+                    {definition.allowNetwork && runtime?.webSearch?.available
+                      ? " · web when needed"
+                      : ""}
                   </option>
                 ))}
                 {!runtime && <option value="balanced">Balanced</option>}
@@ -407,7 +507,18 @@ export default function App() {
           </div>
         </header>
 
-        <section className={`conversation ${messages.length === 0 ? "is-empty" : ""}`}>
+        <section
+          ref={conversationElement}
+          className={`conversation ${messages.length === 0 ? "is-empty" : ""}`}
+          onScroll={(event) => {
+            const element = event.currentTarget;
+            followOutput.current =
+              element.scrollHeight -
+                element.scrollTop -
+                element.clientHeight <
+              120;
+          }}
+        >
           {messages.length === 0 ? (
             <div className="welcome">
               <div className="welcome-mark">
@@ -472,7 +583,12 @@ export default function App() {
               ))}
               {!activityMessageId && detailedActivity}
               {streamingContent && (
-                <article className="message message-assistant is-streaming">
+                <article
+                  className="message message-assistant is-streaming"
+                  role="status"
+                  aria-live="polite"
+                  aria-atomic="false"
+                >
                   <div className="message-avatar">
                     <Sparkles size={15} />
                   </div>
@@ -500,6 +616,7 @@ export default function App() {
               ? "Warming local models…"
               : "Connecting to Quorum…"
           }
+          networkNotice={networkNotice}
           onChange={setDraft}
           onSend={() => void send()}
           onStop={() => abortController.current?.abort()}

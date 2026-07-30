@@ -180,6 +180,12 @@ export interface TaskPlan {
   fallbackFromModelId?: Id;
   attempts?: ExecutionAttempt[];
   cloudDisclosure?: string;
+  webSearch?: {
+    provider: string;
+    query: string;
+    contextMayHaveLeftDevice: boolean;
+    sources: WebSearchSource[];
+  };
 }
 
 export type TraceStatus = "pending" | "running" | "completed" | "failed";
@@ -224,16 +230,56 @@ export type OrchestrationEvent =
   | { type: "plan"; plan: TaskPlan }
   | { type: "delta"; content: string }
   | { type: "result"; result: ChatResult }
-  | { type: "error"; message: string; recoverable: boolean };
+  | {
+      type: "error";
+      message: string;
+      recoverable: boolean;
+      plan?: TaskPlan;
+      partialContent?: string;
+      executionMessage?: ChatMessage;
+    };
 
 export interface ModelStreamInput {
   messages: ChatMessage[];
   request: CompiledRequest;
   runtimeModels: ModelDescriptor[];
+  runtimeTools: RuntimeToolDescriptor[];
   signal?: AbortSignal;
 }
 
 export interface ModelProvider {
   readonly model: ModelDescriptor;
   stream(input: ModelStreamInput): AsyncIterable<string>;
+}
+
+export interface RuntimeToolDescriptor {
+  id: Id;
+  label: string;
+  capabilities: Capability[];
+  location: Exclude<ExecutionLocation, "device">;
+  available: boolean;
+  contextMayLeaveDevice: boolean;
+}
+
+export interface WebSearchResult {
+  title: string;
+  url: string;
+  snippet: string;
+  publishedAt?: string;
+}
+
+export interface WebSearchSource {
+  title: string;
+  url: string;
+  publishedAt?: string;
+}
+
+export interface WebSearchResponse {
+  query: string;
+  results: WebSearchResult[];
+}
+
+export interface WebSearchProvider {
+  readonly tool: RuntimeToolDescriptor;
+  search(query: string, signal?: AbortSignal): Promise<WebSearchResponse>;
 }

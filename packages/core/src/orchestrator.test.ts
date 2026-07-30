@@ -9,6 +9,7 @@ import type {
   ModelProvider,
   ModelStreamInput,
   OrchestrationEvent,
+  WebSearchProvider,
 } from "./types.js";
 
 function chatRequest(content: string): ChatRequest {
@@ -88,6 +89,418 @@ async function* failBeforeOutput(): AsyncIterable<string> {
 }
 
 describe("Orchestrator resilience", () => {
+  it("retrieves current sources before using a local reasoning model", async () => {
+    let receivedInput: ModelStreamInput | undefined;
+    let cloudCalled = false;
+    const webSearch: WebSearchProvider = {
+      tool: {
+        id: "web-search:test",
+        label: "Test Search",
+        capabilities: ["web"],
+        location: "cloud",
+        available: true,
+        contextMayLeaveDevice: true,
+      },
+      async search(query) {
+        return {
+          query,
+          results: [
+            {
+              title: "Current source",
+              url: "https://example.com/current",
+              snippet: "The current release is 2.0.",
+            },
+          ],
+        };
+      },
+    };
+    const orchestrator = new Orchestrator(
+      [
+        provider(generalModel, (input) => {
+          receivedInput = input;
+          return answer("The current release is 2.0 [1].");
+        }),
+        provider(cloudModel, () => {
+          cloudCalled = true;
+          return answer("Cloud must not receive retrieved data.");
+        }),
+      ],
+      undefined,
+      undefined,
+      undefined,
+      webSearch,
+    );
+
+    const events = await collect(
+      orchestrator,
+      {
+        ...chatRequest("Research the latest Quorum release."),
+        policy: "quality",
+      },
+    );
+    const result = events.find((event) => event.type === "result");
+    const finalPlan =
+      result?.type === "result" ? result.result.plan : undefined;
+
+    expect(receivedInput?.runtimeTools).toEqual([webSearch.tool]);
+    expect(cloudCalled).toBe(false);
+    expect(finalPlan?.route).toBe("local");
+    expect(receivedInput?.messages.at(-1)).toMatchObject({
+      role: "tool",
+      content: expect.stringContaining(
+        '"url":"https://example.com/current"',
+      ),
+    });
+    expect(finalPlan?.webSearch).toEqual({
+      provider: "Test Search",
+      query: "Research the latest Quorum release.",
+      contextMayHaveLeftDevice: true,
+      sources: [
+        {
+          title: "Current source",
+          url: "https://example.com/current",
+        },
+      ],
+    });
+    expect(finalPlan?.steps.some((step) => step.kind === "retrieval")).toBe(
+      true,
+    );
+    const runningRetrieval = events.find(
+      (event) =>
+        event.type === "trace" &&
+        event.trace.kind === "retrieval" &&
+        event.trace.status === "running",
+    );
+    const completedRetrieval = events.find(
+      (event) =>
+        event.type === "trace" &&
+        event.trace.kind === "retrieval" &&
+        event.trace.status === "completed",
+    );
+    expect(
+      completedRetrieval?.type === "trace" &&
+        completedRetrieval.trace.startedAt,
+    ).toBe(
+      runningRetrieval?.type === "trace" && runningRetrieval.trace.startedAt,
+    );
+    expect(
+      result?.type === "result" && result.result.message.content,
+    ).toContain(
+      "Sources\n[1] Current source — https://example.com/current",
+    );
+  });
+
+  it("blocks network search under Private mode before contacting a provider", async () => {
+    let searchCalls = 0;
+    const webSearch: WebSearchProvider = {
+      tool: {
+        id: "web-search:test",
+        label: "Test Search",
+        capabilities: ["web"],
+        location: "cloud",
+        available: true,
+        contextMayLeaveDevice: true,
+      },
+      async search() {
+        searchCalls += 1;
+        return { query: "unused", results: [] };
+      },
+    };
+    const orchestrator = new Orchestrator(
+      [provider(generalModel, () => answer("must not run"))],
+      undefined,
+      undefined,
+      undefined,
+      webSearch,
+    );
+
+    const events = await collect(orchestrator, {
+      ...chatRequest("Research the latest Quorum release."),
+      policy: "private",
+    });
+
+    expect(searchCalls).toBe(0);
+    expect(events).toContainEqual({
+      type: "error",
+      message:
+        "Private mode blocks web search. Choose Balanced or Best quality to use current web sources.",
+      recoverable: true,
+    });
+    expect(events.some((event) => event.type === "plan")).toBe(false);
+  });
+
+  it("fails quickly and clearly when current sources are required but search is unconfigured", async () => {
+    const orchestrator = new Orchestrator([
+      provider(generalModel, () => answer("must not run")),
+    ]);
+
+    const events = await collect(
+      orchestrator,
+      chatRequest("Research the latest Quorum release."),
+    );
+
+    expect(events).toContainEqual({
+      type: "error",
+      message:
+        "This request needs current web sources, but no web-search provider is configured.",
+      recoverable: true,
+    });
+    expect(events.some((event) => event.type === "plan")).toBe(false);
+  });
+
+  it("blocks sensitive search text before it can leave the device", async () => {
+    let searchCalls = 0;
+    const webSearch: WebSearchProvider = {
+      tool: {
+        id: "web-search:test",
+        label: "Test Search",
+        capabilities: ["web"],
+        location: "cloud",
+        available: true,
+        contextMayLeaveDevice: true,
+      },
+      async search() {
+        searchCalls += 1;
+        return { query: "unused", results: [] };
+      },
+    };
+    const orchestrator = new Orchestrator(
+      [provider(generalModel, () => answer("must not run"))],
+      undefined,
+      undefined,
+      undefined,
+      webSearch,
+    );
+
+    const events = await collect(
+      orchestrator,
+      chatRequest(
+        "Search the web for the latest breach involving SSN 123-45-6789.",
+      ),
+    );
+
+    expect(searchCalls).toBe(0);
+    expect(events).toContainEqual({
+      type: "error",
+      message:
+        "Web search was blocked because the request appears to contain sensitive data.",
+      recoverable: true,
+    });
+  });
+
+  it("uses the local analyzer's resolved task summary for a contextual search", async () => {
+    let searchedQuery = "";
+    const webSearch: WebSearchProvider = {
+      tool: {
+        id: "web-search:test",
+        label: "Test Search",
+        capabilities: ["web"],
+        location: "cloud",
+        available: true,
+        contextMayLeaveDevice: true,
+      },
+      async search(query) {
+        searchedQuery = query;
+        return {
+          query,
+          results: [
+            {
+              title: "PostgreSQL release",
+              url: "https://example.com/postgresql",
+              snippet: "PostgreSQL has a current release.",
+            },
+          ],
+        };
+      },
+    };
+    const orchestrator = new Orchestrator(
+      [provider(generalModel, () => answer("Current answer [1]."))],
+      undefined,
+      undefined,
+      {
+        id: "local:classifier:test",
+        label: "Prompt expert",
+        async analyze() {
+          return {
+            intent: "research",
+            confidence: 0.96,
+            taskSummary: "Find the latest PostgreSQL release.",
+          };
+        },
+      },
+      webSearch,
+    );
+
+    await collect(
+      orchestrator,
+      {
+        ...chatRequest("What's the latest?"),
+        messages: [
+          {
+            id: "prior-user",
+            role: "user",
+            content: "Search the web for PostgreSQL releases.",
+            createdAt: new Date(0).toISOString(),
+          },
+          {
+            id: "current-user",
+            role: "user",
+            content: "What's the latest?",
+            createdAt: new Date(1).toISOString(),
+          },
+        ],
+      },
+    );
+
+    expect(searchedQuery).toBe("Find the latest PostgreSQL release.");
+  });
+
+  it("uses prior user context for a search when the analyzer is unavailable", async () => {
+    let searchedQuery = "";
+    const webSearch: WebSearchProvider = {
+      tool: {
+        id: "web-search:test",
+        label: "Test Search",
+        capabilities: ["web"],
+        location: "cloud",
+        available: true,
+        contextMayLeaveDevice: true,
+      },
+      async search(query) {
+        searchedQuery = query;
+        return {
+          query,
+          results: [
+            {
+              title: "PostgreSQL release",
+              url: "https://example.com/postgresql",
+              snippet: "PostgreSQL has a current release.",
+            },
+          ],
+        };
+      },
+    };
+    const orchestrator = new Orchestrator(
+      [provider(generalModel, () => answer("Current answer [1]."))],
+      undefined,
+      undefined,
+      undefined,
+      webSearch,
+    );
+
+    await collect(orchestrator, {
+      ...chatRequest("What's the latest?"),
+      messages: [
+        {
+          id: "prior-user",
+          role: "user",
+          content: "Search the web for PostgreSQL releases.",
+          createdAt: new Date(0).toISOString(),
+        },
+        {
+          id: "current-user",
+          role: "user",
+          content: "What's the latest?",
+          createdAt: new Date(1).toISOString(),
+        },
+      ],
+    });
+
+    expect(searchedQuery).toBe(
+      "Search the web for PostgreSQL releases. Follow-up: What's the latest?",
+    );
+  });
+
+  it("does not egress a query when no capable post-search model exists", async () => {
+    let searchCalls = 0;
+    const webSearch: WebSearchProvider = {
+      tool: {
+        id: "web-search:test",
+        label: "Test Search",
+        capabilities: ["web"],
+        location: "cloud",
+        available: true,
+        contextMayLeaveDevice: true,
+      },
+      async search() {
+        searchCalls += 1;
+        return { query: "unused", results: [] };
+      },
+    };
+    const orchestrator = new Orchestrator(
+      [new DemoProvider()],
+      undefined,
+      undefined,
+      undefined,
+      webSearch,
+    );
+
+    const events = await collect(
+      orchestrator,
+      chatRequest("Research the latest Quorum release."),
+    );
+
+    expect(searchCalls).toBe(0);
+    expect(events).toContainEqual({
+      type: "error",
+      message:
+        "Web search was not started because no capable local model is available to process the results privately.",
+      recoverable: true,
+    });
+  });
+
+  it("drops sensitive search results and retains the failed egress plan", async () => {
+    const webSearch: WebSearchProvider = {
+      tool: {
+        id: "web-search:test",
+        label: "Test Search",
+        capabilities: ["web"],
+        location: "cloud",
+        available: true,
+        contextMayLeaveDevice: true,
+      },
+      async search(query) {
+        return {
+          query,
+          results: [
+            {
+              title: "Leaked credential",
+              url: "https://example.com/leak",
+              snippet: "Use API key sk-exampleSecret12345.",
+            },
+          ],
+        };
+      },
+    };
+    const orchestrator = new Orchestrator(
+      [provider(generalModel, () => answer("must not run"))],
+      undefined,
+      undefined,
+      undefined,
+      webSearch,
+    );
+
+    const events = await collect(
+      orchestrator,
+      chatRequest("Research the latest Quorum release."),
+    );
+    const error = events.find((event) => event.type === "error");
+
+    expect(error).toMatchObject({
+      type: "error",
+      message: "Web search returned no usable, non-sensitive sources.",
+      plan: {
+        route: "local",
+        webSearch: {
+          provider: "Test Search",
+          contextMayHaveLeftDevice: true,
+          sources: [],
+        },
+      },
+    });
+    expect(events.some((event) => event.type === "result")).toBe(false);
+  });
+
   it("uses the local prompt analyzer before selecting a specialist", async () => {
     const orchestrator = new Orchestrator(
       [
