@@ -609,9 +609,17 @@ export class Orchestrator {
         (step) => step.kind === "synthesis" && step.modelId,
       );
       // Under relay this stage only drafts, so its output is withheld until
-      // the hub has rewritten it.
-      const drafting = hubStep !== undefined;
-      const provider = this.#providers.get(modelStep?.modelId ?? plan.modelId);
+      // the hub has rewritten it. Withholding is only safe if a hub can
+      // actually run: a synthesis step naming an unregistered model would
+      // otherwise swallow the draft and deliver an empty answer with no error.
+      const drafting =
+        hubStep?.modelId !== undefined && this.#providers.has(hubStep.modelId);
+      // plan.modelId is the hub under relay, so it is the wrong fallback for
+      // the drafting stage — it would run the hub twice, once on the raw
+      // request and once on its own draft.
+      const provider = this.#providers.get(
+        modelStep?.modelId ?? plan.spokeModelId ?? plan.modelId,
+      );
       if (!provider || !modelStep) {
         yield {
           type: "error",
@@ -878,6 +886,20 @@ export class Orchestrator {
         ) {
           this.#recordFailure(hubProvider);
         }
+        // Whenever the hub wrote nothing, the draft is what the user ends up
+        // with — as the answer, or as partial content on an abort. Rewrite the
+        // plan once, here, before anything is yielded: modelId means "whose
+        // words the user read", and every exit below would otherwise name a
+        // model that produced nothing. Doing this per-branch is what let the
+        // cancellation path keep claiming the hub had answered.
+        if (!hubEmitted) {
+          const { spokeModelId: draftedBy, ...planWithoutSpoke } = plan;
+          plan = {
+            ...planWithoutSpoke,
+            ...(draftedBy ? { modelId: draftedBy } : {}),
+            rationale: `${plan.rationale} ${hubProvider.model.label} failed before writing, so the draft was delivered as it stood.`,
+          };
+        }
         if (hubEmitted || hubCancelled) {
           // Part of the synthesis already reached the user; replacing it now
           // would rewrite what they are reading.
@@ -885,10 +907,12 @@ export class Orchestrator {
           yield { type: "plan", plan };
           yield {
             type: "error",
-            message: signal?.aborted
+            message: hubCancelled
               ? "The request was cancelled."
               : `${failure} Synthesis stopped after output had begun.`,
-            recoverable: !signal?.aborted,
+            // A cancellation is the user's own doing, so there is nothing to
+            // retry; anything else may succeed on a second attempt.
+            recoverable: !hubCancelled,
             plan,
             // Fall back to the draft. Cancelling during synthesis lands in the
             // one window where a complete answer exists but has been withheld,
@@ -903,16 +927,6 @@ export class Orchestrator {
         // Nothing was shown yet, so the draft can still stand in for the
         // answer rather than losing the work entirely.
         content = draftContent;
-        // The draft is now the answer, so the plan has to say so. modelId
-        // means "whose words the user read", and leaving it pointing at the
-        // hub would make the panel report a model that produced nothing —
-        // the disclosure invariant failing in the one case it exists for.
-        const { spokeModelId: draftedBy, ...planWithoutSpoke } = plan;
-        plan = {
-          ...planWithoutSpoke,
-          ...(draftedBy ? { modelId: draftedBy } : {}),
-          rationale: `${plan.rationale} ${hubProvider.model.label} failed before writing, so the draft was delivered as it stood.`,
-        };
         yield { type: "delta", content: draftContent };
       }
       plan = { ...plan, attempts: [...attempts] };

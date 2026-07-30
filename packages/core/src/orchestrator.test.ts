@@ -1413,4 +1413,55 @@ describe("Orchestrator relay mode", () => {
       orchestrator.models.find((model) => model.id === hubModel.id)?.available,
     ).toBe(false);
   });
+
+  it("attributes the draft to the spoke when synthesis is cancelled too", async () => {
+    // The attribution rewrite originally lived on the degrade branch only, so
+    // the cancellation path kept naming the hub while shipping spoke text.
+    const controller = new AbortController();
+    const events = await collect(
+      relayOrchestrator({
+        hub: () => {
+          controller.abort();
+          return (async function* () {
+            throw new ModelExecutionError("stopped", "cancelled");
+            // eslint-disable-next-line no-unreachable
+            yield "";
+          })();
+        },
+      }),
+      codingRequest(),
+      controller.signal,
+    );
+
+    const error = events.find((event) => event.type === "error") as {
+      partialContent?: string;
+      recoverable: boolean;
+      plan?: TaskPlan;
+    };
+
+    // The withheld draft is finished work; it must not be thrown away.
+    expect(error.partialContent).toBe(DRAFT);
+    // ...and it must not be published under the hub's name.
+    expect(error.plan?.modelId).toBe(spokeModel.id);
+    expect(error.recoverable).toBe(false);
+  });
+
+  it("does not withhold the draft when no hub provider is registered", async () => {
+    // A synthesis step naming an unregistered model used to swallow the draft
+    // and deliver an empty answer with no error at all.
+    const orchestrator = new Orchestrator(
+      [provider(spokeModel, async function* () {
+        yield DRAFT;
+      })],
+      new RequestCompiler(),
+      new RoutePlanner("relay"),
+    );
+
+    const events = await collect(orchestrator, codingRequest());
+    const result = events.find((event) => event.type === "result") as
+      | { result: { message: ChatMessage } }
+      | undefined;
+
+    expect(result?.result.message.content).toBe(DRAFT);
+  });
 });
