@@ -190,7 +190,10 @@ export interface TaskPlan {
   verbosity: ResponseVerbosity;
   analysis: RequestAnalysis;
   route: "local" | "cloud";
+  // The model whose words reach the user. Under relay that is the hub, and
+  // spokeModelId names the model that drafted for it.
   modelId: Id;
+  spokeModelId?: Id;
   rationale: string;
   steps: PlanStep[];
   degraded?: boolean;

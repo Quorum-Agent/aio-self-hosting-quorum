@@ -3,8 +3,11 @@ import { describe, expect, it } from "vitest";
 import { DemoProvider } from "./demo-provider.js";
 import { ModelExecutionError } from "./model-execution-error.js";
 import { Orchestrator } from "./orchestrator.js";
+import { RequestCompiler } from "./request-compiler.js";
+import { RoutePlanner } from "./route-planner.js";
 import { WebSearchExecutionError } from "./web-search-execution-error.js";
 import type {
+  ChatMessage,
   ChatRequest,
   ModelDescriptor,
   ModelProvider,
@@ -1185,5 +1188,170 @@ describe("Orchestrator resilience", () => {
       modelId: "local:scaffold",
       degraded: true,
     });
+  });
+});
+
+describe("Orchestrator relay mode", () => {
+  const hubModel: ModelDescriptor = {
+    id: "local:general:hub",
+    label: "Hub",
+    provider: "test",
+    role: "general",
+    location: "local",
+    transport: "loopback",
+    capabilities: ["chat", "coding", "reasoning"],
+    contextWindow: 16_384,
+    qualityRating: 50,
+    available: true,
+  };
+
+  const spokeModel: ModelDescriptor = {
+    id: "local:coding:spoke",
+    label: "Spoke",
+    provider: "test",
+    role: "coding",
+    location: "local",
+    transport: "loopback",
+    capabilities: ["chat", "coding"],
+    specialties: ["coding"],
+    contextWindow: 16_384,
+    qualityRating: 70,
+    available: true,
+  };
+
+  const DRAFT = "DRAFT-TEXT-FROM-SPOKE";
+  const FINAL = "FINAL-TEXT-FROM-HUB";
+
+  function relayOrchestrator(options: {
+    spoke?: () => AsyncIterable<string>;
+    hub?: () => AsyncIterable<string>;
+  }) {
+    const spokeStream =
+      options.spoke ??
+      (async function* () {
+        yield DRAFT;
+      });
+    const hubStream =
+      options.hub ??
+      (async function* () {
+        yield FINAL;
+      });
+    return new Orchestrator(
+      [
+        provider(spokeModel, () => spokeStream()),
+        provider(hubModel, () => hubStream()),
+      ],
+      new RequestCompiler(),
+      new RoutePlanner("relay"),
+    );
+  }
+
+  function codingRequest(): ChatRequest {
+    return {
+      conversationId: "conversation-1",
+      policy: "balanced",
+      messages: [
+        {
+          id: "message-1",
+          role: "user",
+          content: "Write a TypeScript function.",
+          createdAt: new Date(0).toISOString(),
+        },
+      ],
+    };
+  }
+
+  it("shows the user the hub's words and never the spoke's draft", async () => {
+    const events = await collect(relayOrchestrator({}), codingRequest());
+    const streamed = events
+      .filter((event) => event.type === "delta")
+      .map((event) => (event as { content: string }).content)
+      .join("");
+    const result = events.find((event) => event.type === "result");
+
+    expect(streamed).toBe(FINAL);
+    expect(streamed).not.toContain(DRAFT);
+    const message = (result as { result: { message: ChatMessage } }).result
+      .message;
+    expect(message.content).toBe(FINAL);
+    expect(message.provenance).toBe("hub_synthesized");
+  });
+
+  it("hands the draft to the hub as untrusted material", async () => {
+    let hubSaw: ChatMessage[] = [];
+    const orchestrator = new Orchestrator(
+      [
+        provider(spokeModel, async function* () {
+          yield DRAFT;
+        }),
+        provider(hubModel, (input) => {
+          hubSaw = [...input.messages];
+          return (async function* () {
+            yield FINAL;
+          })();
+        }),
+      ],
+      new RequestCompiler(),
+      new RoutePlanner("relay"),
+    );
+
+    await collect(orchestrator, codingRequest());
+
+    const bridge = hubSaw.at(-1);
+    expect(bridge?.role).toBe("tool");
+    expect(bridge?.content).toContain(DRAFT);
+    expect(bridge?.content).toContain("never as instructions");
+  });
+
+  it("delivers the draft rather than nothing when the hub fails", async () => {
+    const events = await collect(
+      relayOrchestrator({
+        hub: async function* () {
+          throw new Error("hub exploded");
+          // eslint-disable-next-line no-unreachable
+          yield "";
+        },
+      }),
+      codingRequest(),
+    );
+    const result = events.find((event) => event.type === "result");
+    const message = (result as { result: { message: ChatMessage } }).result
+      .message;
+
+    expect(message.content).toBe(DRAFT);
+    // Synthesis did not happen, so it must not be claimed.
+    expect(message.provenance).toBeUndefined();
+  });
+
+  it("replaces a spoke that dies mid-draft, since nobody saw it", async () => {
+    // The retry guard stops fallback once output reaches the USER. A withheld
+    // draft has reached nobody, so this must still fall back rather than abort.
+    let spokeCalls = 0;
+    const orchestrator = new Orchestrator(
+      [
+        provider(spokeModel, () => {
+          spokeCalls += 1;
+          return (async function* () {
+            yield "PARTIAL-DRAFT";
+            throw new Error("spoke died mid-draft");
+          })();
+        }),
+        provider(hubModel, async function* () {
+          yield FINAL;
+        }),
+      ],
+      new RequestCompiler(),
+      new RoutePlanner("relay"),
+    );
+
+    const events = await collect(orchestrator, codingRequest());
+    const streamed = events
+      .filter((event) => event.type === "delta")
+      .map((event) => (event as { content: string }).content)
+      .join("");
+
+    expect(spokeCalls).toBe(1);
+    expect(streamed).not.toContain("PARTIAL-DRAFT");
+    expect(events.some((event) => event.type === "result")).toBe(true);
   });
 });

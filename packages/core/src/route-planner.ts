@@ -5,11 +5,19 @@ import type {
   Capability,
   CompiledRequest,
   ModelDescriptor,
+  OrchestrationMode,
   PlanStep,
   TaskPlan,
 } from "./types.js";
 
 const SPECIALTY_BONUS = 18;
+
+// Matches the orchestrator's failure bookkeeping: two configured roles may
+// point at the same underlying model, and relaying a model to itself is pure
+// cost, so identity is compared physically rather than by configured id.
+function physicalIdentity(model: ModelDescriptor): string {
+  return `${model.location}:${model.provider}:${model.label}`;
+}
 
 function supports(model: ModelDescriptor, request: CompiledRequest): boolean {
   return request.requirements.capabilities.every((capability) =>
@@ -41,6 +49,33 @@ function localScore(model: ModelDescriptor, request: CompiledRequest): number {
 }
 
 export class RoutePlanner {
+  readonly #mode: OrchestrationMode;
+
+  constructor(mode: OrchestrationMode = "route") {
+    this.#mode = mode;
+  }
+
+  // The hub is the general-purpose local model: it is the one role expected to
+  // hold a consistent voice across whatever specialist drafted the answer.
+  // Returns undefined whenever relaying would be pointless or impossible, in
+  // which case the plan degrades to a single model.
+  #selectHub(
+    models: ModelDescriptor[],
+    spoke: ModelDescriptor,
+    excludedModelIds: ReadonlySet<string>,
+  ): ModelDescriptor | undefined {
+    if (this.#mode !== "relay") return undefined;
+    const spokeIdentity = physicalIdentity(spoke);
+    return models.find(
+      (model) =>
+        model.role === "general" &&
+        model.available &&
+        model.location === "local" &&
+        !excludedModelIds.has(model.id) &&
+        physicalIdentity(model) !== spokeIdentity,
+    );
+  }
+
   plan(
     request: CompiledRequest,
     models: ModelDescriptor[],
@@ -100,7 +135,13 @@ export class RoutePlanner {
     }
     degraded ||= selected.id === "local:scaffold";
 
-    const route = selected.location;
+    const hub = this.#selectHub(models, selected, excludedModelIds);
+    // Context leaves the device if EITHER stage is remote, so the disclosure
+    // below must reflect the whole plan rather than the answering model.
+    const route =
+      selected.location === "cloud" || hub?.location === "cloud"
+        ? "cloud"
+        : selected.location;
     const selectedSpecialties = matchedSpecialties(selected, request);
     const rationale = degraded
       ? `${policy.label} mode found no model with every required capability; the local scaffold will explain the limitation.`
@@ -124,17 +165,27 @@ export class RoutePlanner {
       },
       {
         id: randomUUID(),
-        label: `Generate with ${selected.label}`,
+        label: hub ? `Draft with ${selected.label}` : `Generate with ${selected.label}`,
         kind: "model",
         location: selected.location,
         modelId: selected.id,
       },
-      {
-        id: randomUUID(),
-        label: "Synthesize response",
-        kind: "synthesis",
-        location: "device",
-      },
+      // Only present when something actually synthesizes. A step that performs
+      // no work would contradict the disclosure invariant in
+      // docs/architecture.md, which is why route mode has no synthesis step.
+      // It must stay last: the orchestrator re-splices retrieval steps around
+      // the leading device steps when it falls back.
+      ...(hub
+        ? [
+            {
+              id: randomUUID(),
+              label: `Synthesize with ${hub.label}`,
+              kind: "synthesis" as const,
+              location: hub.location,
+              modelId: hub.id,
+            },
+          ]
+        : []),
     ];
 
     return {
@@ -144,8 +195,12 @@ export class RoutePlanner {
       verbosity: request.verbosity,
       analysis: request.analysis,
       route,
-      modelId: selected.id,
-      rationale,
+      // The model whose words the user reads: the hub when one synthesizes.
+      modelId: hub?.id ?? selected.id,
+      ...(hub ? { spokeModelId: selected.id } : {}),
+      rationale: hub
+        ? `${rationale} ${hub.label} will synthesize the final answer.`
+        : rationale,
       steps,
       ...(degraded ? { degraded: true } : {}),
       safety: {

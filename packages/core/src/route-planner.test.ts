@@ -314,3 +314,117 @@ describe("RoutePlanner", () => {
     expect(plan.rationale).toContain("local scaffold");
   });
 });
+
+describe("RoutePlanner in relay mode", () => {
+  const compiler = new RequestCompiler();
+  const relayPlanner = new RoutePlanner("relay");
+
+  const hubModel: ModelDescriptor = {
+    id: "local:general:hub",
+    label: "Hub model",
+    provider: "test",
+    role: "general",
+    location: "local",
+    transport: "loopback",
+    capabilities: ["chat", "reasoning", "coding", "documents"],
+    contextWindow: 16_384,
+    qualityRating: 55,
+    available: true,
+  };
+
+  const codingSpoke: ModelDescriptor = {
+    id: "local:coding:spoke",
+    label: "Coding spoke",
+    provider: "test",
+    role: "coding",
+    location: "local",
+    transport: "loopback",
+    capabilities: ["chat", "coding"],
+    specialties: ["coding"],
+    contextWindow: 16_384,
+    qualityRating: 70,
+    available: true,
+  };
+
+  function codingPlan(models: ModelDescriptor[]) {
+    return relayPlanner.plan(
+      compiler.compile(request("balanced", "Write a TypeScript function.")),
+      models,
+    );
+  }
+
+  it("drafts with the spoke and gives the hub the final word", () => {
+    const plan = codingPlan([hubModel, codingSpoke]);
+    const modelSteps = plan.steps.filter(
+      (step) => step.kind === "model" || step.kind === "synthesis",
+    );
+
+    expect(modelSteps.map((step) => step.modelId)).toEqual([
+      codingSpoke.id,
+      hubModel.id,
+    ]);
+    // The synthesis step must stay last: the orchestrator re-splices
+    // retrieval steps around the leading device steps on fallback.
+    expect(plan.steps.at(-1)?.kind).toBe("synthesis");
+    expect(plan.modelId).toBe(hubModel.id);
+    expect(plan.spokeModelId).toBe(codingSpoke.id);
+  });
+
+  it("never plans a synthesis step that does no work", () => {
+    for (const plan of [
+      codingPlan([hubModel, codingSpoke]),
+      codingPlan([hubModel]),
+      new RoutePlanner().plan(
+        compiler.compile(request("balanced", "Write a TypeScript function.")),
+        [hubModel, codingSpoke],
+      ),
+    ]) {
+      for (const step of plan.steps) {
+        if (step.kind === "synthesis") expect(step.modelId).toBeDefined();
+      }
+    }
+  });
+
+  it("degrades to a single model when the spoke is also the hub", () => {
+    const plan = codingPlan([hubModel]);
+
+    expect(plan.steps.some((step) => step.kind === "synthesis")).toBe(false);
+    expect(plan.modelId).toBe(hubModel.id);
+    expect(plan.spokeModelId).toBeUndefined();
+  });
+
+  it("degrades when two roles point at the same underlying model", () => {
+    // Same provider and label, different configured id: relaying this to
+    // itself would cost a second inference for nothing.
+    const plan = codingPlan([
+      hubModel,
+      { ...codingSpoke, provider: hubModel.provider, label: hubModel.label },
+    ]);
+
+    expect(plan.steps.some((step) => step.kind === "synthesis")).toBe(false);
+  });
+
+  it("discloses cloud egress when only the spoke is remote", () => {
+    // Needs a policy that can prefer a remote model; balanced prefers local,
+    // so the cloud model would never be drafted with in the first place.
+    const plan = relayPlanner.plan(
+      compiler.compile(request("quality", "Write a TypeScript function.")),
+      [
+        hubModel,
+        {
+          ...codingSpoke,
+          id: "cloud:spoke",
+          location: "cloud",
+          transport: "remote",
+          qualityRating: 95,
+        },
+      ],
+    );
+
+    expect(plan.spokeModelId).toBe("cloud:spoke");
+    expect(plan.modelId).toBe(hubModel.id);
+    // The hub is local, but context still left the device via the spoke.
+    expect(plan.route).toBe("cloud");
+    expect(plan.cloudDisclosure).toBeDefined();
+  });
+});
