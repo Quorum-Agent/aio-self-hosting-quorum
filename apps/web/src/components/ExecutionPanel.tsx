@@ -11,6 +11,8 @@ import {
   X,
 } from "lucide-react";
 
+import type { Ref } from "react";
+
 import type {
   ExecutionTrace,
   ModelDescriptor,
@@ -33,6 +35,7 @@ interface ExecutionPanelProps {
   traces: ExecutionTrace[];
   verbosity: ResponseVerbosity;
   onClose: () => void;
+  ref?: Ref<HTMLElement>;
 }
 
 function StepIcon({ trace }: { trace: ExecutionTrace }) {
@@ -56,6 +59,7 @@ export function ExecutionPanel({
   traces,
   verbosity,
   onClose,
+  ref,
 }: ExecutionPanelProps) {
   const selectedModel = models.find((model) => model.id === plan?.modelId);
   // Under relay a second model drafted, and it may be the remote one. Naming
@@ -72,6 +76,7 @@ export function ExecutionPanel({
   return (
     <aside
       id="execution-panel"
+      ref={ref}
       className={`execution-panel ${open ? "is-open" : ""}`}
     >
       <div className="panel-heading">
