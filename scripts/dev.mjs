@@ -1,3 +1,5 @@
+import { randomBytes } from "node:crypto";
+
 import { concurrently } from "concurrently";
 
 const NETWORK_FLAG = "--network";
@@ -30,18 +32,26 @@ if (argumentsList.length > 0 && !networkMode) {
   process.exit(1);
 }
 
+let networkPassword;
 if (networkMode) {
-  const password = process.env["QUORUM_DEV_NETWORK_PASSWORD"] ?? "";
-  if (password.length < 16) {
+  const configuredPassword = process.env["QUORUM_DEV_NETWORK_PASSWORD"];
+  if (configuredPassword !== undefined && configuredPassword.length < 16) {
     console.error(
-      "QUORUM_DEV_NETWORK_PASSWORD must contain at least 16 characters before Quorum can be served to the network.",
+      "When set, QUORUM_DEV_NETWORK_PASSWORD must contain at least 16 characters.",
     );
     process.exit(1);
   }
+  networkPassword =
+    configuredPassword ?? randomBytes(24).toString("base64url");
   console.log(
     [
       "Starting Quorum's authenticated development gateway.",
-      "Use username `quorum` and QUORUM_DEV_NETWORK_PASSWORD when the browser prompts.",
+      "Sign in when the browser prompts:",
+      "  Username: quorum",
+      `  Password: ${networkPassword}`,
+      configuredPassword === undefined
+        ? "This password was generated for this launch only."
+        : "This password came from QUORUM_DEV_NETWORK_PASSWORD.",
       "This is plain HTTP for a trusted LAN; use a VPN or encrypted tunnel on untrusted networks.",
     ].join("\n"),
   );
@@ -63,6 +73,14 @@ const { result } = concurrently(
       command: `npm run ${webScript} -w @quorum/web`,
       name: "web",
       prefixColor: "magenta",
+      ...(networkPassword
+        ? {
+            env: {
+              ...process.env,
+              QUORUM_DEV_NETWORK_PASSWORD: networkPassword,
+            },
+          }
+        : {}),
     },
   ],
   {

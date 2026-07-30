@@ -60,19 +60,19 @@ Open [http://localhost:5173](http://localhost:5173). The API listens on
 
 Vite's generic `--host` hint does not safely expose the complete application because
 Quorum's unauthenticated API is deliberately loopback-only. For development on a
-trusted LAN, set a temporary password of at least 16 characters and use the explicit
-authenticated gateway:
+trusted LAN, use the explicit authenticated gateway:
 
 ```powershell
-$env:QUORUM_DEV_NETWORK_PASSWORD = "replace-with-a-long-temporary-password"
 npm run dev:network
 ```
 
-Vite will print the available network URLs. Sign in with username `quorum` and the
-configured password. The API remains bound to loopback and is reached through the
-authenticated Vite proxy. This development gateway uses plain HTTP; use a VPN or
-encrypted tunnel outside a trusted LAN. `npm run dev -- --host` is intentionally
-rejected with guidance to this command.
+Quorum generates and prints a strong password for that launch; sign in with username
+`quorum`. To choose a repeatable password instead, set
+`QUORUM_DEV_NETWORK_PASSWORD` to at least 16 characters before starting. Vite will
+print the available network URLs. The API remains bound to loopback and is reached
+through the authenticated Vite proxy. This development gateway uses plain HTTP; use a
+VPN or encrypted tunnel outside a trusted LAN. `npm run dev -- --host` is
+intentionally rejected with guidance to this command.
 
 Quorum remains usable if no model is installed: it selects the in-process scaffold
 responder and exposes that decision in the execution panel.
