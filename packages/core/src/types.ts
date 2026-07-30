@@ -7,7 +7,7 @@ export interface ChatMessage {
   role: MessageRole;
   content: string;
   createdAt: string;
-  provenance?: "web_grounded";
+  provenance?: "web_grounded" | "hub_synthesized";
   execution?: MessageExecutionRecord;
 }
 
@@ -32,6 +32,11 @@ export type Capability =
   | "tools";
 
 export type LocalModelRole = "general" | "coding" | "reasoning";
+
+// How many models answer one request. `route` selects a single model, which
+// answers the user directly. `relay` has a spoke draft the answer and a hub
+// rewrite it, so the user always reads one voice regardless of which spoke ran.
+export type OrchestrationMode = "route" | "relay";
 
 export interface ModelInferenceSettings {
   reasoningEffort?: "none" | "low" | "medium" | "high";
