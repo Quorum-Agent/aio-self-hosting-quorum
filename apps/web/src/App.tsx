@@ -764,12 +764,18 @@ export default function App() {
         onSaved={refreshRuntime}
       />
 
-      {sidebarOpen && (
+      {/* Both drawers overlay the conversation below 841px. The scrim is
+          display: none above that, where the inspector is a real column. */}
+      {(sidebarOpen || executionOpen) && (
         <button
           className="mobile-scrim"
           type="button"
-          aria-label="Close navigation"
-          onClick={() => setSidebarOpen(false)}
+          aria-label={
+            sidebarOpen ? "Close navigation" : "Close request inspector"
+          }
+          onClick={() =>
+            sidebarOpen ? setSidebarOpen(false) : setExecutionOpen(false)
+          }
         />
       )}
     </div>

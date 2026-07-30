@@ -61,16 +61,26 @@ function CodeBlock({ code, language }: { code: string; language?: string }) {
         <button
           type="button"
           onClick={() => {
+            setStatus("idle");
             void copyText(code).then((copiedToClipboard) => {
               setStatus(copiedToClipboard ? "copied" : "failed");
-              window.setTimeout(() => setStatus("idle"), 1_500);
+              // Success announces itself and clears; a failure stays until the
+              // next attempt so it cannot pass by unnoticed.
+              if (copiedToClipboard) {
+                window.setTimeout(() => setStatus("idle"), 1_500);
+              }
             });
           }}
           aria-label="Copy code"
         >
           {status === "copied" ? <Check size={14} /> : <Copy size={14} />}
-          <span aria-live="polite">{COPY_LABELS[status]}</span>
+          {COPY_LABELS[status]}
         </button>
+        {/* Outside the button: a button's descendants are presentational, so a
+            live region nested inside it is not reliably announced. */}
+        <span className="visually-hidden" role="status">
+          {status === "idle" ? "" : COPY_LABELS[status]}
+        </span>
       </div>
       <pre>
         <code>{code}</code>

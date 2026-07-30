@@ -6,7 +6,9 @@ import { parse as parseEnvironment } from "dotenv";
 
 const NETWORK_FLAG = "--network";
 const HOST_FLAGS = new Set(["--host", "-H"]);
-const MINIMUM_NETWORK_PASSWORD_LENGTH = 8;
+// The generated pairing code is short but random. A password a human chooses
+// and reuses has to be long enough to survive an unthrottled LAN guesser.
+const MINIMUM_CONFIGURED_PASSWORD_LENGTH = 24;
 const PAIRING_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
 function configuredNetworkPassword() {
@@ -73,10 +75,13 @@ if (networkMode) {
   const configuredPassword = configuredNetworkPassword();
   if (
     configuredPassword !== undefined &&
-    configuredPassword.length < MINIMUM_NETWORK_PASSWORD_LENGTH
+    configuredPassword.length < MINIMUM_CONFIGURED_PASSWORD_LENGTH
   ) {
     console.error(
-      `When set, QUORUM_DEV_NETWORK_PASSWORD must contain at least ${MINIMUM_NETWORK_PASSWORD_LENGTH} characters.`,
+      [
+        `When set, QUORUM_DEV_NETWORK_PASSWORD must contain at least ${MINIMUM_CONFIGURED_PASSWORD_LENGTH} characters.`,
+        "Unset it to use a generated per-launch pairing code instead.",
+      ].join("\n"),
     );
     process.exit(1);
   }
