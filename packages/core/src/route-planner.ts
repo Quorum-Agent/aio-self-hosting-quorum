@@ -55,23 +55,27 @@ export class RoutePlanner {
     this.#mode = mode;
   }
 
-  // The hub is the general-purpose local model: it is the one role expected to
-  // hold a consistent voice across whatever specialist drafted the answer.
+  // The hub is the general-purpose model: the one role expected to hold a
+  // consistent voice across whatever specialist drafted the answer.
+  //
+  // It is chosen from the SAME candidate set the spoke came from, never from
+  // the raw model list. Those candidates already encode policy, capability,
+  // availability and exclusions, so the hub cannot reach somewhere the spoke
+  // was forbidden to go — selecting from raw models let offline mode, which
+  // permits only in-process transports, pick a loopback hub.
+  //
   // Returns undefined whenever relaying would be pointless or impossible, in
   // which case the plan degrades to a single model.
   #selectHub(
-    models: ModelDescriptor[],
+    candidates: ModelDescriptor[],
     spoke: ModelDescriptor,
-    excludedModelIds: ReadonlySet<string>,
   ): ModelDescriptor | undefined {
     if (this.#mode !== "relay") return undefined;
     const spokeIdentity = physicalIdentity(spoke);
-    return models.find(
+    return candidates.find(
       (model) =>
         model.role === "general" &&
-        model.available &&
         model.location === "local" &&
-        !excludedModelIds.has(model.id) &&
         physicalIdentity(model) !== spokeIdentity,
     );
   }
@@ -135,7 +139,7 @@ export class RoutePlanner {
     }
     degraded ||= selected.id === "local:scaffold";
 
-    const hub = this.#selectHub(models, selected, excludedModelIds);
+    const hub = this.#selectHub(candidates, selected);
     // Context leaves the device if EITHER stage is remote, so the disclosure
     // below must reflect the whole plan rather than the answering model.
     const route =

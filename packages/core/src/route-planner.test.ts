@@ -404,6 +404,45 @@ describe("RoutePlanner in relay mode", () => {
     expect(plan.steps.some((step) => step.kind === "synthesis")).toBe(false);
   });
 
+  it("keeps a loopback hub out of an offline plan", () => {
+    // Offline permits in-process transports only. Selecting the hub from the
+    // raw model list instead of the vetted candidates let a loopback model in
+    // as the synthesizer while the spoke was correctly restricted.
+    const scaffold: ModelDescriptor = {
+      id: "local:scaffold",
+      label: "Scaffold",
+      provider: "quorum",
+      location: "local",
+      transport: "in_process",
+      capabilities: ["chat"],
+      contextWindow: 8_192,
+      qualityRating: 5,
+      available: true,
+    };
+    const plan = relayPlanner.plan(
+      compiler.compile(request("offline", "Hello there.")),
+      [scaffold, { ...hubModel, transport: "loopback" }],
+    );
+
+    const used = plan.steps
+      .filter((step) => step.kind === "model" || step.kind === "synthesis")
+      .map((step) => step.modelId);
+    expect(used).not.toContain(hubModel.id);
+    expect(plan.steps.some((step) => step.kind === "synthesis")).toBe(false);
+  });
+
+  it("will not synthesize with a model that lacks the required capability", () => {
+    // The hub answers the user, so it has to clear the same capability bar the
+    // spoke did rather than being trusted for being the general model.
+    const plan = codingPlan([
+      { ...hubModel, capabilities: ["chat"] },
+      codingSpoke,
+    ]);
+
+    expect(plan.steps.some((step) => step.kind === "synthesis")).toBe(false);
+    expect(plan.modelId).toBe(codingSpoke.id);
+  });
+
   it("discloses cloud egress when only the spoke is remote", () => {
     // Needs a policy that can prefer a remote model; balanced prefers local,
     // so the cloud model would never be drafted with in the first place.
