@@ -17,22 +17,30 @@ use an OpenAI-compatible local or cloud model when configured.
 - Chat interface with persistent local conversations
 - Four enforced UI policies: Private, Balanced, Best quality, and Offline
 - Contextual request compilation into intents, confidence, and required capabilities
+- Persisted effective-intent handoff across referential conversation turns
+- A local 2B prompt expert with deterministic software-taxonomy safeguards
 - Specialty-aware model routing with fail-closed handling for sensitive content
 - A live execution inspector showing steps, route, model, and cloud usage
+- Persistent per-response Detailed activity with timing, classification, steps, and swaps
 - Server-sent event streaming from orchestrator to UI
 - Local SQLite storage under `./var`
 - OpenAI-compatible model adapter
 - Automatic discovery of configured local models and experts
 - Role-aware ready, degraded, and unavailable runtime status
 - Serialized local inference, bounded execution time, circuit breaking, and safe fallback
+- Keyless policy-controlled web search with live Auto/provider settings
+- DuckDuckGo, SearXNG, Exa, Perplexity, Tavily, Brave, and Firecrawl adapters
+- Source citations and durable search/provider-fallback disclosure
 - Loopback-only local endpoints with redirects disabled
 - Append-only execution attempts so failed cloud contact remains disclosed
 - A deterministic in-process responder when no configured model is available
 - Production build served by the API process
+- Startup warmup for the prompt expert and default general model
+- Native Ollama generation that keeps private thinking separate from visible answers
 
-Attachment, microphone, settings, vision, retrieval, tools, memory, and web execution
-are planned but are not exposed as controls until they are wired. See [Roadmap](#roadmap)
-for the intended order.
+Attachment, microphone, vision, project memory, and general-purpose tool
+execution are planned but are not exposed as controls until they are wired. See
+[Roadmap](#roadmap) for the intended order.
 
 ## Quick start
 
@@ -54,24 +62,26 @@ responder and exposes that decision in the execution panel.
 
 ### Connect Ollama
 
-The minimum default configuration expects Ollama's OpenAI-compatible endpoint and a
-`qwen3:4b` general model:
+The default configuration expects Ollama's OpenAI-compatible endpoint, a
+`qwen3.5:9b` main model, and a `qwen3.5:2b` prompt expert:
 
 ```bash
-ollama pull qwen3:4b
-```
-
-Two optional text experts can be installed before Quorum starts:
-
-```bash
-ollama pull qwen2.5-coder:1.5b
+ollama pull qwen3.5:9b
 ollama pull qwen3.5:2b
 ```
 
-Balanced and Private modes route coding work to the coding expert,
-math and logic work to the reasoning expert, and ordinary conversation to the general
-model. A missing expert is not registered or selectable, and the runtime reports the
-missing role as degraded rather than ready.
+The prompt expert extracts a faithful task summary and intent before routing. Strong
+deterministic signals, a maintained software vocabulary, and sensitive-data detection
+remain authoritative if the model conflicts or fails. It is not registered as an
+answer model. The main model owns conversation continuity and all user-facing answers
+unless an explicitly configured specialist has passed evaluation for the user's
+workload. Best quality still accounts for model quality, and an opt-in matching
+specialist can overcome a small static quality gap.
+
+At startup, Quorum warms the prompt expert first and the default general model last,
+keeping both alive through Ollama for 30 minutes. This moves the initial model-load
+latency to `npm run dev` instead of the first chat turn. Set
+`QUORUM_LOCAL_WARMUP=false` to disable this behavior.
 
 Restart Quorum after installing models. To change any model role:
 
@@ -79,18 +89,20 @@ Restart Quorum after installing models. To change any model role:
 copy .env.example .env
 ```
 
-Then change `QUORUM_LOCAL_MODEL`, `QUORUM_LOCAL_CODING_MODEL`, or
-`QUORUM_LOCAL_REASONING_MODEL` in `.env`. Quorum only registers a provider after the
-configured model appears in the endpoint's `/models` response. This proves discovery,
-not that a model is warm; execution failures feed the runtime circuit breaker.
+Then change `QUORUM_LOCAL_MODEL` or `QUORUM_LOCAL_PROMPT_MODEL` in `.env`. Optional
+`QUORUM_LOCAL_CODING_MODEL` and `QUORUM_LOCAL_REASONING_MODEL` values add answer
+specialists; leaving them unset keeps user-facing generation on the main brain. Quorum only
+registers a role after the configured model appears in the endpoint's `/models`
+response. Runtime status distinguishes discovery from startup warmup, and execution
+failures feed the runtime circuit breaker.
 
-Quorum enforces a conservative 16,384-token dispatch budget for each default role.
+Quorum enforces a conservative 16,384-token dispatch budget for the default answer
+model and a 4,096-token budget for the prompt expert.
 Override it only when the endpoint is configured to execute a different budget:
 
 ```dotenv
 QUORUM_LOCAL_CONTEXT_WINDOW=16384
-QUORUM_LOCAL_CODING_CONTEXT_WINDOW=16384
-QUORUM_LOCAL_REASONING_CONTEXT_WINDOW=16384
+QUORUM_LOCAL_PROMPT_CONTEXT_WINDOW=4096
 ```
 
 ### Optional cloud fallback
@@ -106,6 +118,63 @@ QUORUM_CLOUD_API_KEY=your-key
 The cloud provider is not registered when the key is blank. Private and Offline modes
 never select a cloud model. Requests detected as sensitive never use cloud; when no
 capable local model exists, the in-process scaffold reports the limitation.
+
+### Web search
+
+Web search is automatic for requests that need current information or external
+sources. It is not used for ordinary explanation or analysis. Quorum retrieves a
+small bounded source set, passes it to a local model as explicitly framed untrusted
+evidence, appends source links to the answer, and records the provider and sources
+in the execution inspector. Retrieved web data is never forwarded to a cloud model.
+
+Search is enabled out of the box. With no configuration, Auto mode uses keyless
+DuckDuckGo. Configure the master toggle, provider, result count, SearXNG URL, and
+optional provider keys from **Web search settings** in the sidebar. Changes apply
+to the next request without restarting Quorum.
+
+Auto mode uses configured providers in this order and falls back visibly when a
+provider fails:
+
+```text
+Exa → Perplexity → Tavily → Brave → Firecrawl → SearXNG → DuckDuckGo
+```
+
+Non-secret settings are stored in the local `quorum.db`. Keys entered in the UI stay
+in server memory for the current run and are never written to SQLite or returned to
+the browser. Use environment variables when credentials must survive a restart:
+
+```dotenv
+QUORUM_WEB_SEARCH_ENABLED=true
+QUORUM_WEB_SEARCH_PROVIDER=auto
+QUORUM_WEB_SEARCH_RESULT_LIMIT=5
+
+# Optional provider configuration used by Auto:
+QUORUM_SEARXNG_BASE_URL=http://127.0.0.1:8080
+
+QUORUM_EXA_SEARCH_API_KEY=your-key
+QUORUM_PERPLEXITY_SEARCH_API_KEY=your-key
+QUORUM_TAVILY_SEARCH_API_KEY=your-key
+QUORUM_BRAVE_SEARCH_API_KEY=your-search-key
+QUORUM_FIRECRAWL_SEARCH_API_KEY=your-key
+```
+
+Set `QUORUM_WEB_SEARCH_PROVIDER` to a provider ID instead of `auto` to require
+that provider and disable automatic provider fallback.
+
+SearXNG accepts explicit loopback HTTP or HTTPS URLs; remote instances are rejected
+to keep the configurable endpoint out of Quorum's server-side request boundary.
+Quorum does not rotate through public instances. Private and Offline modes never
+search, and requests detected as sensitive never search. Each logical search has one
+eight-second deadline, does not follow redirects, allows at most two concurrent and
+30 per minute, and feeds only bounded HTTPS results that pass lexical safety
+filtering to a local model. Link destinations remain explicitly unverified because
+Quorum does not resolve or navigate them. Sensitive results are
+discarded before model routing, and persisted execution records store source titles
+and URLs rather than source snippets.
+
+If an earlier development build saved provider keys in `quorum.db`, this version
+purges the legacy setting with SQLite secure deletion, WAL truncation, and `VACUUM`.
+Rotate those old keys once anyway, because Quorum cannot sanitize external backups.
 
 ## Architecture
 
@@ -124,9 +193,9 @@ store                    │
               │                     │
        Request compiler       Route planner
                                     │
-                         ┌──────────┴──────────┐
-                         │                     │
-                 Local providers       Cloud providers
+                  ┌──────┴──────┬─────────────┐
+                  │             │             │
+           Local providers  Web search  Cloud providers
 ```
 
 The core package has no dependency on Fastify, React, Ollama, or a cloud vendor.
@@ -168,6 +237,8 @@ npm test           # routing and persistence tests
 npm run build      # production bundles
 npm run check      # typecheck, test, and build
 npm start          # serve built UI and API on port 8787
+npm run evaluate:prompt -w @quorum/api -- qwen3.5:2b
+                     # benchmark production intent classification and merging
 ```
 
 ## API surface
@@ -186,8 +257,8 @@ npm start          # serve built UI and API on port 8787
 | Mode | Current routing behavior |
 | --- | --- |
 | Private | Local models only |
-| Balanced | Prefer the strongest suitable local model |
-| Best quality | Select the highest-rated eligible model, including cloud |
+| Balanced | Prefer the strongest suitable local model; search when freshness requires it |
+| Best quality | Select the strongest eligible route using quality plus matched specialization |
 | Offline | In-process providers only; no loopback or remote model calls |
 
 The core policy type reserves Cost controlled for the usage-ledger milestone, but the

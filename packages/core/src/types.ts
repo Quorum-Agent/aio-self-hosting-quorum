@@ -7,6 +7,7 @@ export interface ChatMessage {
   role: MessageRole;
   content: string;
   createdAt: string;
+  execution?: MessageExecutionRecord;
 }
 
 export type PolicyMode =
@@ -15,6 +16,8 @@ export type PolicyMode =
   | "quality"
   | "offline"
   | "cost_controlled";
+
+export type ResponseVerbosity = "concise" | "standard" | "detailed";
 
 export type ExecutionLocation = "device" | "local" | "cloud";
 
@@ -62,6 +65,11 @@ export interface LocalRuntimeStatus {
   state: "ready" | "degraded" | "unavailable";
   endpointConnected: boolean;
   roles: LocalModelRoleStatus[];
+  promptAnalyzer?: {
+    configuredModel: string;
+    modelId?: Id;
+    available: boolean;
+  };
 }
 
 export interface PolicyDefinition {
@@ -85,10 +93,44 @@ export type RequestIntent =
 export interface RequestRequirements {
   intent: RequestIntent;
   intentConfidence: number;
-  intentSource: "current" | "conversation" | "default";
+  intentSource: "current" | "conversation" | "default" | "classifier";
   capabilities: Capability[];
   requiresFreshness: boolean;
   containsSensitiveData: boolean;
+}
+
+export interface PromptAnalyzerResult {
+  intent: RequestIntent;
+  confidence: number;
+  taskSummary: string;
+}
+
+export interface PromptAnalyzerInput {
+  messages: ChatMessage[];
+  baseline: RequestAnalysis;
+  baselineIntentSource: RequestRequirements["intentSource"];
+}
+
+export interface PromptAnalyzer {
+  readonly id: Id;
+  readonly label: string;
+  analyze(
+    input: PromptAnalyzerInput,
+    signal?: AbortSignal,
+  ): Promise<PromptAnalyzerResult>;
+}
+
+export interface RequestAnalysis {
+  source: "heuristic" | "local_model" | "hybrid";
+  intent: RequestIntent;
+  confidence: number;
+  taskSummary: string;
+  analyzer?: {
+    modelId: Id;
+    modelLabel: string;
+    intent: RequestIntent;
+    confidence: number;
+  };
 }
 
 export interface CompiledRequest {
@@ -97,13 +139,21 @@ export interface CompiledRequest {
   messages: ChatMessage[];
   prompt: string;
   policy: PolicyMode;
+  verbosity: ResponseVerbosity;
+  analysis: RequestAnalysis;
   requirements: RequestRequirements;
 }
 
 export interface PlanStep {
   id: Id;
   label: string;
-  kind: "compile" | "policy" | "retrieval" | "model" | "synthesis";
+  kind:
+    | "compile"
+    | "classification"
+    | "policy"
+    | "retrieval"
+    | "model"
+    | "synthesis";
   location: ExecutionLocation;
   modelId?: Id;
 }
@@ -120,6 +170,8 @@ export interface TaskPlan {
   id: Id;
   requestId: Id;
   policy: PolicyMode;
+  verbosity: ResponseVerbosity;
+  analysis: RequestAnalysis;
   route: "local" | "cloud";
   modelId: Id;
   rationale: string;
@@ -128,6 +180,13 @@ export interface TaskPlan {
   fallbackFromModelId?: Id;
   attempts?: ExecutionAttempt[];
   cloudDisclosure?: string;
+  webSearch?: {
+    provider: string;
+    query: string;
+    contextMayHaveLeftDevice: boolean;
+    sources: WebSearchSource[];
+    attempts?: WebSearchAttempt[];
+  };
 }
 
 export type TraceStatus = "pending" | "running" | "completed" | "failed";
@@ -146,10 +205,18 @@ export interface ExecutionTrace {
   completedAt?: string;
 }
 
+export interface MessageExecutionRecord {
+  plan: TaskPlan;
+  traces: ExecutionTrace[];
+  startedAt: number;
+  completedAt: number;
+}
+
 export interface ChatRequest {
   conversationId: Id;
   messages: ChatMessage[];
   policy: PolicyMode;
+  verbosity?: ResponseVerbosity;
 }
 
 export interface ChatResult {
@@ -164,15 +231,70 @@ export type OrchestrationEvent =
   | { type: "plan"; plan: TaskPlan }
   | { type: "delta"; content: string }
   | { type: "result"; result: ChatResult }
-  | { type: "error"; message: string; recoverable: boolean };
+  | {
+      type: "error";
+      message: string;
+      recoverable: boolean;
+      plan?: TaskPlan;
+      partialContent?: string;
+      executionMessage?: ChatMessage;
+    };
 
 export interface ModelStreamInput {
   messages: ChatMessage[];
   request: CompiledRequest;
+  runtimeModels: ModelDescriptor[];
+  runtimeTools: RuntimeToolDescriptor[];
   signal?: AbortSignal;
 }
 
 export interface ModelProvider {
   readonly model: ModelDescriptor;
   stream(input: ModelStreamInput): AsyncIterable<string>;
+}
+
+export interface RuntimeToolDescriptor {
+  id: Id;
+  label: string;
+  capabilities: Capability[];
+  location: Exclude<ExecutionLocation, "device">;
+  available: boolean;
+  contextMayLeaveDevice: boolean;
+}
+
+export interface WebSearchResult {
+  title: string;
+  url: string;
+  snippet: string;
+  publishedAt?: string;
+}
+
+export interface WebSearchSource {
+  title: string;
+  url: string;
+  publishedAt?: string;
+}
+
+export interface WebSearchResponse {
+  query: string;
+  results: WebSearchResult[];
+  provider?: string;
+  attempts?: WebSearchAttempt[];
+}
+
+export interface WebSearchAttempt {
+  provider: string;
+  status: "running" | "completed" | "failed";
+  detail?: string;
+}
+
+export interface WebSearchProvider {
+  readonly tool: RuntimeToolDescriptor;
+  search(
+    query: string,
+    signal?: AbortSignal,
+    onAttempt?: (
+      attempt: WebSearchAttempt,
+    ) => void | Promise<void>,
+  ): Promise<WebSearchResponse>;
 }

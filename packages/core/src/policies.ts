@@ -12,7 +12,8 @@ export const POLICIES: Record<PolicyMode, PolicyDefinition> = {
   balanced: {
     id: "balanced",
     label: "Balanced",
-    description: "Prefer local execution and use cloud only when it adds clear value.",
+    description:
+      "Prefer local execution; allow automatic web search and cloud only when they add clear value.",
     allowNetwork: true,
     allowCloudModels: true,
     preferLocal: true,

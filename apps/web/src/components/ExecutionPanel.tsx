@@ -6,6 +6,7 @@ import {
   Cpu,
   LoaderCircle,
   Monitor,
+  Search,
   ShieldCheck,
   X,
 } from "lucide-react";
@@ -14,10 +15,15 @@ import type {
   ExecutionTrace,
   ModelDescriptor,
   PolicyDefinition,
+  ResponseVerbosity,
   TaskPlan,
 } from "@quorum/core";
 
-import { describeCloudUsage } from "../lib/runtime-view";
+import {
+  describeCloudUsage,
+  describeModelAttempts,
+  type ModelAttemptView,
+} from "../lib/runtime-view";
 
 interface ExecutionPanelProps {
   open: boolean;
@@ -25,6 +31,7 @@ interface ExecutionPanelProps {
   models: ModelDescriptor[];
   plan: TaskPlan | undefined;
   traces: ExecutionTrace[];
+  verbosity: ResponseVerbosity;
   onClose: () => void;
 }
 
@@ -35,16 +42,26 @@ function StepIcon({ trace }: { trace: ExecutionTrace }) {
   return <Circle size={10} />;
 }
 
+function AttemptIcon({ attempt }: { attempt: ModelAttemptView }) {
+  if (attempt.status === "completed") return <Check size={13} />;
+  if (attempt.status === "failed") return <X size={13} />;
+  return <LoaderCircle className="spin" size={13} />;
+}
+
 export function ExecutionPanel({
   open,
   policy,
   models,
   plan,
   traces,
+  verbosity,
   onClose,
 }: ExecutionPanelProps) {
   const selectedModel = models.find((model) => model.id === plan?.modelId);
+  const modelRan = (plan?.attempts?.length ?? 0) > 0;
   const cloudUsage = describeCloudUsage(plan, models);
+  const modelAttempts = describeModelAttempts(plan, models);
+  const inspectedVerbosity = plan?.verbosity ?? verbosity;
 
   return (
     <aside
@@ -138,9 +155,52 @@ export function ExecutionPanel({
         </p>
       </section>
 
+      {plan?.webSearch && (
+        <section className="panel-section web-search-summary">
+          <div className="section-title">
+            <span>Web search</span>
+            <small>{plan.webSearch.provider}</small>
+          </div>
+          <div className="web-search-query">
+            <Search size={13} />
+            <span>{plan.webSearch.query}</span>
+          </div>
+          {(plan.webSearch.attempts?.length ?? 0) > 0 && (
+            <ol className="web-attempt-list">
+              {plan.webSearch.attempts?.map((attempt, index) => (
+                <li
+                  className={`is-${attempt.status}`}
+                  key={`${attempt.provider}-${index}`}
+                >
+                  <strong>{attempt.provider}</strong>
+                  <span>
+                    {attempt.status}
+                    {attempt.detail ? ` · ${attempt.detail}` : ""}
+                  </span>
+                </li>
+              ))}
+            </ol>
+          )}
+          <ol className="web-source-list">
+            {plan.webSearch.sources.map((source, index) => (
+              <li key={`${source.url}-${index}`}>
+                <a href={source.url} target="_blank" rel="noreferrer">
+                  [{index + 1}] {source.title}
+                </a>
+              </li>
+            ))}
+          </ol>
+          <p>
+            {plan.webSearch.contextMayHaveLeftDevice
+              ? "The search query may have left this device; the answering model route is disclosed separately."
+              : "Search stayed on this device."}
+          </p>
+        </section>
+      )}
+
       <section className="panel-section model-summary">
         <div className="section-title">
-          <span>Model used</span>
+          <span>{modelRan ? "Model used" : "Model planned"}</span>
           <small>{selectedModel?.location ?? "—"}</small>
         </div>
         <strong>{selectedModel?.label ?? "Waiting for request"}</strong>
@@ -150,7 +210,9 @@ export function ExecutionPanel({
                 selectedModel.provider,
                 selectedModel.role ? `${selectedModel.role} role` : undefined,
                 selectedModel.inference?.reasoningEffort
-                  ? `reasoning ${selectedModel.inference.reasoningEffort}`
+                  ? selectedModel.inference.reasoningEffort === "none"
+                    ? "structured reasoning disabled"
+                    : `reasoning ${selectedModel.inference.reasoningEffort}`
                   : undefined,
               ]
                 .filter(Boolean)
@@ -158,6 +220,47 @@ export function ExecutionPanel({
             : "Quorum will choose at runtime"}
         </span>
       </section>
+
+      {inspectedVerbosity === "detailed" && (
+        <section className="panel-section">
+          <div className="section-title">
+            <span>Model attempts</span>
+            <small>
+              {modelAttempts.swaps === 0
+                ? "No swaps"
+                : `${modelAttempts.swaps} swap${modelAttempts.swaps === 1 ? "" : "s"}`}
+            </small>
+          </div>
+          {modelAttempts.attempts.length === 0 ? (
+            <p className="attempt-placeholder">
+              Attempt and swap history will appear with the next request.
+            </p>
+          ) : (
+            <ol className="attempt-list">
+              {modelAttempts.attempts.map((attempt, index) => (
+                <li
+                  className={`attempt-item is-${attempt.status}`}
+                  key={`${attempt.modelId}-${index}`}
+                >
+                  <div className="attempt-status">
+                    <AttemptIcon attempt={attempt} />
+                  </div>
+                  <div>
+                    <strong>{attempt.label}</strong>
+                    <span>
+                      {attempt.route} · {attempt.status}
+                      {attempt.contextMayHaveBeenTransmitted
+                        ? " · context may have left device"
+                        : ""}
+                    </span>
+                    {attempt.detail && <p>{attempt.detail}</p>}
+                  </div>
+                </li>
+              ))}
+            </ol>
+          )}
+        </section>
+      )}
 
       <div
         className={`cloud-summary ${cloudUsage.activity ? "used-cloud" : ""}`}

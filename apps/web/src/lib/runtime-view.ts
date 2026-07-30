@@ -1,8 +1,10 @@
 import type {
   Capability,
+  ExecutionAttempt,
   LocalRuntimeStatus,
   ModelDescriptor,
   PolicyDefinition,
+  RuntimeToolDescriptor,
   TaskPlan,
 } from "@quorum/core";
 
@@ -12,6 +14,16 @@ export interface RuntimeStatusView {
   detail: string;
 }
 
+export interface RuntimeWarmupView {
+  state: "disabled" | "idle" | "warming" | "ready" | "degraded";
+  models: Array<{
+    model: string;
+    role: "classifier" | "general";
+    status: "pending" | "warming" | "ready" | "failed";
+    detail?: string;
+  }>;
+}
+
 export interface CloudUsageView {
   activity: boolean;
   selected: boolean;
@@ -19,10 +31,28 @@ export interface CloudUsageView {
   text: string;
 }
 
+export interface ModelAttemptView {
+  modelId: string;
+  label: string;
+  route: ExecutionAttempt["route"];
+  status: ExecutionAttempt["status"] | "selected";
+  detail?: string;
+  contextMayHaveBeenTransmitted: boolean;
+}
+
+export interface ModelAttemptsView {
+  attempts: ModelAttemptView[];
+  swaps: number;
+}
+
 export function describeRuntimeStatus(
   runtime: LocalRuntimeStatus | undefined,
   failed = false,
+  warmup?: RuntimeWarmupView,
+  webSearch?: RuntimeToolDescriptor,
 ): RuntimeStatusView {
+  const withWebSearch = (detail: string) =>
+    webSearch?.available ? `${detail}; web search configured` : detail;
   if (failed) {
     return {
       state: "unavailable",
@@ -46,6 +76,17 @@ export function describeRuntimeStatus(
     };
   }
 
+  if (warmup?.state === "warming") {
+    const active = warmup.models.find((model) => model.status === "warming");
+    return {
+      state: "loading",
+      title: "Warming local models",
+      detail: active
+        ? `Loading ${active.model} for ${active.role} work`
+        : "Preparing local inference",
+    };
+  }
+
   const available = runtime.roles
     .filter((role) => role.available)
     .map((role) => role.role);
@@ -57,7 +98,9 @@ export function describeRuntimeStatus(
     return {
       state: "ready",
       title: "Local roles discovered",
-      detail: `${available.join(", ")} configured`,
+      detail:
+        `${available.join(", ")}${runtime.promptAnalyzer?.available ? ", classifier" : ""}` +
+        `${webSearch?.available ? ", web search" : ""} configured`,
     };
   }
 
@@ -65,17 +108,22 @@ export function describeRuntimeStatus(
     return {
       state: "degraded",
       title: "Local runtime degraded",
-      detail: "Configured models are not installed",
+      detail: withWebSearch("Configured models are not installed"),
     };
   }
 
   const generalMissing = missing.includes("general");
+  const analyzerMissing = runtime.promptAnalyzer?.available === false;
   return {
     state: "degraded",
     title: "Local runtime degraded",
-    detail: generalMissing
-      ? `General model missing; ${available.join(", ")} available`
-      : `Missing optional ${missing.join(", ")} expert${missing.length === 1 ? "" : "s"}`,
+    detail: withWebSearch(
+      generalMissing
+        ? `General model missing; ${available.join(", ")} available`
+        : analyzerMissing
+          ? `Prompt analyzer ${runtime.promptAnalyzer?.configuredModel} missing`
+          : `Missing optional ${missing.join(", ")} expert${missing.length === 1 ? "" : "s"}`,
+    ),
   };
 }
 
@@ -109,9 +157,12 @@ export function describeCloudUsage(
   const cloudAttempts =
     plan?.attempts?.filter((attempt) => attempt.route === "cloud") ?? [];
   const selected = plan?.route === "cloud";
-  const contacted = cloudAttempts.some(
+  const modelContacted = cloudAttempts.some(
     (attempt) => attempt.contextMayHaveBeenTransmitted,
   );
+  const webContacted =
+    plan?.webSearch?.contextMayHaveLeftDevice === true;
+  const contacted = modelContacted || webContacted;
   const labels = [
     ...new Set(
       cloudAttempts.map(
@@ -123,17 +174,75 @@ export function describeCloudUsage(
   ];
   const selectedLabel =
     models.find((model) => model.id === plan?.modelId)?.label ?? "cloud model";
+  const webText = webContacted
+    ? `Web search via ${plan?.webSearch?.provider}`
+    : undefined;
+  const routeStage =
+    (plan?.attempts?.length ?? 0) > 0 ? "final" : "planned";
+  const activityText =
+    webText && modelContacted
+      ? `${webText}; contacted ${labels.join(", ")}; ${routeStage} model route ${plan?.route}`
+      : webText
+        ? `${webText}; ${routeStage} model route ${plan?.route}`
+        : modelContacted
+          ? `Contacted ${labels.join(", ")}; final route ${plan?.route}`
+          : undefined;
 
   return {
     selected,
     contacted,
     activity: selected || contacted,
-    text: contacted
-      ? `Contacted ${labels.join(", ")}; final route ${plan?.route}`
+    text: activityText
+      ? activityText
       : selected
         ? `Selected ${selectedLabel}`
         : plan
           ? "None"
           : "No request yet",
+  };
+}
+
+export function describeModelAttempts(
+  plan: TaskPlan | undefined,
+  models: ModelDescriptor[],
+): ModelAttemptsView {
+  if (!plan) return { attempts: [], swaps: 0 };
+
+  const attempts: ModelAttemptView[] = (plan.attempts ?? []).map(
+    (attempt) => ({
+      modelId: attempt.modelId,
+      label:
+        models.find((model) => model.id === attempt.modelId)?.label ??
+        attempt.modelId,
+      route: attempt.route,
+      status: attempt.status,
+      ...(attempt.detail ? { detail: attempt.detail } : {}),
+      contextMayHaveBeenTransmitted:
+        attempt.contextMayHaveBeenTransmitted,
+    }),
+  );
+  const lastAttempt = attempts.at(-1);
+  if (!lastAttempt || lastAttempt.modelId !== plan.modelId) {
+    const selected = models.find((model) => model.id === plan.modelId);
+    attempts.push({
+      modelId: plan.modelId,
+      label: selected?.label ?? plan.modelId,
+      route: plan.route,
+      status: "selected",
+      contextMayHaveBeenTransmitted: plan.route === "cloud",
+    });
+  }
+
+  const swaps = attempts.reduce(
+    (total, attempt, index) =>
+      index > 0 && attempts[index - 1]?.modelId !== attempt.modelId
+        ? total + 1
+        : total,
+    0,
+  );
+
+  return {
+    attempts,
+    swaps,
   };
 }

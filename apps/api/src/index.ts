@@ -22,6 +22,27 @@ process.once("SIGTERM", shutdown);
 
 try {
   await server.listen({ host: config.host, port: config.port });
+  if (runtime.warmupStatus.state === "warming") {
+    server.log.info(
+      {
+        models: runtime.warmupStatus.models.map((target) => target.model),
+      },
+      "Warming local Quorum models.",
+    );
+  }
+  void runtime.warmup.then((status) => {
+    if (status.state === "degraded") {
+      server.log.warn(
+        { warmup: status },
+        "Local model warmup completed with failures.",
+      );
+    } else {
+      server.log.info(
+        { warmup: status },
+        "Local model warmup completed.",
+      );
+    }
+  });
 } catch (error) {
   server.log.error(error);
   process.exit(1);

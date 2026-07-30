@@ -7,24 +7,27 @@ function isLoopbackHostname(hostname: string): boolean {
   );
 }
 
-export function normalizeLoopbackBaseUrl(value: string): string {
+export function normalizeLoopbackBaseUrl(
+  value: string,
+  setting = "QUORUM_LOCAL_BASE_URL",
+): string {
   let url: URL;
   try {
     url = new URL(value);
   } catch {
-    throw new Error("QUORUM_LOCAL_BASE_URL must be a valid absolute URL.");
+    throw new Error(`${setting} must be a valid absolute URL.`);
   }
 
   if (!["http:", "https:"].includes(url.protocol)) {
-    throw new Error("QUORUM_LOCAL_BASE_URL must use HTTP or HTTPS.");
+    throw new Error(`${setting} must use HTTP or HTTPS.`);
   }
   if (!isLoopbackHostname(url.hostname)) {
     throw new Error(
-      "QUORUM_LOCAL_BASE_URL must resolve explicitly to localhost, 127.0.0.0/8, or ::1.",
+      `${setting} must resolve explicitly to localhost, 127.0.0.0/8, or ::1.`,
     );
   }
   if (url.username || url.password) {
-    throw new Error("QUORUM_LOCAL_BASE_URL must not contain credentials.");
+    throw new Error(`${setting} must not contain credentials.`);
   }
 
   return url.toString().replace(/\/$/, "");

@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { RequestCompiler } from "./request-compiler.js";
-import type { ChatRequest } from "./types.js";
+import {
+  containsSensitiveContent,
+  RequestCompiler,
+} from "./request-compiler.js";
+import type { ChatMessage, ChatRequest, RequestIntent } from "./types.js";
 
 function request(content: string): ChatRequest {
   return {
@@ -31,6 +34,39 @@ function conversationRequest(contents: string[]): ChatRequest {
   };
 }
 
+function assistantWithIntent(
+  intent: RequestIntent,
+  index: number,
+): ChatMessage {
+  return {
+    id: `assistant-${index}`,
+    role: "assistant",
+    content: `Previous ${intent} response.`,
+    createdAt: new Date(index).toISOString(),
+    execution: {
+      startedAt: index,
+      completedAt: index + 1,
+      plan: {
+        id: `plan-${index}`,
+        requestId: `request-${index}`,
+        policy: "balanced",
+        verbosity: "detailed",
+        analysis: {
+          source: "local_model",
+          intent,
+          confidence: 0.94,
+          taskSummary: `Continue the ${intent} task.`,
+        },
+        route: "local",
+        modelId: `local:${intent}:test`,
+        rationale: `Selected the ${intent} route.`,
+        steps: [],
+      },
+      traces: [],
+    },
+  };
+}
+
 describe("RequestCompiler", () => {
   const compiler = new RequestCompiler();
 
@@ -47,6 +83,22 @@ describe("RequestCompiler", () => {
       requiresFreshness: false,
       containsSensitiveData: false,
     });
+    expect(compiled.verbosity).toBe("standard");
+    expect(compiled.analysis).toEqual({
+      source: "heuristic",
+      intent: "conversation",
+      confidence: 0.5,
+      taskSummary: "What are your current capabilities?",
+    });
+  });
+
+  it("preserves an explicit response verbosity preference", () => {
+    expect(
+      compiler.compile({
+        ...request("Explain the routing decision."),
+        verbosity: "detailed",
+      }).verbosity,
+    ).toBe("detailed");
   });
 
   it.each([
@@ -66,10 +118,91 @@ describe("RequestCompiler", () => {
     ]);
   });
 
+  it("treats an explicit citation request as research without inventing freshness", () => {
+    const compiled = compiler.compile(
+      request("Cite sources supporting this architectural recommendation."),
+    );
+
+    expect(compiled.requirements).toMatchObject({
+      intent: "research",
+      requiresFreshness: false,
+      capabilities: ["chat", "reasoning", "web"],
+    });
+  });
+
+  it.each([
+    "Add a source map to the Webpack build.",
+    "Add a citations field to this TypeScript interface.",
+    "Include the source code file in the package.",
+    "Provide a source property on this React component.",
+    "Review the latest source code: const internalAlgorithm = 42;",
+    "Undo my most recent local commit.",
+    "Use the latest value from this array.",
+    "Fix the live preview component in this code.",
+  ])("does not authorize web search for local coding language: %s", (prompt) => {
+    const compiled = compiler.compile(request(prompt));
+
+    expect(compiled.requirements.intent).toBe("coding");
+    expect(compiled.requirements.capabilities).not.toContain("web");
+  });
+
+  it("honors an explicit network denial even when source language is ambiguous", () => {
+    const compiled = compiler.compile(
+      request("List sources from the local database without using the internet."),
+    );
+
+    expect(compiled.requirements.capabilities).not.toContain("web");
+  });
+
+  it.each([
+    "Research this offline.",
+    "Research only my local notes.",
+    "Research the local database; do not use external services.",
+    "Research this topic.",
+  ])("does not treat research intent alone as network consent: %s", (prompt) => {
+    const compiled = compiler.compile(request(prompt));
+
+    expect(compiled.requirements.intent).toBe("research");
+    expect(compiled.requirements.capabilities).toEqual(["chat", "reasoning"]);
+  });
+
+  it("authorizes web capability when the user explicitly asks for web search", () => {
+    expect(
+      compiler.compile(request("Search the web for Quorum architecture sources."))
+        .requirements.capabilities,
+    ).toEqual(["chat", "reasoning", "web"]);
+  });
+
+  it("recognizes explicit external-web phrasing as research authorization", () => {
+    const compiled = compiler.compile(
+      request("Use external web sources to compare these claims."),
+    );
+
+    expect(compiled.requirements.intent).toBe("research");
+    expect(compiled.requirements.capabilities).toContain("web");
+  });
+
+  it.each([
+    "Now summarize that offline.",
+    "Now compare it using only my local notes.",
+    "What about it without external services?",
+  ])("lets a current follow-up denial override prior web authorization: %s", (prompt) => {
+    const compiled = compiler.compile(
+      conversationRequest([
+        "Search the web for the latest Quorum release.",
+        prompt,
+      ]),
+    );
+
+    expect(compiled.requirements.intent).toBe("research");
+    expect(compiled.requirements.capabilities).not.toContain("web");
+  });
+
   it.each([
     "Solve this equation: 2x + 4 = 12.",
     "Analyze the logic of this argument.",
     "Calculate the area of a circle with radius 5.",
+    "Compare a modular architecture with a monolith for a local-first assistant, then recommend a practical starting point.",
   ])("classifies explicit reasoning work: %s", (prompt) => {
     const compiled = compiler.compile(request(prompt));
 
@@ -86,6 +219,27 @@ describe("RequestCompiler", () => {
     "Refactor this Go method to avoid duplication.",
     "Solve this SQL query.",
     "Analyze the runtime complexity of this algorithm.",
+    "Thank you. Could this be used easily with JS applications?",
+    "Can I call this from a TS service?",
+    "Integrate this with NodeJS.",
+    "Would JQuery be any different?",
+    "Migrate this Angular component to Vue.js.",
+    "Run the suite with pytest.",
+    "Containerize the service with Docker.",
+    "Change the PostgreSQL schema.",
+    "Update package.json and tsconfig.json.",
+    "Add a route to this Express app.",
+    "Configure the Spring Boot service.",
+    "Write an HCL module for Terraform.",
+    "How should I structure React state?",
+    "Why does my Android Activity crash?",
+    "Explain this HTTP 500 from the API.",
+    "Update this Helm chart.",
+    "Optimize this CUDA kernel.",
+    "Validate this YAML config.",
+    "Fix this regular expression.",
+    "Deploy the AWS Lambda.",
+    "Please review this source code for bugs.",
   ])("recognizes concrete coding work without broad keywords: %s", (prompt) => {
     expect(compiler.compile(request(prompt)).requirements.intent).toBe("coding");
   });
@@ -95,6 +249,50 @@ describe("RequestCompiler", () => {
     "Do not calculate anything; just chat.",
     "What is API pricing?",
     "Analyze how I feel about this.",
+    "Tell me about JS Bach.",
+    "Read a TS Eliot poem.",
+    "There is rust on my bicycle.",
+    "Should I go to the store?",
+    "How should I react to criticism?",
+    "The oracle at Delphi gave an answer.",
+    "She writes poetry every morning.",
+    "The cargo arrived by rail.",
+    "Explain angular momentum.",
+    "What does a python eat?",
+    "Tell me about Java coffee.",
+    "Please nix that proposal.",
+    "That song is groovy.",
+    "Throw a dart at the board.",
+    "The solidity of packed snow varies.",
+    "She took a flask with her.",
+    "Tell me about Cassandra in Greek mythology.",
+    "I need a prettier room.",
+    "Should I use the bus or go by train?",
+    "There is rust on my bike with a broken chain.",
+    "Build a nest for the birds.",
+    "How do I install a spring on a door?",
+    "Install the spring on the door.",
+    "Use the flask for water.",
+    "Run the dart tournament.",
+    "Flutter activity in my chest worries me.",
+    "We run in the spring.",
+    "They work in unity.",
+    "Travel via rails to the station.",
+    "Use Java coffee in the recipe.",
+    "That rude man is a git.",
+    "Could humans terraform Mars?",
+    "What is the molarity of HCl?",
+    "I booked tickets at Vue cinema.",
+    "Do not sass me.",
+    "The museum displayed a ruby gem.",
+    "Our community unity project brought neighbors together.",
+    "The spring bean crop was planted early.",
+    "I booked a Java class about Indonesian history.",
+    "The oracle query was answered by the priestess.",
+    "Tell me how to use cargo rail services.",
+    "The rust test on this metal was written yesterday.",
+    "What is better, plan A or C?",
+    "Review the fashion models and react to their poses.",
   ])("does not route incidental keywords to an expert: %s", (prompt) => {
     expect(compiler.compile(request(prompt)).requirements.intent).toBe(
       "conversation",
@@ -127,6 +325,119 @@ describe("RequestCompiler", () => {
     });
   });
 
+  it("carries specialist intent through chained contextual follow-ups", () => {
+    const compiled = compiler.compile(
+      conversationRequest([
+        "Create a SQL PIVOT query with dynamic columns.",
+        "Are there any better ways?",
+        "What about for ORACLE?",
+      ]),
+    );
+
+    expect(compiled.requirements).toMatchObject({
+      intent: "coding",
+      intentSource: "conversation",
+      intentConfidence: 0.78,
+      capabilities: ["chat", "coding"],
+    });
+  });
+
+  it("uses the previous effective intent for a courteous referential follow-up", () => {
+    const compiled = compiler.compile({
+      conversationId: "conversation-1",
+      policy: "balanced",
+      messages: [
+        {
+          id: "message-1",
+          role: "user",
+          content: "Design a backend integration.",
+          createdAt: new Date(0).toISOString(),
+        },
+        assistantWithIntent("coding", 1),
+        {
+          id: "message-2",
+          role: "user",
+          content:
+            "Thank you. Could this be used easily with desktop applications?",
+          createdAt: new Date(2).toISOString(),
+        },
+      ],
+    });
+
+    expect(compiled.requirements).toMatchObject({
+      intent: "coding",
+      intentSource: "conversation",
+      intentConfidence: 0.78,
+      capabilities: ["chat", "coding"],
+    });
+  });
+
+  it.each([
+    "Are there any better ways?",
+    "Is there a better approach?",
+    "What other options are there?",
+    "Any alternatives?",
+    "What else?",
+  ])("carries an established task through a comparative follow-up: %s", (prompt) => {
+    const compiled = compiler.compile(
+      conversationRequest([
+        "Create a SQL PIVOT query with dynamic columns.",
+        prompt,
+      ]),
+    );
+
+    expect(compiled.requirements).toMatchObject({
+      intent: "coding",
+      intentSource: "conversation",
+      intentConfidence: 0.78,
+      capabilities: ["chat", "coding"],
+    });
+  });
+
+  it.each([
+    "What about Vue?",
+    "What about Python instead?",
+    "What about Python for this?",
+    "Would Python work here?",
+    "Could Python be used here?",
+    "Does React work the same way?",
+    "Would Terraform work for this?",
+    "Python instead?",
+    "Could we use Python?",
+  ])("carries a named technology comparison only from an established coding task: %s", (prompt) => {
+    const compiled = compiler.compile(
+      conversationRequest([
+        "Migrate this Angular component.",
+        prompt,
+      ]),
+    );
+
+    expect(compiled.requirements).toMatchObject({
+      intent: "coding",
+      intentSource: "conversation",
+      capabilities: ["chat", "coding"],
+    });
+  });
+
+  it.each([
+    "What about Java?",
+    "What about Java instead?",
+    "Would Java work here?",
+  ])("does not turn a geographic Java follow-up into a coding task: %s", (prompt) => {
+    const compiled = compiler.compile(
+      conversationRequest([
+        "Tell me about Indonesian islands.",
+        prompt,
+      ]),
+    );
+
+    expect(compiled.requirements).toMatchObject({
+      intent: "conversation",
+      intentSource: "default",
+      capabilities: ["chat"],
+    });
+  });
+
   it("allows an explicit topic reset instead of carrying the prior route", () => {
     const compiled = compiler.compile(
       conversationRequest([
@@ -153,9 +464,221 @@ describe("RequestCompiler", () => {
     expect(compiled.requirements.intent).toBe("conversation");
   });
 
+  it("does not cross an explicit reset while walking a follow-up chain", () => {
+    const compiled = compiler.compile(
+      conversationRequest([
+        "Create a SQL PIVOT query with dynamic columns.",
+        "Are there any better ways?",
+        "New topic: tell me a joke.",
+        "What about that?",
+      ]),
+    );
+
+    expect(compiled.requirements).toMatchObject({
+      intent: "conversation",
+      intentSource: "default",
+    });
+  });
+
+  it("does not carry persisted specialist intent into a courtesy-prefixed reset", () => {
+    const compiled = compiler.compile({
+      conversationId: "conversation-1",
+      policy: "balanced",
+      messages: [
+        {
+          id: "message-1",
+          role: "user",
+          content: "Design a backend integration.",
+          createdAt: new Date(0).toISOString(),
+        },
+        assistantWithIntent("coding", 1),
+        {
+          id: "message-2",
+          role: "user",
+          content: "Thank you. New topic: tell me a joke.",
+          createdAt: new Date(2).toISOString(),
+        },
+      ],
+    });
+
+    expect(compiled.requirements).toMatchObject({
+      intent: "conversation",
+      intentSource: "default",
+    });
+  });
+
+  it("does not carry persisted specialist intent across a completed conversational turn", () => {
+    const compiled = compiler.compile({
+      conversationId: "conversation-1",
+      policy: "balanced",
+      messages: [
+        {
+          id: "message-1",
+          role: "user",
+          content: "Design a backend integration.",
+          createdAt: new Date(0).toISOString(),
+        },
+        assistantWithIntent("coding", 1),
+        {
+          id: "message-2",
+          role: "user",
+          content: "New topic: let's just talk.",
+          createdAt: new Date(2).toISOString(),
+        },
+        assistantWithIntent("conversation", 3),
+        {
+          id: "message-3",
+          role: "user",
+          content: "Thanks. Could this be improved?",
+          createdAt: new Date(4).toISOString(),
+        },
+      ],
+    });
+
+    expect(compiled.requirements).toMatchObject({
+      intent: "conversation",
+      intentSource: "default",
+    });
+  });
+
+  it.each([
+    "continue",
+    "please continue",
+    "Please continue.",
+    "continue with it",
+    "keep going",
+    "go on",
+    "carry on",
+  ])(
+    "inherits the persisted intent for a bare continuation request: %s",
+    (prompt) => {
+      const compiled = compiler.compile({
+        conversationId: "conversation-1",
+        policy: "balanced",
+        messages: [
+          {
+            id: "message-1",
+            role: "user",
+            content: "Explore biomimetic applications to computer technology.",
+            createdAt: new Date(0).toISOString(),
+          },
+          assistantWithIntent("research", 1),
+          {
+            id: "message-2",
+            role: "user",
+            content: prompt,
+            createdAt: new Date(2).toISOString(),
+          },
+        ],
+      });
+
+      expect(compiled.requirements).toMatchObject({
+        intent: "research",
+        intentSource: "conversation",
+        capabilities: ["chat", "reasoning"],
+      });
+    },
+  );
+
+  it("inherits coding for an object-bearing continuation request", () => {
+    const compiled = compiler.compile({
+      conversationId: "conversation-1",
+      policy: "balanced",
+      messages: [
+        {
+          id: "message-1",
+          role: "user",
+          content: "Implement an Oracle query in Node.js.",
+          createdAt: new Date(0).toISOString(),
+        },
+        assistantWithIntent("coding", 1),
+        {
+          id: "message-2",
+          role: "user",
+          content: "Please continue the implementation.",
+          createdAt: new Date(2).toISOString(),
+        },
+      ],
+    });
+
+    expect(compiled.requirements).toMatchObject({
+      intent: "coding",
+      intentSource: "conversation",
+      capabilities: ["chat", "coding"],
+    });
+  });
+
+  it("recovers the coding task after a low-confidence conversational misroute", () => {
+    const misroutedConversation = assistantWithIntent("conversation", 3);
+    if (misroutedConversation.execution) {
+      misroutedConversation.execution.plan.analysis.confidence = 0.5;
+      misroutedConversation.execution.plan.analysis.source = "hybrid";
+    }
+    const compiled = compiler.compile({
+      conversationId: "conversation-1",
+      policy: "balanced",
+      messages: [
+        {
+          id: "message-1",
+          role: "user",
+          content: "Create a dynamic SQL PIVOT query.",
+          createdAt: new Date(0).toISOString(),
+        },
+        assistantWithIntent("coding", 1),
+        {
+          id: "message-2",
+          role: "user",
+          content: "Could this be used easily with JS applications?",
+          createdAt: new Date(2).toISOString(),
+        },
+        misroutedConversation,
+        {
+          id: "message-3",
+          role: "user",
+          content: "Thanks. Could this be made asynchronous?",
+          createdAt: new Date(4).toISOString(),
+        },
+      ],
+    });
+
+    expect(compiled.requirements).toMatchObject({
+      intent: "coding",
+      intentSource: "conversation",
+      capabilities: ["chat", "coding"],
+    });
+  });
+
+  it("does not treat a new what-about subject as a persisted coding follow-up", () => {
+    const compiled = compiler.compile({
+      conversationId: "conversation-1",
+      policy: "balanced",
+      messages: [
+        {
+          id: "message-1",
+          role: "user",
+          content: "Design a backend integration.",
+          createdAt: new Date(0).toISOString(),
+        },
+        assistantWithIntent("coding", 1),
+        {
+          id: "message-2",
+          role: "user",
+          content: "What about the weather?",
+          createdAt: new Date(2).toISOString(),
+        },
+      ],
+    });
+
+    expect(compiled.requirements).toMatchObject({
+      intent: "conversation",
+      intentSource: "default",
+    });
+  });
+
   it.each([
     "What should I cook this weekend?",
     "Tell me about this composer.",
+    "What is the source of this error?",
   ])("does not treat an unrelated use of a pronoun as a follow-up: %s", (prompt) => {
     const compiled = compiler.compile(
       conversationRequest(["Write a TypeScript function.", prompt]),
@@ -170,6 +693,193 @@ describe("RequestCompiler", () => {
         "My private key is in the earlier message.",
         "Now summarize that.",
       ]),
+    );
+
+    expect(compiled.requirements.containsSensitiveData).toBe(true);
+  });
+
+  it.each([
+    "xoxb-123456789012-123456789012-abcdefghijklmnopqrstuvwx",
+    "sk_live_1234567890abcdefghijklmnop",
+    "postgres://admin:Sup3rS3cret@database.example/app",
+    "4111 1111 1111 1111",
+    "INTERNAL ONLY Project Falcon roadmap",
+    "AccountKey=abcdefghijklmnopqrstuvwxyz012345",
+  ])("detects common credential and restricted-data forms: %s", (value) => {
+    expect(containsSensitiveContent(value)).toBe(true);
+  });
+
+  it("uses a confident local prompt analysis for an ambiguous request", () => {
+    const baseline = compiler.compile(request("Can you help me with this?"));
+    const compiled = compiler.applyPromptAnalysis(
+      baseline,
+      { id: "local:classifier:test", label: "Tiny classifier" },
+      {
+        intent: "coding",
+        confidence: 0.91,
+        taskSummary: "Help with the current coding task.",
+      },
+    );
+
+    expect(compiled.requirements).toMatchObject({
+      intent: "coding",
+      intentConfidence: 0.91,
+      intentSource: "classifier",
+      capabilities: ["chat", "coding"],
+    });
+    expect(compiled.analysis).toMatchObject({
+      source: "local_model",
+      intent: "coding",
+      taskSummary: "Help with the current coding task.",
+      analyzer: {
+        modelId: "local:classifier:test",
+        modelLabel: "Tiny classifier",
+      },
+    });
+  });
+
+  it("never lets classifier output authorize network search", () => {
+    const baseline = compiler.compile(request("Can you help me with this?"));
+    const compiled = compiler.applyPromptAnalysis(
+      baseline,
+      { id: "local:classifier:test", label: "Tiny classifier" },
+      {
+        intent: "research",
+        confidence: 0.99,
+        taskSummary: "Search for current information.",
+      },
+    );
+
+    expect(compiled.requirements).toMatchObject({
+      intent: "research",
+      intentSource: "classifier",
+      capabilities: ["chat", "reasoning"],
+      requiresFreshness: false,
+    });
+  });
+
+  it("keeps a strong deterministic signal when the tiny model conflicts", () => {
+    const baseline = compiler.compile(
+      request("Write a SQL query for dynamic pivot columns."),
+    );
+    const compiled = compiler.applyPromptAnalysis(
+      baseline,
+      { id: "local:classifier:test", label: "Tiny classifier" },
+      {
+        intent: "conversation",
+        confidence: 0.9,
+        taskSummary: "Discuss database tables.",
+      },
+    );
+
+    expect(compiled.requirements.intent).toBe("coding");
+    expect(compiled.analysis).toMatchObject({
+      source: "hybrid",
+      intent: "coding",
+      analyzer: {
+        intent: "conversation",
+        confidence: 0.9,
+      },
+    });
+  });
+
+  it("does not let the prompt expert turn architecture analysis into a document task", () => {
+    const baseline = compiler.compile(
+      request(
+        "Compare a modular architecture with a monolith, then recommend a starting point.",
+      ),
+    );
+    const compiled = compiler.applyPromptAnalysis(
+      baseline,
+      { id: "local:classifier:test", label: "Prompt expert" },
+      {
+        intent: "document",
+        confidence: 1,
+        taskSummary: "Compare two software architectures.",
+      },
+    );
+
+    expect(compiled.requirements).toMatchObject({
+      intent: "reasoning",
+      intentConfidence: 0.9,
+      capabilities: ["chat", "reasoning"],
+    });
+    expect(compiled.analysis).toMatchObject({
+      source: "hybrid",
+      intent: "reasoning",
+      analyzer: { intent: "document", confidence: 1 },
+    });
+  });
+
+  it("allows the prompt expert to correct a contextual software-name guess", () => {
+    const baseline = compiler.compile(
+      request("Explain the React state of this art exhibition."),
+    );
+    expect(baseline.requirements).toMatchObject({
+      intent: "coding",
+      intentConfidence: 0.82,
+    });
+
+    const compiled = compiler.applyPromptAnalysis(
+      baseline,
+      { id: "local:classifier:test", label: "Prompt expert" },
+      {
+        intent: "conversation",
+        confidence: 0.95,
+        taskSummary: "Discuss an art exhibition.",
+      },
+    );
+
+    expect(compiled.requirements).toMatchObject({
+      intent: "conversation",
+      intentSource: "classifier",
+    });
+  });
+
+  it("protects inherited specialist context from a contradictory tiny model", () => {
+    const baseline = compiler.compile(
+      conversationRequest([
+        "Create a SQL PIVOT query with dynamic columns.",
+        "Are there any better ways?",
+      ]),
+    );
+    const compiled = compiler.applyPromptAnalysis(
+      baseline,
+      { id: "local:classifier:test", label: "Tiny classifier" },
+      {
+        intent: "conversation",
+        confidence: 1,
+        taskSummary: "Discuss alternative approaches.",
+      },
+    );
+
+    expect(compiled.requirements).toMatchObject({
+      intent: "coding",
+      intentSource: "conversation",
+      capabilities: ["chat", "coding"],
+    });
+    expect(compiled.analysis).toMatchObject({
+      source: "hybrid",
+      intent: "coding",
+      analyzer: {
+        intent: "conversation",
+        confidence: 1,
+      },
+    });
+  });
+
+  it("never lets prompt analysis clear deterministic sensitive-data detection", () => {
+    const baseline = compiler.compile(
+      request("Use API key sk-exampleSecret12345 to help with this."),
+    );
+    const compiled = compiler.applyPromptAnalysis(
+      baseline,
+      { id: "local:classifier:test", label: "Tiny classifier" },
+      {
+        intent: "conversation",
+        confidence: 0.95,
+        taskSummary: "Help with a request.",
+      },
     );
 
     expect(compiled.requirements.containsSensitiveData).toBe(true);

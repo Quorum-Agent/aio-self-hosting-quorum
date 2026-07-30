@@ -4,14 +4,25 @@ import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 
 import fastifyStatic from "@fastify/static";
-import { POLICIES, type ChatMessage, type OrchestrationEvent } from "@quorum/core";
+import {
+  POLICIES,
+  type ChatMessage,
+  type ExecutionTrace,
+  type OrchestrationEvent,
+  type TaskPlan,
+} from "@quorum/core";
 import Fastify from "fastify";
 import { z } from "zod";
 
-import type { AppConfig } from "./config.js";
+import {
+  WEB_SEARCH_PROVIDER_IDS,
+  type AppConfig,
+} from "./config.js";
 import { buildAuthoritativeContext } from "./conversation-context.js";
 import { QuorumDatabase } from "./database.js";
+import { isLoopbackHostname } from "./outbound-url.js";
 import type { QuorumRuntime } from "./runtime.js";
+import type { WebSearchSettingsUpdate } from "./web-search-provider.js";
 
 const messageSchema = z.object({
   id: z.string().min(1),
@@ -23,11 +34,39 @@ const messageSchema = z.object({
 const chatRequestSchema = z.object({
   conversationId: z.string().min(1),
   policy: z.enum(["private", "balanced", "quality", "offline"]),
+  verbosity: z.enum(["concise", "standard", "detailed"]).default("standard"),
   messages: z.array(messageSchema).min(1),
 });
 const exposedPolicies = Object.values(POLICIES).filter(
   (policy) => policy.id !== "cost_controlled",
 );
+const WEB_SEARCH_SETTING_KEY = "web_search";
+const apiKeyUpdateSchema = z
+  .object({
+    exa: z.string().max(4_096).nullable().optional(),
+    perplexity: z.string().max(4_096).nullable().optional(),
+    tavily: z.string().max(4_096).nullable().optional(),
+    brave: z.string().max(4_096).nullable().optional(),
+    firecrawl: z.string().max(4_096).nullable().optional(),
+  })
+  .strict();
+const webSearchSettingsUpdateSchema = z
+  .object({
+    enabled: z.boolean(),
+    provider: z.enum(WEB_SEARCH_PROVIDER_IDS),
+    resultLimit: z.number().int().min(3).max(10),
+    searxngBaseUrl: z.string().max(2_048).nullable().optional(),
+    apiKeys: apiKeyUpdateSchema.optional(),
+  })
+  .strict();
+
+function containsLegacyStoredApiKeys(value: unknown): boolean {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    Object.prototype.hasOwnProperty.call(value, "apiKeys")
+  );
+}
 
 function titleFromMessage(message: ChatMessage): string {
   const oneLine = message.content.replace(/\s+/g, " ").trim();
@@ -41,23 +80,114 @@ function writeEvent(response: NodeJS.WritableStream, event: OrchestrationEvent):
 export async function buildServer(config: AppConfig, runtime: QuorumRuntime) {
   const app = Fastify({ logger: { level: config.logLevel } });
   const database = new QuorumDatabase(config.dataDirectory);
+  const savedWebSearchSettings = database.getSetting(WEB_SEARCH_SETTING_KEY);
+  if (savedWebSearchSettings && runtime.webSearchProvider) {
+    try {
+      runtime.webSearchProvider.configureStored(savedWebSearchSettings);
+      const sanitized = runtime.webSearchProvider.storedSettings();
+      if (
+        JSON.stringify(savedWebSearchSettings) !== JSON.stringify(sanitized)
+      ) {
+        if (containsLegacyStoredApiKeys(savedWebSearchSettings)) {
+          database.replaceSettingAndPurgePreviousValue(
+            WEB_SEARCH_SETTING_KEY,
+            sanitized,
+          );
+        } else {
+          database.setSetting(WEB_SEARCH_SETTING_KEY, sanitized);
+        }
+      }
+    } catch (error) {
+      app.log.warn(
+        {
+          error:
+            error instanceof Error
+              ? error.message
+              : "Saved web-search settings are invalid.",
+        },
+        "Ignored invalid saved web-search settings.",
+      );
+    }
+  }
 
   app.addHook("onClose", async () => {
     database.close();
   });
 
+  app.addHook("onRequest", async (request, reply) => {
+    if (!request.url.startsWith("/api/")) return;
+    if (!isLoopbackHostname(request.hostname)) {
+      return reply.code(403).send({ message: "Untrusted request host." });
+    }
+    const origin = request.headers.origin;
+    if (!origin) return;
+    try {
+      if (!isLoopbackHostname(new URL(origin).hostname)) {
+        return reply.code(403).send({ message: "Untrusted request origin." });
+      }
+    } catch {
+      return reply.code(403).send({ message: "Untrusted request origin." });
+    }
+  });
+
   app.get("/api/health", async () => ({
     status: "ok",
     localRuntime: runtime.localRuntime,
+    warmup: runtime.warmupStatus,
     cloudConfigured: runtime.cloudConfigured,
+    webSearch: runtime.webSearch,
   }));
 
   app.get("/api/runtime", async () => ({
     policies: exposedPolicies,
     models: runtime.orchestrator.models,
     localRuntime: runtime.localRuntime,
+    warmup: runtime.warmupStatus,
     cloudConfigured: runtime.cloudConfigured,
+    webSearch: runtime.webSearch,
   }));
+
+  app.get("/api/settings/web-search", async (_request, reply) => {
+    if (!runtime.webSearchProvider) {
+      return reply
+        .code(503)
+        .send({ message: "Web-search settings are unavailable." });
+    }
+    return { settings: runtime.webSearchProvider.settings() };
+  });
+
+  app.put("/api/settings/web-search", async (request, reply) => {
+    if (!runtime.webSearchProvider) {
+      return reply
+        .code(503)
+        .send({ message: "Web-search settings are unavailable." });
+    }
+    const parsed = webSearchSettingsUpdateSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({
+        message: "Invalid web-search settings.",
+        issues: parsed.error.issues,
+      });
+    }
+    try {
+      const next = runtime.webSearchProvider.previewUpdate(
+        parsed.data as WebSearchSettingsUpdate,
+      );
+      database.setSetting(WEB_SEARCH_SETTING_KEY, next);
+      runtime.webSearchProvider.configureStored(next);
+      runtime.webSearchProvider.applySessionApiKeyUpdate(
+        (parsed.data as WebSearchSettingsUpdate).apiKeys,
+      );
+      return { settings: runtime.webSearchProvider.settings() };
+    } catch (error) {
+      return reply.code(400).send({
+        message:
+          error instanceof Error
+            ? error.message
+            : "Could not update web-search settings.",
+      });
+    }
+  });
 
   app.get("/api/conversations", async () => ({
     conversations: database.listConversations(),
@@ -124,23 +254,142 @@ export async function buildServer(config: AppConfig, runtime: QuorumRuntime) {
 
     const controller = new AbortController();
     reply.raw.on("close", () => controller.abort());
+    const executionStartedAt = Date.now();
+    const executionTraces = new Map<string, ExecutionTrace>();
+    let latestPlan: TaskPlan | undefined;
+    let streamedContent = "";
+    let webAuditMessageId: string | undefined;
+    let webAuditCreatedAt: string | undefined;
+    const writeIfOpen = (event: OrchestrationEvent) => {
+      if (!reply.raw.destroyed) writeEvent(reply.raw, event);
+    };
+    const executionMessage = (
+      plan: TaskPlan,
+      content: string,
+      source?: ChatMessage,
+    ): ChatMessage => ({
+      id: webAuditMessageId ?? source?.id ?? randomUUID(),
+      role: "assistant",
+      content,
+      createdAt:
+        webAuditCreatedAt ?? source?.createdAt ?? new Date().toISOString(),
+      execution: {
+        plan,
+        traces: [...executionTraces.values()],
+        startedAt: executionStartedAt,
+        completedAt: Date.now(),
+      },
+    });
+    const persistExecutionMessage = (message: ChatMessage) => {
+      if (webAuditMessageId) {
+        database.updateMessage(body.conversationId, message);
+      } else {
+        database.saveMessage(body.conversationId, message);
+      }
+    };
 
     try {
       for await (const event of runtime.orchestrator.run(
         { ...body, messages },
         controller.signal,
       )) {
-        if (event.type === "result") {
-          database.saveMessage(body.conversationId, event.result.message);
+        if (event.type === "trace") {
+          const existing = executionTraces.get(event.trace.stepId);
+          executionTraces.set(
+            event.trace.stepId,
+            existing && event.trace.status !== "running"
+              ? { ...event.trace, startedAt: existing.startedAt }
+              : event.trace,
+          );
         }
-        writeEvent(reply.raw, event);
+        if (event.type === "delta") {
+          streamedContent += event.content;
+        }
+        if (event.type === "plan") {
+          latestPlan = event.plan;
+          if (
+            event.plan.webSearch?.contextMayHaveLeftDevice &&
+            !webAuditMessageId
+          ) {
+            webAuditMessageId = randomUUID();
+            webAuditCreatedAt = new Date().toISOString();
+            database.saveMessage(
+              body.conversationId,
+              executionMessage(
+                event.plan,
+                "Web search started. No terminal execution record was received.",
+              ),
+            );
+          } else if (webAuditMessageId) {
+            database.updateMessage(
+              body.conversationId,
+              executionMessage(
+                event.plan,
+                "Web search started. No terminal execution record was received.",
+              ),
+            );
+          }
+        }
+        if (event.type === "result") {
+          latestPlan = event.result.plan;
+          const persistedMessage = executionMessage(
+            event.result.plan,
+            event.result.message.content,
+            event.result.message,
+          );
+          persistExecutionMessage(persistedMessage);
+          writeIfOpen({
+            ...event,
+            result: {
+              ...event.result,
+              message: persistedMessage,
+            },
+          });
+          continue;
+        }
+        if (event.type === "error" && event.plan) {
+          latestPlan = event.plan;
+          const persistedMessage = executionMessage(
+            event.plan,
+            event.partialContent
+              ? `${event.partialContent}\n\n[Generation stopped: ${event.message}]`
+              : `Request failed: ${event.message}`,
+          );
+          persistExecutionMessage(persistedMessage);
+          writeIfOpen({
+            ...event,
+            executionMessage: persistedMessage,
+          });
+          continue;
+        }
+        writeIfOpen(event);
       }
     } catch (error) {
-      writeEvent(reply.raw, {
-        type: "error",
-        message: error instanceof Error ? error.message : "Unexpected orchestration failure.",
-        recoverable: true,
-      });
+      const message =
+        error instanceof Error ? error.message : "Unexpected orchestration failure.";
+      if (latestPlan) {
+        const persistedMessage = executionMessage(
+          latestPlan,
+          streamedContent
+            ? `${streamedContent}\n\n[Generation stopped: ${message}]`
+            : `Request failed: ${message}`,
+        );
+        persistExecutionMessage(persistedMessage);
+        writeIfOpen({
+          type: "error",
+          message,
+          recoverable: true,
+          plan: latestPlan,
+          ...(streamedContent ? { partialContent: streamedContent } : {}),
+          executionMessage: persistedMessage,
+        });
+      } else {
+        writeIfOpen({
+          type: "error",
+          message,
+          recoverable: true,
+        });
+      }
     } finally {
       if (!reply.raw.destroyed) reply.raw.end();
     }
