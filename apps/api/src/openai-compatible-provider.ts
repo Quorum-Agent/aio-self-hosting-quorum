@@ -377,6 +377,48 @@ function parseCompletionFrame(frame: string): {
   return { contents, terminal, truncated, activity };
 }
 
+// Schema-constrained output is only well-formed JSON once generation finishes,
+// so an answer stopped at the token ceiling parses as nothing and the whole
+// response is lost. Recover the answer text written before the cut. This runs
+// only when the model reported stopping on length and the parse already
+// failed — it is not a general tolerance for malformed output.
+function salvageTruncatedAnswer(content: string): string | undefined {
+  const key = content.indexOf('"answer"');
+  if (key < 0) return undefined;
+  const colon = content.indexOf(":", key + '"answer"'.length);
+  if (colon < 0) return undefined;
+  let index = colon + 1;
+  while (index < content.length && /\s/u.test(content[index]!)) index += 1;
+  if (content[index] !== '"') return undefined;
+  index += 1;
+
+  let salvaged = "";
+  while (index < content.length) {
+    const character = content[index]!;
+    if (character === '"') break;
+    if (character !== "\\") {
+      salvaged += character;
+      index += 1;
+      continue;
+    }
+    // An escape cut in half cannot be decoded; stop cleanly before it.
+    const width = content[index + 1] === "u" ? 6 : 2;
+    const escape = content.slice(index, index + width);
+    if (escape.length < width) break;
+    try {
+      salvaged += JSON.parse(`"${escape}"`) as string;
+    } catch {
+      break;
+    }
+    index += width;
+  }
+
+  // Never end on the leading half of a surrogate pair.
+  const lastUnit = salvaged.charCodeAt(salvaged.length - 1);
+  if (lastUnit >= 0xd800 && lastUnit <= 0xdbff) salvaged = salvaged.slice(0, -1);
+  return salvaged;
+}
+
 function truncationNotice(modelLabel: string, maximumTokens: number): string {
   return (
     `\n\n[${modelLabel} reached Quorum's ${maximumTokens}-token response limit. ` +
@@ -404,6 +446,9 @@ class PublicAnswerEnvelope {
     return [];
   }
 
+  // Deliberately does not salvage a truncated envelope, unlike the structured
+  // path. A response ending in a partial closing tag is ambiguous about where
+  // the public answer stopped and what followed it, so it stays rejected.
   finish(_truncated = false): string[] {
     const response = this.#response.trim();
     if (!response.startsWith(PUBLIC_ANSWER_OPEN)) {
@@ -563,10 +608,19 @@ async function* streamOllamaResponse(
       "provider",
     );
   }
-  const publicAnswer = parseStructuredPublicAnswer(
-    structuredContent,
-    modelLabel,
-  );
+  let publicAnswer: string;
+  try {
+    publicAnswer = parseStructuredPublicAnswer(structuredContent, modelLabel);
+  } catch (error) {
+    const salvaged = truncated
+      ? salvageTruncatedAnswer(structuredContent)
+      : undefined;
+    if (salvaged === undefined || !hasVisibleContent(salvaged)) throw error;
+    markValidated();
+    yield salvaged;
+    yield truncationNotice(modelLabel, maximumOutputTokens);
+    return;
+  }
   markValidated();
   yield publicAnswer;
   if (truncated) {
