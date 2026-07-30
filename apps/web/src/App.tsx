@@ -39,6 +39,7 @@ import {
   type ConversationRecord,
   type RuntimeInfo,
 } from "./lib/api";
+import { createRandomId } from "./lib/random-id";
 import {
   describeRuntimeStatus,
   selectablePolicies,
@@ -96,7 +97,7 @@ function savedPolicy(): PolicyMode {
 }
 
 function createConversationId() {
-  return crypto.randomUUID();
+  return createRandomId();
 }
 
 function coalesceTrace(
@@ -318,7 +319,7 @@ export default function App() {
     if (!content || busy || runtimePreparing) return;
 
     const userMessage: ChatMessage = {
-      id: crypto.randomUUID(),
+      id: createRandomId(),
       role: "user",
       content,
       createdAt: new Date().toISOString(),

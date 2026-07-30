@@ -1,6 +1,8 @@
 import { Check, Copy } from "lucide-react";
 import { Fragment, type ReactNode, useState } from "react";
 
+import { copyText } from "../lib/clipboard";
+
 function safeLink(value: string): string | undefined {
   try {
     const url = new URL(value);
@@ -53,7 +55,8 @@ function CodeBlock({ code, language }: { code: string; language?: string }) {
         <button
           type="button"
           onClick={() => {
-            void navigator.clipboard.writeText(code).then(() => {
+            void copyText(code).then((copiedToClipboard) => {
+              if (!copiedToClipboard) return;
               setCopied(true);
               window.setTimeout(() => setCopied(false), 1_500);
             });
