@@ -21,6 +21,8 @@ import {
 } from "./loopback-url.js";
 
 const TOUCHED = [
+  "QUORUM_NETWORK_API_KEY",
+  "QUORUM_NETWORK_BASE_URL",
   "QUORUM_CLOUD_API_KEY",
   "QUORUM_CLOUD_BASE_URL",
   "QUORUM_CLOUD_MODEL",
@@ -174,5 +176,39 @@ describe("the network tier permits a LAN peer without permitting the internet", 
     expect(() => normalizeCloudBaseUrl("http://rented.example/v1")).toThrow(
       /HTTPS/u,
     );
+  });
+});
+
+describe("a network peer is absent unless credentials are present", () => {
+  // Same rule as cloud, for the same reason and then one more. A peer that
+  // answers unauthenticated is a peer anyone on the LAN can impersonate —
+  // stand up a listener on the expected port and receive the conversation.
+  // There is deliberately no anonymous mode.
+  it("omits the peer when no key is set", () => {
+    delete process.env["QUORUM_NETWORK_API_KEY"];
+    process.env["QUORUM_NETWORK_BASE_URL"] = "http://192.168.1.10:8080/v1";
+
+    expect(loadConfig().network).toBeUndefined();
+  });
+
+  it("omits the peer when a key is set but no address is", () => {
+    process.env["QUORUM_NETWORK_API_KEY"] = "peer-key";
+    delete process.env["QUORUM_NETWORK_BASE_URL"];
+
+    expect(loadConfig().network).toBeUndefined();
+  });
+
+  it("refuses a peer address that is not on a private network", () => {
+    process.env["QUORUM_NETWORK_API_KEY"] = "peer-key";
+    process.env["QUORUM_NETWORK_BASE_URL"] = "https://api.openai.com/v1";
+
+    expect(() => loadConfig()).toThrow(/private network host/u);
+  });
+
+  it("registers a peer when both are genuinely present", () => {
+    process.env["QUORUM_NETWORK_API_KEY"] = "peer-key";
+    process.env["QUORUM_NETWORK_BASE_URL"] = "http://192.168.1.10:8080/v1";
+
+    expect(loadConfig().network?.apiKey).toBe("peer-key");
   });
 });
