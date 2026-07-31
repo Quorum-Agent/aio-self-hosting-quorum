@@ -113,6 +113,37 @@ Not offered, with reasons:
   GGUF `text-to-image` models, so it is locally runnable, but Quorum has no path for
   producing an image as an answer. The blocker is the message model, not the ecosystem.
 
+### The domains, derived from the slots
+
+The domain list is derived **from** the slots rather than the reverse. The originating
+taxonomy for this ADR was top-down from a single unvalidated source; slots are the axis
+with measurable supply behind them, so deriving upward makes the domain list a consequence
+of things that can be checked.
+
+| Domain | Slots | User-visible? |
+| --- | --- | --- |
+| Conversation | general | yes |
+| Code | code | yes |
+| Documents | document understanding, text extraction | yes |
+| Vision | vision | yes |
+| Speech | speech to text, text to speech | yes |
+| Analysis | deep reasoning / math | yes |
+| Knowledge | embedding, reranking | **no — infrastructural** |
+| Verification | safety / verification | partly |
+
+Eight domains, ten slots — which is what "stable and few" has to mean to be worth
+asserting.
+
+**Not every slot is a decision an operator should have to make.** Knowledge is the clear
+case: a user asks to search their notes, never to select a reranker. Embedding and
+reranking are infrastructural — real slots, substitutable, but they belong behind a
+sensible default rather than in front of the operator. Verification splits: Quorum's own
+output validation is infrastructural, while checking a procedure against a regulatory
+corpus is something a user asks for deliberately.
+
+This partly answers the configuration-surface objection recorded below. The surface is not
+ten decisions; it is closer to six, with the rest defaulted and overridable.
+
 ### Slots are not uniform in cost
 
 A flat role list assumes every spoke competes for the same budget. Slots do not:
@@ -229,8 +260,10 @@ than resolved.
   configuration surface. The design must degrade to "set one model and it works", or it
   will be worse than what it replaces for the majority case.
 - **Ten slots is a large configuration surface.** Every slot is a decision an operator did
-  not previously have to make. Defaults, and honest "not configured" states, matter more
-  than the slots themselves.
+  not previously have to make. *Partly addressed:* slots are now split into user-visible
+  and infrastructural, which cuts the surface to roughly six decisions with the remainder
+  defaulted. Defaults and honest "not configured" states still matter more than the slots
+  themselves, and the finding is reduced rather than closed.
 - **Nothing here says how slots are discovered or advertised.** An operator cannot fill a
   slot they do not know exists, and the ADR is silent on the interface. Deliberate — it is
   a modelling decision, not a UI one — but it is the obvious next question and is not
