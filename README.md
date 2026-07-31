@@ -248,9 +248,20 @@ that provider and disable automatic provider fallback. Setting
 `QUORUM_WEB_SEARCH_ENABLED=false` is an operator kill switch: saved UI settings cannot
 turn search back on.
 
+**A loopback SearXNG does not keep your query on the machine.** SearXNG is a
+metasearch *proxy*: it forwards every query to Google, Bing and other upstream
+engines, so the query leaves the device regardless of where the instance listens.
+Quorum classifies it `location: "web"` with `contextMayLeaveDevice: true` for exactly
+that reason, and Private and Offline never reach it.
+
+That distinction is stated first because the restriction below is about a different
+thing, and reading it alone leads to the opposite conclusion — as it has, more than
+once.
+
 SearXNG accepts explicit loopback HTTP or HTTPS URLs; remote instances are rejected
-to keep the configurable endpoint out of Quorum's server-side request boundary.
-Quorum does not rotate through public instances. Private and Offline modes never
+to keep **the configurable endpoint** out of Quorum's server-side request boundary.
+That is a defence against a hostile URL in configuration, not a guarantee about where
+your query travels. Quorum does not rotate through public instances. Private and Offline modes never
 search, and requests detected as sensitive never search. Each logical search has one
 eight-second deadline, does not follow redirects, allows at most two concurrent and
 30 per minute, and feeds only bounded HTTPS results that pass lexical safety
