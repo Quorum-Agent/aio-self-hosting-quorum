@@ -14,6 +14,7 @@ import {
   buildManagedLlamaArguments,
   loadManagedLlamaManifest,
   renderManagedLlamaPreset,
+  startManagedLlamaOrDegrade,
   withManagedLlamaEndpoint,
   type ManagedLlamaManifest,
 } from "./managed-llama-runtime.js";
@@ -260,6 +261,53 @@ describe("managed llama.cpp runtime", () => {
 
     expect(reconciled.models[0]?.contextWindow).toBe(8_192);
     expect(reconciled.promptAnalyzer.contextWindow).toBe(4_096);
+  });
+
+  // An absent Ollama leaves the app usable on the scaffold responder. Any
+  // managed-runtime problem used to throw out of index.ts into
+  // process.exit(1) — a misconfigured OPTIONAL runtime taking down the whole
+  // API. These pin the asymmetry closed.
+  describe("degrading instead of exiting", () => {
+    it("is a no-op when no managed runtime is configured", async () => {
+      let degraded = false;
+      const result = await startManagedLlamaOrDegrade(appConfig, () => {
+        degraded = true;
+      });
+
+      expect(result.runtime).toBeUndefined();
+      expect(result.config).toBe(appConfig);
+      expect(degraded).toBe(false);
+    });
+
+    it("returns the untouched config and reports why, instead of throwing", async () => {
+      const configured: AppConfig = {
+        ...appConfig,
+        managedLlama: {
+          executable: join(tmpdir(), "definitely-not-a-real-llama-server.exe"),
+          manifestPath: join(tmpdir(), "definitely-not-a-real-manifest.json"),
+          startupTimeoutMs: 1_000,
+        },
+      };
+      const reported: string[] = [];
+
+      const result = await startManagedLlamaOrDegrade(
+        configured,
+        (message) => reported.push(message),
+      );
+
+      expect(result.runtime).toBeUndefined();
+      // Unchanged, so discovery finds no `quorum-main`/`quorum-prompt` and the
+      // runtime reports unavailable — it cannot silently answer from some
+      // other model that happens to be listening.
+      expect(result.config.local.baseUrl).toBe(appConfig.local.baseUrl);
+      expect(result.config.local.transport).toBe("ollama");
+      expect(reported).toHaveLength(1);
+      // The message has to name what to check; "failed to start" sends the
+      // operator to the source.
+      expect(reported[0]).toContain("QUORUM_MANAGED_LLAMA_SERVER");
+      expect(reported[0]).toContain("QUORUM_MANAGED_LLAMA_MODELS");
+      expect(reported[0]).toContain("QUORUM_LOCAL_MODEL");
+    });
   });
 
   it("does not mutate the configuration it was given", () => {

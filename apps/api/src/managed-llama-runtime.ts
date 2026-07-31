@@ -413,6 +413,58 @@ export function withManagedLlamaEndpoint(
   };
 }
 
+/**
+ * Starts the managed runtime if configured, and degrades instead of dying.
+ *
+ * Before this, the two local runtimes failed asymmetrically: an absent Ollama
+ * leaves the app usable on the scaffold responder, while any managed-runtime
+ * problem — missing manifest, deleted model file, digest mismatch, a model that
+ * fails to load, startup timeout — threw out of `index.ts` into
+ * `process.exit(1)`. A misconfigured optional runtime took down the whole API,
+ * which on its own disqualifies it from being the default.
+ *
+ * Degrading is safe rather than merely convenient. Falling through leaves the
+ * configured model names (`quorum-main`, `quorum-prompt`) pointed at whatever
+ * `QUORUM_LOCAL_BASE_URL` is, which will not have them, so discovery finds
+ * nothing and the runtime reports itself unavailable — the same state as no
+ * Ollama. It cannot silently answer from an unintended model.
+ */
+export async function startManagedLlamaOrDegrade(
+  config: AppConfig,
+  onDegraded: (message: string, error: unknown) => void,
+): Promise<{ config: AppConfig; runtime: ManagedLlamaRuntime | undefined }> {
+  if (!config.managedLlama) return { config, runtime: undefined };
+  let runtime: ManagedLlamaRuntime | undefined;
+  try {
+    runtime = await startManagedLlamaRuntime(
+      config.managedLlama,
+      config.dataDirectory,
+    );
+    return { config: withManagedLlamaEndpoint(config, runtime), runtime };
+  } catch (error) {
+    // Stop a process that started but failed a later gate, so a degraded
+    // launch cannot leave a llama-server holding VRAM with nothing addressing
+    // it.
+    if (runtime) {
+      try {
+        await runtime.stop();
+      } catch {
+        // Already failing; a stop error must not mask the original cause.
+      }
+    }
+    onDegraded(
+      "The managed llama.cpp runtime did not start, so Quorum is running " +
+        "without it. Check QUORUM_MANAGED_LLAMA_SERVER points at an existing " +
+        "llama-server executable, QUORUM_MANAGED_LLAMA_MODELS points at a " +
+        "readable manifest, every 'file' in that manifest exists and matches " +
+        "its 'sha256' if one is given, and QUORUM_LOCAL_MODEL and " +
+        "QUORUM_LOCAL_PROMPT_MODEL name IDs the manifest declares.",
+      error,
+    );
+    return { config, runtime: undefined };
+  }
+}
+
 export async function startManagedLlamaRuntime(
   config: ManagedLlamaConfig,
   dataDirectory: string,

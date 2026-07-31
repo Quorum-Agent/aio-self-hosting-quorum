@@ -4,8 +4,7 @@ import { config as loadEnvironment } from "dotenv";
 
 import { loadConfig, PROJECT_ROOT } from "./config.js";
 import {
-  startManagedLlamaRuntime,
-  withManagedLlamaEndpoint,
+  startManagedLlamaOrDegrade,
   type ManagedLlamaRuntime,
 } from "./managed-llama-runtime.js";
 import { createRuntime } from "./runtime.js";
@@ -30,13 +29,14 @@ const shutdown = async (exitCode: number) => {
 
 try {
   let config = loadConfig();
-  if (config.managedLlama) {
-    managedLlama = await startManagedLlamaRuntime(
-      config.managedLlama,
-      config.dataDirectory,
-    );
-    config = withManagedLlamaEndpoint(config, managedLlama);
-  }
+  let managedLlamaFailure: { message: string; error: unknown } | undefined;
+  ({ config, runtime: managedLlama } = await startManagedLlamaOrDegrade(
+    config,
+    (message, error) => {
+      managedLlamaFailure = { message, error };
+      console.error(message, error);
+    },
+  ));
   const runtime = await createRuntime(config);
   server = await buildServer(config, runtime);
   const activeServer = server;
@@ -44,6 +44,15 @@ try {
   process.once("SIGINT", () => void shutdown(0));
   process.once("SIGTERM", () => void shutdown(0));
   await activeServer.listen({ host: config.host, port: config.port });
+  if (managedLlamaFailure) {
+    // Repeat it through the real logger now one exists, so the reason is in the
+    // same place as every other operational event rather than only on stderr
+    // before startup.
+    activeServer.log.error(
+      { err: managedLlamaFailure.error },
+      managedLlamaFailure.message,
+    );
+  }
   if (runtime.warmupStatus.state === "warming") {
     activeServer.log.info(
       {
