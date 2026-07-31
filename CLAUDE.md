@@ -2,10 +2,21 @@
 
 Guidance for anyone — human or assistant — changing this repository.
 
-`docs/architecture.md` is the durable design. `REDTEAM-FINDINGS.md` is the durable record
-of what has been tried, found, and disproved; read the section relevant to whatever you
-are about to touch, because several of its entries exist specifically to stop a fix being
-re-attempted.
+`docs/architecture.md` is the durable design and the only statement of **current** truth.
+`REDTEAM-FINDINGS.md` is the durable record of what has been tried, found, and disproved;
+read the section relevant to whatever you are about to touch, because several of its
+entries exist specifically to stop a fix being re-attempted.
+
+**Decision records are history, not rules.** An ADR says why a past decision was made; it
+does not constrain what you may build today, and citing one against a proposal is not an
+argument. See `docs/decisions/README.md` — that convention exists because this mistake was
+made here, against the repository's owner, using ADR 0001.
+
+**Documentation is untested and drifts.** `scripts/doc-probe.mjs` gives models the docs
+alone and scores what they conclude against known answers. It has already caught a claim
+three reviewers missed. If you change a doc to make something clearer, run it — "I
+clarified it" and "a reader now gets it right" are different claims, which is rule 1
+applied to prose.
 
 ---
 
