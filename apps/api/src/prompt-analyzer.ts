@@ -173,6 +173,13 @@ export class LocalPromptAnalyzer implements PromptAnalyzer {
   readonly #model: string;
   readonly #contextWindow: number;
   readonly #nativeOllama: boolean;
+  /**
+   * Loopback, enforced by the same validator the local model provider uses
+   * rather than assumed. `config.ts` already normalises this URL, but the
+   * analyzer stored `options.baseUrl` raw, so nothing here would have noticed
+   * if a caller passed something else.
+   */
+  readonly location = "local" as const;
   readonly #scheduler: InferenceScheduler;
 
   constructor(options: PromptAnalyzerOptions) {

@@ -226,6 +226,21 @@ export interface PromptAnalyzerInput {
 export interface PromptAnalyzer {
   readonly id: Id;
   readonly label: string;
+  /**
+   * Where this analyzer runs.
+   *
+   * The analyzer receives the **full message list**, so it is a
+   * conversation-bearing stage exactly as a model step is — but its plan step
+   * hardcoded `location: "local"` and nothing tied that literal to reality.
+   * It happens to be true today because `config.ts` puts the analyzer's base
+   * URL through `normalizeLoopbackBaseUrl`, so the guarantee lived one layer
+   * above the place that asserted it.
+   *
+   * Optional so an analyzer that genuinely is in-process need not restate it;
+   * the orchestrator treats an absent value as `"local"`, which is what the
+   * hardcoded literal meant.
+   */
+  readonly location?: Exclude<ExecutionLocation, "device">;
   analyze(
     input: PromptAnalyzerInput,
     signal?: AbortSignal,
