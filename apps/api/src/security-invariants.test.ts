@@ -14,6 +14,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import { loadConfig } from "./config.js";
+import { isLoopbackHostname } from "./outbound-url.js";
 
 const TOUCHED = [
   "QUORUM_CLOUD_API_KEY",
@@ -77,5 +78,52 @@ describe("the API binds to loopback only", () => {
     process.env["HOST"] = "127.0.0.1";
 
     expect(loadConfig().host).toBe("127.0.0.1");
+  });
+});
+
+describe("isLoopbackHostname is the shared basis for five separate controls", () => {
+  // I-6 (local provider URLs), I-7 (cloud provider URLs), I-13's precondition
+  // (the API bind address), the request-time Origin/Host guard in server.ts,
+  // and the SSRF check on web-search result URLs all resolve to this one
+  // function. It had no dedicated test: each caller tested its own behaviour
+  // with one or two hostnames, so the function's edges were covered only by
+  // whatever those callers happened to pass.
+  //
+  // The risk is asymmetric. A false negative rejects a valid loopback address
+  // and something visibly breaks. A false positive accepts a non-loopback
+  // address as local, and five controls open at once, silently.
+  it.each([
+    "127.0.0.1",
+    "127.1.2.3",
+    "localhost",
+    "LOCALHOST",
+    "app.localhost",
+    "localhost.",
+    "::1",
+    "[::1]",
+    "::ffff:127.0.0.1",
+  ])("accepts %s", (hostname) => {
+    expect(isLoopbackHostname(hostname)).toBe(true);
+  });
+
+  it.each([
+    "0.0.0.0",
+    "8.8.8.8",
+    "::ffff:8.8.8.8",
+    "2130706433", // 127.0.0.1 as a decimal integer
+    "0x7f000001", // and as hex
+    "127.0.0.1.evil.com",
+    "notlocalhost",
+    "localhost.evil.com",
+    "evil.com#localhost",
+    "127.0.0.1@evil.com",
+    "::2",
+    "fe80::1",
+    "10.0.0.1",
+    "192.168.1.1",
+    "169.254.169.254", // cloud metadata, the classic SSRF target
+    "",
+  ])("rejects %s", (hostname) => {
+    expect(isLoopbackHostname(hostname)).toBe(false);
   });
 });
