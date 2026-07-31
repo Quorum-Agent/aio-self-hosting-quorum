@@ -289,6 +289,10 @@ More detail is in [docs/architecture.md](docs/architecture.md).
 | `apps/api` | Fastify API, SQLite persistence, provider configuration |
 | `packages/core` | Domain types, request compiler, policies, routing, orchestration |
 
+Before changing anything, read [`CLAUDE.md`](CLAUDE.md) — the working rules, chiefly that
+a change must be proven not to be cosmetic by breaking it and watching a test fail. That
+is one rule with a body count behind it; the file lists them.
+
 Useful commands:
 
 ```bash
