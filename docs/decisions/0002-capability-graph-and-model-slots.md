@@ -91,6 +91,7 @@ Offered:
 | Vision | Qwen-VL, InternVL, moondream | Official VLMs; no finetune scene |
 | Speech to text | Whisper, Parakeet | Small, co-resident |
 | Text to speech | Piper, Kokoro | Weakest quality-to-effort ratio of the set |
+| Audio understanding | Voxtral, Qwen2-Audio, Ultravox | `audio-text-to-text` — the exact parallel of vision's `image-text-to-text`. **Not** transcription: answers questions *about* audio (genre, speaker affect, what a sound is) that ASR cannot |
 | Embedding | nomic-embed, mxbai, bge | Service role, never a chat model |
 | Reranking | bge-reranker, Qwen3-Reranker | Distinct from embedding; commonly conflated |
 | Safety / verification | Llama Guard, ShieldGemma, compliance finetunes | 274 GGUF `text-classification` models. **Distinct from Quorum's coded validation layer** — see below |
@@ -109,9 +110,15 @@ Not offered, with reasons:
   with the dedicated front-ends that own that use case.
 - **Agents / computer interaction / video** — need plumbing before a model choice means
   anything. No tool-calling loop exists (see the `tools` symptom above).
-- **Generative media** — excluded for a *product* reason, not a supply one: there are 424
-  GGUF `text-to-image` models, so it is locally runnable, but Quorum has no path for
-  producing an image as an answer. The blocker is the message model, not the ecosystem.
+- **Generative media** — excluded for a *product* reason, not a supply one: 424 GGUF
+  `text-to-image` models and a healthy `text-to-audio` population (ace-step, stable-audio,
+  thinksound) mean this is locally runnable. Quorum has no path for producing an image or
+  an audio clip as an answer. The blocker is the message model, not the ecosystem.
+- **Audio source separation and music information retrieval** — real and locally runnable
+  (Demucs, BSRoformer; chord, beat and piano-transcription models), but they are
+  media-production tools rather than answers to a prompt. Separation has no return path,
+  for the same reason as generative media. MIR does produce symbolic output Quorum *could*
+  return, and is excluded on demand rather than on shape — the weaker of the two reasons.
 
 ### The domains, derived from the slots
 
@@ -126,13 +133,19 @@ of things that can be checked.
 | Code | code | yes |
 | Documents | document understanding, text extraction | yes |
 | Vision | vision | yes |
-| Speech | speech to text, text to speech | yes |
+| Audio | speech to text, text to speech, audio understanding | yes |
 | Analysis | deep reasoning / math | yes |
 | Knowledge | embedding, reranking | **no — infrastructural** |
 | Verification | safety / verification | partly |
 
-Eight domains, ten slots — which is what "stable and few" has to mean to be worth
+Eight domains, eleven slots — which is what "stable and few" has to mean to be worth
 asserting.
+
+**Domains are named by modality, not by use.** An earlier draft named this domain *Speech*,
+which is a use *within* audio, while naming its neighbour *Vision*, which is a modality.
+That inconsistency is not cosmetic: it hid a slot. Vision was given an
+`image-text-to-text` understanding slot and audio was not, because "speech" does not
+prompt the question. Naming both by modality makes the asymmetry visible.
 
 **Not every slot is a decision an operator should have to make.** Knowledge is the clear
 case: a user asks to search their notes, never to select a reranker. Embedding and
@@ -259,15 +272,28 @@ than resolved.
   model gains nothing from domain/slot/provider/attribute and pays for it in
   configuration surface. The design must degrade to "set one model and it works", or it
   will be worse than what it replaces for the majority case.
-- **Ten slots is a large configuration surface.** Every slot is a decision an operator did
-  not previously have to make. *Partly addressed:* slots are now split into user-visible
-  and infrastructural, which cuts the surface to roughly six decisions with the remainder
+- **Eleven slots is a large configuration surface.** Every slot is a decision an operator
+  did not previously have to make. *Partly addressed:* slots are now split into
+  user-visible and infrastructural, which cuts the surface to roughly seven decisions with the remainder
   defaulted. Defaults and honest "not configured" states still matter more than the slots
   themselves, and the finding is reduced rather than closed.
 - **Nothing here says how slots are discovered or advertised.** An operator cannot fill a
   slot they do not know exists, and the ADR is silent on the interface. Deliberate — it is
   a modelling decision, not a UI one — but it is the obvious next question and is not
   answered.
+
+### Found after review, by the user
+
+- **A domain named after a use concealed a missing slot.** *Vision* is a modality, *Speech*
+  is a use within audio. Because the domain was not named for its modality, the question
+  "where is audio's understanding model?" was never asked, and `audio-text-to-text` — a
+  well-supplied class including Voxtral, Qwen2-Audio and Ultravox — had no slot while its
+  exact structural counterpart in vision did. **Applied:** domain renamed to *Audio*, slot
+  added, and the naming rule stated so the next domain does not repeat it.
+- Note the failure mode. The slot list was checked against measured supply and the check
+  *passed*, because it verified that every listed slot had models behind it. It could not
+  detect a slot that was never listed. Supply data validates inclusions; it does not
+  surface omissions.
 
 ### Inherent limitations
 
