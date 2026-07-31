@@ -42,9 +42,19 @@ Model the capability graph as four distinct concepts.
 **Domain** — the work being done, from the user's point of view. Conversation, code,
 documents, speech, and so on. Domains are stable and few.
 
-**Slot** — a discrete operation within a domain. "Documents" is not one slot: OCR, layout
-analysis, text extraction, table extraction and chunking are siblings. A slot is the unit
-Quorum offers, configures, and routes to.
+**Slot** — a discrete operation, identified by **(operation × IO signature)**. This is
+not simply "a sub-domain", and the distinction is load-bearing.
+
+Two taxonomies are in play and they run on different axes. Intent taxonomies (what the
+user wants done — "read this receipt", "explain this code") are what the classifier
+resolves. IO taxonomies (what shapes a model consumes and produces) are what determine
+which providers *can* fill a slot. Hugging Face's 47 maintained task tags are the latter:
+`image-text-to-text` is a single tag covering OCR, visual question answering, chart
+reading and screenshot understanding — four intents, one signature.
+
+A slot sits at the intersection. That is why OCR and text extraction are siblings — same
+output shape, different provider kind — and why one vision-language model can fill slots
+that serve several unrelated intents.
 
 **Provider** — what fills a slot. A model, a **deterministic library**, a remote peer, or
 nothing. This is the level the current design most lacks: a PDF text extractor is
@@ -76,28 +86,32 @@ Offered:
 | --- | --- | --- |
 | Code | Qwen-Coder, DeepSeek-Coder, Devstral | Served today |
 | Deep reasoning / math | R1 distills, QwQ, DeepSeekMath, Qwen-Math | **Not** the current `reasoning` role — see Consequences |
-| OCR | PaddleOCR-VL, Churro, dots.ocr | Sits beside text extraction, not instead of it |
+| Document understanding | Qwen-VL, PaddleOCR-VL, dots.ocr | `image-text-to-text`. Measured: `document-question-answering` has **1** GGUF, so OCR is not its own supply category — it lives inside VLMs |
 | Text extraction / parsing | *(library, not a model)* | The case that motivates the provider level |
 | Vision | Qwen-VL, InternVL, moondream | Official VLMs; no finetune scene |
 | Speech to text | Whisper, Parakeet | Small, co-resident |
 | Text to speech | Piper, Kokoro | Weakest quality-to-effort ratio of the set |
 | Embedding | nomic-embed, mxbai, bge | Service role, never a chat model |
 | Reranking | bge-reranker, Qwen3-Reranker | Distinct from embedding; commonly conflated |
-| Safety / verification | classifiers, tool-call validators | Already implemented, not yet modelled |
+| Safety / verification | Llama Guard, ShieldGemma, compliance finetunes | 274 GGUF `text-classification` models. **Distinct from Quorum's coded validation layer** — see below |
 
 Not offered, with reasons:
 
 - **Conversation and general reasoning** — the generalist *is* the state of the art. A
   spoke would be worse than the model already in the general slot.
-- **Translation** — a generalist covers it outside narrow media niches; a dedicated slot
-  would underperform Gemma-class models.
+- **Translation** — *provisionally* not offered, and this is the least settled exclusion in
+  the list. A generalist covers general translation and the observed demand is niche, but
+  there are **485 GGUF translation models**, which is more supply than the exclusion
+  comfortably explains. Revisit if a concrete demand signal appears.
 - **Creative / uncensored** — an attribute (above). Quorum should make it *possible* to
   point the general slot at such a model and have routing, policy and disclosure work
   normally; it should not build a domain around it, and it should not attempt to compete
   with the dedicated front-ends that own that use case.
-- **Agents / computer interaction / video / generative media** — need plumbing before a
-  model choice means anything. No tool-calling loop exists (see the `tools` symptom
-  above).
+- **Agents / computer interaction / video** — need plumbing before a model choice means
+  anything. No tool-calling loop exists (see the `tools` symptom above).
+- **Generative media** — excluded for a *product* reason, not a supply one: there are 424
+  GGUF `text-to-image` models, so it is locally runnable, but Quorum has no path for
+  producing an image as an answer. The blocker is the message model, not the ecosystem.
 
 ### Slots are not uniform in cost
 
@@ -187,19 +201,26 @@ than resolved.
 
 ### After drafting — red-team lens
 
-- **The 14-domain taxonomy this derives from is one source, unvalidated.** It is used as a
-  checklist for completeness, not as authority. The slot list is defended individually,
-  so a flaw in the taxonomy costs a missing slot rather than a wrong architecture.
+- **The originating 14-domain taxonomy was one unvalidated source** — a chat with no
+  project context. Partially addressed: the slot list has since been checked against
+  Hugging Face's 47 maintained task tags and against measured GGUF supply per task, which
+  corrected three entries (OCR is not a supply category; safety/verification is
+  well-supplied; generative media is supply-rich but product-blocked). The *domain* axis
+  remains less grounded than the slot axis, because no comparable maintained taxonomy of
+  user intent exists.
 - **The slot list will read as a roadmap and is not one.** Nothing here commits to
   building any slot, and several require plumbing that does not exist. Sequencing is
   deliberately absent.
 - **"Distinct model class" is a judgement, not a measurement.** It has no threshold. It
   was applied by inspection of the GGUF ecosystem and will drift as that ecosystem does;
   a slot justified today may not be in a year.
-- **Safety/verification as a slot is the weakest entry.** Unlike the others it is mostly
-  *already built* and not model-shaped — the envelope validator and sensitive-data gate
-  are code. It is included because modelling it is nearly free and it proves the shape on
-  something already working, but it stretches the definition of "model slot".
+- ~~**Safety/verification as a slot is the weakest entry.**~~ **Withdrawn.** This finding
+  evaluated the domain against *Quorum's implementation* rather than against the domain.
+  Quorum's layer is coded — envelope validation, sensitive-data matching — but
+  "verification" as a domain also covers inferential work that is unambiguously
+  model-shaped: checking a procedure against a regulatory corpus, claim verification,
+  content classification. There are 274 GGUF `text-classification` models plus
+  domain-compliance finetunes. The slot is sound; the finding measured the wrong referent.
 
 ### After drafting — legitimate-use lens
 
