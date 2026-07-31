@@ -96,7 +96,11 @@ Offered:
 | Reranking | bge-reranker, Qwen3-Reranker | Distinct from embedding; commonly conflated |
 | Safety / verification | Llama Guard, ShieldGemma, compliance finetunes | 274 GGUF `text-classification` models. **Distinct from Quorum's coded validation layer** — see below |
 
-Not offered, with reasons:
+The **general** slot is absent from this table because it is not a *spoke*. It exists, it
+is what the domain table's Conversation row refers to, and it is filled by the hub
+generalist. Everything below concerns whether a dedicated specialist is offered beside it.
+
+Not offered as a specialist, with reasons:
 
 - **Conversation and general reasoning** — the generalist *is* the state of the art. A
   spoke would be worse than the model already in the general slot.
@@ -203,6 +207,61 @@ tiers from ADR-adjacent work, a slot's provider may live on another machine. Wha
 operator can run concurrently is a deployment question and does not bound what Quorum
 offers.
 
+**Slot assignments must persist, and nothing stores them today.** `apps/api/src/config.ts`
+reads `process.env` 41 times, and there is no user-settings store anywhere in the API. A
+slot model is worth very little if the operator re-designates every launch, so persistence
+is a prerequisite rather than a refinement.
+
+It belongs in the API and is **not gated on the desktop shell**. The API is a Node process
+that already writes files with deliberate permissions — `managed-llama-runtime.ts` writes
+its per-launch key and preset at mode `0o600`. Filesystem access was never the missing
+piece; the store is. Building it here also keeps slot assignment — which is model policy —
+out of a shell that ADR 0001 scopes as a thin supervisor, so the ordering that looked like
+a dependency runs the other way.
+
+**Saved settings layer *under* the environment, and the environment wins.** Reversing that
+precedence would silently change behaviour for every existing deployment and for the tests
+that set those 41 variables.
+
+**A saved assignment can go stale, and must say so.** A pinned artifact can be deleted, or
+the runtime rebuilt so the artifact no longer loads — the `requires: b10192` problem. The
+saved choice still reads as configured while requests fall through to the scaffold, which
+reproduces this repository's most persistent failure mode: *a transport-shaped problem that
+a user reads as a model-quality problem.* Set-and-forget is only safe with staleness
+detection attached.
+
+The check must distinguish **"this stopped working"** from **"this could not be verified
+right now."** `gguf-compatibility-evaluation.ts` already separates REJECTED from
+INCONCLUSIVE for exactly this reason — the GPU is shared, and contention makes a healthy
+model look unloadable. Rendering those two states identically would train operators to
+ignore the warning.
+
+**Slots are typed ports, which makes a node-style interface directly expressible.** Defining
+a slot as (operation × IO signature) gives it what a node graph needs: a port type that
+determines what may plug in. An `image-text-to-text` model fits the vision port; an
+embedding model does not, and the type says so without a special case.
+
+The borrowed idea is the **typed slot**, not user-drawn wiring. Quorum owns the graph and
+the operator fills the nodes. A tool that asks users to assemble the graph themselves is a
+different and much larger product, and it contradicts the requirement below that a
+single-model deployment stay trivial.
+
+**Grouping slots by modality orients the operator; it does not help them decide.** A
+text-only / multi-modal split matches how people browse, but the constraint governing the
+actual choice is residency cost, and the split cuts straight across it: the text-only group
+holds both the cheapest slot in the system (text extraction — a library, zero VRAM, cannot
+fail to load) and the most expensive (deep reasoning at 4–30 GB), while the multi-modal
+group is almost uniformly small. **The cost class therefore belongs on the slot itself,
+not in the grouping.** The question at the moment of choosing is "can I run this beside what
+I already have", not "is this multi-modal".
+
+**Offering generative slots is a schema decision, not a presentation one.**
+`PUBLIC_ANSWER_SCHEMA` is `{ answer: string }` with `additionalProperties: false`, and every
+provider is validated against it. Image or audio output does not need a node; it needs the
+definition of *an answer* to change, along with the streaming path, storage, and a
+disclosure model for non-text payloads. **Open decision, deliberately not taken here** — it
+should be made on its merits rather than absorbed as a layout detail.
+
 ## Alternatives considered
 
 **Keep the flat role list and add roles.** Rejected: it is what produced two inert
@@ -294,6 +353,23 @@ than resolved.
   *passed*, because it verified that every listed slot had models behind it. It could not
   detect a slot that was never listed. Supply data validates inclusions; it does not
   surface omissions.
+
+### From the operator-interface concept
+
+Raised by the user as a configuration model — grouped slots, pick a model per slot, saved
+across launches. Tested against the code rather than accepted:
+
+- **"This needs the desktop shell for file access."** *False, and the sequencing is
+  inverted.* The API already writes files at `0o600`. Nothing about persistence is gated on
+  the shell, and building the store in the API is what allows the shell to stay thin.
+  **Applied** as a consequence above.
+- **"Set and forget" is unsafe without staleness detection.** *Confirmed.* The mechanism
+  already half-exists in the load gate. **Applied.**
+- **Grouping by modality does not carry the constraint.** *Confirmed* against this ADR's own
+  cost classes. **Applied** — cost moves onto the slot.
+- **Including generative output in the grouping silently reverses an exclusion.** It is a
+  change to `PUBLIC_ANSWER_SCHEMA`, not to a layout. **Recorded as an open decision, not
+  applied.**
 
 ### Inherent limitations
 
