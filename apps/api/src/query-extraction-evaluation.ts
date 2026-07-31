@@ -88,6 +88,24 @@ async function modelSpan(model: string, prompt: string): Promise<string> {
   return typeof parsed.span === "string" ? parsed.span.trim() : "";
 }
 
+// A model that echoes the quoting style of the few-shot examples, or changes
+// case, has not authored anything — it has reformatted. Realign such a span
+// back onto the prompt's own bytes so the comparison measures extraction
+// rather than punctuation habits, and so what would egress is still literally
+// the prompt's text.
+//
+// Without this the harness scored qwen3.5:2b last of eight on 111 "violations"
+// of which 101 were quotation marks the system prompt had taught it to add.
+function realign(prompt: string, span: string): string | undefined {
+  if (span === "") return undefined;
+  if (prompt.includes(span)) return span;
+  const unquoted = span.replace(/^["'“”‘’]+|["'“”‘’]+$/gu, "").trim();
+  if (unquoted && prompt.includes(unquoted)) return unquoted;
+  const at = prompt.toLowerCase().indexOf(unquoted.toLowerCase());
+  if (unquoted && at >= 0) return prompt.slice(at, at + unquoted.length);
+  return undefined;
+}
+
 const CASES: readonly ExtractionCase[] = [
   {
     name: "family disagreement, trailing request",
@@ -320,6 +338,7 @@ async function main(): Promise<void> {
     let noiseLeaks = 0;
     let notSubstring = 0;
     let errors = 0;
+    let reformatted = 0;
     const started = performance.now();
 
     for (const testCase of cases) {
@@ -333,7 +352,11 @@ async function main(): Promise<void> {
         );
         continue;
       }
-      // The invariant, enforced rather than assumed.
+      // The invariant, enforced rather than assumed. Reformatting is repaired
+      // first; genuine authoring still fails.
+      const aligned = realign(testCase.prompt, actual);
+      if (aligned !== undefined && aligned !== actual) reformatted += 1;
+      if (aligned !== undefined) actual = aligned;
       if (!testCase.prompt.includes(actual)) {
         notSubstring += 1;
         console.log(
@@ -359,8 +382,9 @@ async function main(): Promise<void> {
     console.log(
       `SUMMARY ${strategy.name}: exact ${exact}/${cases.length}, ` +
         `mean F1 ${(totalF1 / cases.length).toFixed(3)}, ` +
-        `noise leaked in ${noiseLeaks}/${cases.length}, ` +
-        `substring violations ${notSubstring}, ` +
+        (useCorpus ? "" : `noise leaked in ${noiseLeaks}/${cases.length}, `) +
+        `authored (rejected) ${notSubstring}, ` +
+        `reformatted (repaired) ${reformatted}, ` +
         `errors ${errors}, ` +
         `${(elapsed / cases.length).toFixed(2)}ms per prompt\n`,
     );
