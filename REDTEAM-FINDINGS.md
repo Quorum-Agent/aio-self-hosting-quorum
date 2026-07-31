@@ -481,17 +481,71 @@ Verified, not assumed. Several are load-bearing:
 
 ---
 
-## 8. Open question — invariant test coverage
+## 8. Invariant test coverage — ANSWERED by mutation testing (2026-07-30)
 
-The review pass aimed at *"which of the documented security invariants in
-`docs/architecture.md` are enforced by no test"* did not produce usable output: the finder and its
-verifier were given contradictory briefs (one was told missing tests count as findings, the other
-that they don't), and all five results were discarded. **This question remains open** and should
-not be read as "coverage is fine."
+The original pass produced nothing usable: the finder and its verifier were given contradictory
+briefs (one was told missing tests count as findings, the other that they don't), and all five
+results were discarded.
 
-What is known: `npx vitest run` → 21 files / 664 tests passing on an unmodified tree. Two specific
-gaps surfaced incidentally — `inference-scheduler.test.ts` never passes `maximumWaitMs` (so Q-06's
-cap is untested), and no test asserts the cross-turn behaviour in Q-01.
+**Answered instead by mutation.** Reading tests cannot tell you what they enforce — a test can
+name an invariant in its title and still pass when the invariant is deleted. So each of the 13
+invariants in `docs/architecture.md` was broken *in the source*, the full suite was run, and the
+invariant counts as enforced only if something turned red.
+
+| # | Invariant | Mutation applied | Result |
+| --- | --- | --- | --- |
+| I-1 | Policy tightened, never weakened | `allowCloudModels: false` → `true` in `policies.ts` | caught (8) |
+| I-2 | Sensitive classification excludes cloud | drop the `requiresLocalProcessing` filter | caught (3) |
+| I-3 | Web-grounded history excludes cloud | (same filter) | caught (3) |
+| I-4 | Offline excludes loopback too | drop the transport filter | caught (2) |
+| I-5 | Provider registered only when discoverable | force `available: true` | caught (1) |
+| I-6 | Local URL must be loopback | short-circuit `normalizeLoopbackBaseUrl` | caught (6) |
+| I-7 | Cloud URL must be HTTPS | short-circuit `normalizeCloudBaseUrl` | caught (6) |
+| I-8 | Policy cloud exclusion is not a preference | drop the `location === "cloud"` filter | **SURVIVED** → fixed |
+| I-8b | Cloud absent without credentials | register cloud unconditionally | **SURVIVED** → fixed |
+| I-9 | Conversation storage is local | — | structural (see below) |
+| I-10a | Client role not authoritative | trust `submittedUserMessage.role` | caught (3) |
+| I-10b | Client message id not authoritative | trust `submittedUserMessage.id` | caught (5) |
+| I-10c | Client timestamp not authoritative | trust `submittedUserMessage.createdAt` | caught (3) |
+| I-10d | Running/empty history filtered out | drop the `trustedHistory` filter | caught (2) |
+| I-11a | Privacy guard blocks web search | disable the sensitive-data check | caught (3) |
+| I-11b | Policy gates web search | disable the `allowNetwork` check | caught (3) |
+| I-12 | Disclosure derived from the actual plan | emit a synthesis step unconditionally | caught (20) |
+| I-13 | Loopback API is not an auth boundary | — | not yet buildable |
+
+**Two invariants were enforced by nothing.** Both are now pinned by tests that were themselves
+verified against the mutation — written, confirmed red, then reverted.
+
+*I-8* is the more interesting failure. A test named for private mode existed and passed, but its
+cloud model was rated 90 against a local model rated 60, and `preferLocal` adds a flat +100. The
+cloud model lost on **sorting arithmetic**, not on policy, so deleting the policy filter entirely
+left the suite green while private-mode requests routed to cloud. The new test in
+`packages/core/src/security-invariants.test.ts` uses a cloud model rated 195 — above the sorting
+bonus — so it can only pass if the filter actually runs. This is the general shape of the danger:
+a test whose fixture makes the wrong answer unreachable tests nothing, however it is named.
+
+*I-8b* is simpler and worse. Changing `config.ts` to register the cloud provider while ignoring
+the API key left **all 136 API tests passing**. A cloud model would then enter the registry, be
+selectable by the planner, and fail only at request time — or send unauthenticated requests to a
+real endpoint. Pinned in `apps/api/src/security-invariants.test.ts`, which also covers the blank
+key, since a key set to whitespace is a misconfiguration rather than consent to egress.
+
+Two invariants have no test because neither is a claim a test can currently falsify. **I-9** holds
+by construction: the only storage backend is `better-sqlite3` against a filesystem path, so there
+is no remote path to accidentally take. It becomes testable the moment a sync or backup target is
+added, and should get a test then. **I-13** concerns the per-launch secret in the desktop sidecar,
+which does not exist yet; the invariant is a design commitment, not current behaviour. Note that
+its precondition — the API stays on loopback — *is* now tested, since a non-loopback `HOST` must
+fail closed at startup for the rest of the claim to mean anything.
+
+**I-11 deserves a caveat.** Both guards are caught, but they run before generation, against the
+compiled request. That is the right shape — the invariant asks for authorization *outside* model
+output — yet it holds today partly because no model in this codebase can request a tool at all.
+When model-driven tool calls arrive, these tests will not be sufficient, because they never
+exercise the path the invariant is really about.
+
+Also still open from the original pass: `inference-scheduler.test.ts` never passes `maximumWaitMs`,
+so Q-06's cap is untested.
 
 ---
 
