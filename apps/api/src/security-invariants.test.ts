@@ -15,6 +15,10 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { loadConfig } from "./config.js";
 import { isLoopbackHostname } from "./outbound-url.js";
+import {
+  normalizeCloudBaseUrl,
+  normalizeNetworkBaseUrl,
+} from "./loopback-url.js";
 
 const TOUCHED = [
   "QUORUM_CLOUD_API_KEY",
@@ -125,5 +129,50 @@ describe("isLoopbackHostname is the shared basis for five separate controls", ()
     "",
   ])("rejects %s", (hostname) => {
     expect(isLoopbackHostname(hostname)).toBe(false);
+  });
+});
+
+describe("the network tier permits a LAN peer without permitting the internet", () => {
+  // Plain HTTP is allowed here and refused by the cloud validator, matching
+  // the project's existing stance that unencrypted traffic is acceptable
+  // inside a trusted LAN and a tunnel is required outside it. That only holds
+  // while the address genuinely is private — otherwise `network` would be a
+  // tier with the weakest transport and the widest reach, strictly worse than
+  // `cloud`.
+  it.each([
+    "http://192.168.1.10:8080/v1",
+    "http://10.0.0.5:8080/v1",
+    "http://172.16.3.9:8080/v1",
+    "http://quorum-box.local:8080/v1",
+    "https://192.168.1.10:8080/v1",
+  ])("accepts the private address %s", (url) => {
+    expect(() => normalizeNetworkBaseUrl(url)).not.toThrow();
+  });
+
+  it.each([
+    "http://8.8.8.8:8080/v1",
+    "https://api.openai.com/v1",
+    "http://evil.example/v1",
+    "http://192.168.1.10@evil.example/v1",
+    "http://2130706433/v1",
+  ])("refuses the non-private address %s", (url) => {
+    expect(() => normalizeNetworkBaseUrl(url)).toThrow();
+  });
+
+  it("refuses embedded credentials and fragments", () => {
+    expect(() => normalizeNetworkBaseUrl("http://user:pw@192.168.1.10/v1")).toThrow(
+      /credentials/u,
+    );
+    expect(() => normalizeNetworkBaseUrl("http://192.168.1.10/v1#x")).toThrow(
+      /fragment/u,
+    );
+  });
+
+  it("still refuses plain HTTP for anything off the network", () => {
+    // remote and cloud share the HTTPS-only validator: a rented box on the
+    // public internet needs the same transport guarantee a vendor does.
+    expect(() => normalizeCloudBaseUrl("http://rented.example/v1")).toThrow(
+      /HTTPS/u,
+    );
   });
 });
