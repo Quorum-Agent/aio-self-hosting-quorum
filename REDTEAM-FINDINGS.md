@@ -1733,8 +1733,59 @@ Recorded because the proposal was plausible, was made in this session, and was k
 single question rather than by testing. Any future "Quorum as a backend" design meets the
 same objection.
 
+### A third source, and a lesson about which fields to trust
+
+`local-ai-zone.github.io` publishes `gguf_models.json` (12 MB, ~16,500 rows, updated
+daily), indexed **per quantisation file** rather than per repo or per model — a granularity
+neither HF's API nor models.dev provides, and the one an operator actually downloads.
+
+It was evaluated field by field rather than adopted, and the split is stark.
+
+**Verified true:** every `directDownloadLink` in an 18-row deterministic sample resolved —
+**18/18** — as a Hugging Face `/resolve/` URL. As a download index it works.
+
+**Verified false: `fileSize` was wrong on 18 of 18.** Not marginally — Mxbai Embed Large
+V1 F16 is listed at 15.78 GB against an actual 0.67 GB (23x over; 0.67 GB is correct for a
+335M model at F16), while Xortron Xprt Q5_K_M is listed at 5.43 GB against an actual
+24.73 GB (4.5x under). The error runs in both directions, so it is not a fixable offset
+such as a repo total.
+
+That falsifies a verdict reached minutes earlier in the same session. `fileSize` had been
+classed as *observed and therefore reliable*, in contrast to the derived fields. It is
+neither. And `minRamGB` — already shown to be a pure power-of-two step function of
+`fileSize`, carrying no information beyond it — is therefore a step function of a **wrong**
+input. Ten rows also carry `fileSize` of exactly 0 and still receive `minRamGB = 8`, so the
+derived field launders missing data into a confident number.
+
+**Also unusable:** `modelCapability` has four values and cannot resolve the slots ADR 0002
+needs — of 81 rows whose names contain "embed", 61 are `text`, 12 `vision` and 8 `code`;
+of 77 containing "ocr", 42 are `vision` and 35 `text`. Embedding and reranking are
+indistinguishable from chat. `modelType` is `"Unknown"` for 8549 of 16519 rows (52%).
+
+**Use it as a URL index and take every number from your own `HEAD` request** — which is
+how the discrepancy was found, and which returns the true size for free.
+
+The pattern across all three sources is consistent enough to state as a rule: **what these
+registries observe is reliable; what they infer is noise wearing a number.** The failure
+here was applying that rule by guessing which fields were observed instead of checking.
+
+Which makes the authority split:
+
+| Fact | Authoritative source |
+| --- | --- |
+| What exists as GGUF | HF `?library=gguf` |
+| Which quantisations exist, and their URLs | local-ai-zone `gguf_models.json` |
+| **Artifact size** | **a `HEAD` on the resolve URL** — not any registry |
+| Capabilities | models.dev, via the `base_model` chain |
+| Context window | the GGUF file itself |
+| Loads on the pinned build | the load gate |
+| Attributes | nothing |
+
 ### Not verified
 
+- `local-ai-zone`'s `quantFormat`, `license`, `downloadCount` and `likeCount` were not
+  checked. Given `fileSize` failed at 18/18, none of them should be trusted without the
+  same treatment.
 - `agent/agent_init.py` (2743 lines) and `model_tools.py` (1448) were read at their model
   assignment and public-surface level, not in full.
 ### Measured: the HF-to-models.dev join (same day)
