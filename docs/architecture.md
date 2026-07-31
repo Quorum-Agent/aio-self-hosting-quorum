@@ -272,6 +272,42 @@ requires Docker Desktop, Podman, or another runtime backed by WSL 2 or Hyper-V.
 
 See [ADR 0001](./decisions/0001-desktop-shell-and-service-supervision.md).
 
+### Spend guardrail
+
+Token usage is now captured from both transports (`TokenUsage`, with a `measured` flag
+separating reported counts from estimates). Enforcement is not built, and the shape it
+should take is decided:
+
+**Exhausting a budget stops and asks.** It does not silently degrade to a local model, and
+it does not fail the request. The user is notified and chooses: answer locally, or
+authorise further spend. The model is a permission prompt rather than a policy tightening.
+
+That distinction has an architectural cost worth stating before anyone starts. The
+orchestrator is a one-way async event generator — it emits `plan`, `trace`, `delta`,
+`result`, `error` and never awaits a reply. A mid-request decision point needs either a
+bidirectional channel or a terminal "budget exhausted, choose and resend" state that
+carries enough context to resume. **This is an interaction design, not a planner change**,
+and the planner-level version (quietly excluding cloud models once a budget is spent) is
+explicitly *not* what was asked for.
+
+Unmeasured spend is charged as a conservative estimate and labelled as an estimate.
+Treating an unreporting provider as having spent nothing would put the hole in a spend cap
+at exactly the backend that stays quiet.
+
+### Saved-model staleness
+
+A saved slot assignment can outlive the artifact it names. The availability half of that
+question is **already answered**: `LocalRuntimeStatus.roles[]` carries `configuredModel`
+and `available` per role, so the runtime already knows which configured models are missing.
+A second staleness check over the settings store would be a rival mechanism for one fact.
+
+What the settings store uniquely knows is **provenance** — whether a value was saved
+through the interface or came from the environment (`slotSource`). That decides whether the
+interface can offer a fix at all: a slot pinned by an environment variable will not change
+when a setting is saved, and offering that edit would leave the operator looking at a value
+the application is not using. Any surfacing of a missing model should read availability
+from the runtime and provenance from the store, never availability from both.
+
 ### Attachment pipeline
 
 Attachments should enter a local content-addressed store before processing. The API
