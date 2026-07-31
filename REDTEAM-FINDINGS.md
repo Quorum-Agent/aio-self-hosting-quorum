@@ -1630,3 +1630,114 @@ loosening.
 Recorded because the second correction arrived after the first was already acted on. A
 reviewer who revises their own consequence is more useful than one who is right first
 time.
+
+---
+
+## 19. Hermes Agent — what it already does, and what Quorum still uniquely does (2026-07-31)
+
+Prompted by a question about adopting an existing agent host rather than finishing
+Quorum's own surface. Read against a local clone at **`4b60979`, dated 2026-07-31** —
+the version discipline matters here more than usual, because a five-week-old clone of the
+same repo sat at `7cd5eaa` and the project moved roughly 23,000 pull requests in between.
+
+### The method finding, which is the reason this section exists
+
+**Three claims derived from documentation were wrong, in the same direction, in a row.**
+Each was corrected only by reading source:
+
+| Claim from docs | What the code says |
+| --- | --- |
+| "No task-type-specific model routing" | `agent/auxiliary_client.py` is *"Shared auxiliary client router for side tasks"* with per-task model config (`auxiliary.vision.model`, `auxiliary.compression.model`) |
+| "Assumes one primary model plus tools" | `agent/image_routing.py` routes per turn on the active model's **capability metadata** |
+| "Model settings centralized in config rather than request-level routing" | True for the *main* model, but only confirmed after reading three files; the earlier greps were too broad to support it |
+
+The pattern matches the entry in §17 about llama.cpp #20345 and the rule in `CLAUDE.md`
+about executing against the pinned version. Documentation describes intent; the repository
+describes behaviour. **Cloning cost minutes and settled what three rounds of searching had
+gotten wrong.**
+
+### Disproved: capability metadata must be curated by hand
+
+§17 concluded that GGUF carries no required-feature list, that no vendor automates
+compatibility, and that LM Studio, Jan, and GPT4All all curate manually — therefore Quorum
+would need a hand-maintained list mapping slot to artifact.
+
+**That conclusion conflated two different questions, and only one of them survives.**
+
+- *Does this artifact load on the pinned runtime build?* — still hand-verified, still
+  unautomatable, still exactly what `gguf-compatibility-evaluation.ts` exists for. The §17
+  conclusion holds here without modification.
+- *What can this model do?* — **solved by an existing registry.** `agent/models_dev.py`
+  consumes `https://models.dev/api.json`, a community-maintained database of 4000+ models
+  across 109+ providers carrying context window, max output, cost per million tokens,
+  **capabilities (reasoning, tools, vision, PDF, audio)**, modalities, knowledge cutoff,
+  open-weights flag, family grouping, and deprecation status.
+
+Quorum hardcodes `capabilities: ["chat", "reasoning", "coding", "documents"]` per model in
+`apps/api/src/config.ts`. ADR 0002's slot model needs precisely the second kind of data,
+and it was assumed to require manual curation on the strength of a conclusion about the
+first kind.
+
+Hermes also probes rather than trusting: `query_ollama_supports_vision(model, base_url,
+api_key)` asks the runtime. Same discipline as the load gate, applied to capability rather
+than compatibility.
+
+### Confirmed after three attempts: no prompt-based main-model selection
+
+`agent.model` is assigned in exactly three places in `agent/agent_init.py`:
+
+- **572** — `agent.model = model`, a function parameter, set once at init from config.
+- **687** — `normalize_model_for_provider(...)`, normalization only.
+- **1236** — a fallback chain walking configured backup providers until one resolves a
+  client, setting `_fallback_activated`. **Availability fallback, not routing.**
+
+`agent/conversation_loop.py` reads `agent.model` directly. `model_tools.py` is misleadingly
+named — it is the tool registry ("tools available to the model"), not model selection.
+
+The model changes when the user types `/model`, or when a provider is unreachable. It does
+not change because of what was asked.
+
+### The architectural distinction that survives
+
+Hermes's vision path: if the main model reports `supports_vision`, attach the pixels. If
+not, route the image to a configured auxiliary that **describes it in text** and feed the
+description to the main model.
+
+- **Hermes augments.** One capable main model stays in charge; missing capabilities are
+  filled by helpers that hand it text.
+- **Quorum substitutes.** The best-fit specialist answers directly.
+
+The consequence is the one that matters for this product: **augmentation still requires the
+large generalist.** Auxiliaries make the main model more capable; they do not let it be
+smaller. Substitution is what makes "chosen spokes instead of a 30B MoE, at lower VRAM"
+achievable, and that goal is the reason Quorum exists.
+
+This also relocates the differentiator. It had been described as privacy and enforced
+egress. It is not — the operator's own framing is **capability ownership**, and the `remote`
+tier already encodes that ("a user who refuses vendor APIs on principle may still accept
+rented GPU"). Privacy falls out of local execution; it is not the thing being bought.
+
+### A structural trap, found before it was built
+
+An integration was proposed in which Quorum becomes a routing service that a host agent
+calls per request. It does not work, for a reason that generalises:
+
+**A router must sit above everything it routes between.** Positioned as a provider backend,
+Quorum sees only local models, so the local-versus-cloud decision is made above it and
+outside its policy model. It stops being the router and becomes one of the routes — which
+is Ollama with better model selection. There is also no answer to "why would I put my API
+key in Quorum when the host already has it," because in that position there is no
+incremental value to justify moving the credential.
+
+Recorded because the proposal was plausible, was made in this session, and was killed by a
+single question rather than by testing. Any future "Quorum as a backend" design meets the
+same objection.
+
+### Not verified
+
+- `agent/agent_init.py` (2743 lines) and `model_tools.py` (1448) were read at their model
+  assignment and public-surface level, not in full.
+- Whether models.dev's capability flags are accurate for **local GGUF quantisations**
+  specifically is untested. The registry is organised around hosted providers, and a
+  quantised local artifact may not inherit its parent model's row. This must be measured
+  before Quorum depends on it, and it is exactly the shape of claim §17 was written about.
