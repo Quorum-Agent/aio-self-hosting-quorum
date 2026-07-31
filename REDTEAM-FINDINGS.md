@@ -956,3 +956,141 @@ result. Everything finer was noise:
 byte-for-byte against the prompt, with every existing gate still evaluated on the full message.**
 Not: the model can only select, so injection cannot matter. It can, it did, and the substring check
 caught none of the three attacks.
+
+---
+
+## 16. External review of the extraction *measurement* (2026-07-31)
+
+§15 red-teamed the extraction **proposal**. This red-teams the **measurement** — the harness, the
+model selection, and the reported numbers — because the same person wrote the strategies, the
+wrappers, the scoring, and the conclusions. Two reviewers worked independently of that author and
+of each other.
+
+### The harness was measuring itself in six places
+
+Each is fixed in `query-extraction-evaluation.ts`.
+
+| # | What was actually being measured | What it was reported as |
+| --- | --- | --- |
+| 1 | Few-shot examples written as `span: "..."` | A model incapable of clean output |
+| 2 | 26 no-op cases where prompt === ideal | Overall extraction quality |
+| 3 | Model load time folded into the per-prompt mean | Model speed |
+| 4 | Unparseable output excluded from scoring | A model not penalised for garbage |
+| 5 | Queries ending in `.` wrapped into malformed prompts | Model error |
+| 6 | Substring violations skipping the noise check | Artificially clean noise numbers |
+
+**(1) is the largest, and two reviewers found it independently** — counting 99 and 101 of
+qwen3.5:2b's 111 "violations", a difference explained by transient GPU failures rather than by
+disagreement. The response goes into a JSON string field where the quotes are already supplied, so
+writing the examples as `span: "..."` taught weaker models to wrap their answer in literal quote
+characters. It cost 0.37 mean F1 and was reported as the model being unusable. It was the prompt.
+
+**(2) decided the model ranking**, and is now reported separately and permanently.
+
+### The one conclusion that reversed
+
+Under the committed (buggy) prompt, `gemma4:e4b` was **statistically tied** with `qwen3:4b` —
+gap 0.011, 95% CI [-0.018, 0.038]. That finding was correct, and it mattered, because `gemma4:e4b`
+was in the harness's own default model list and absent from the reported table.
+
+Re-measured on all 240 cases with the prompt fixed, errors excluded, and normalised scoring:
+
+| model | mean F1 | exact | violations | warm median |
+| --- | --- | --- | --- | --- |
+| `qwen3:4b` | **0.985** | 223 | 7 | 251 ms |
+| `gemma4:e4b` | 0.956 | 179 | **2** | 748 ms |
+| `gemma4:e2b` | 0.938 | 168 | 3 | 421 ms |
+| `qwen3:0.6b` | 0.900 | 184 | 12 | 182 ms |
+
+| paired comparison | subset | gap | 95% CI | significant |
+| --- | --- | --- | --- | --- |
+| `qwen3:4b` − `gemma4:e4b` | all 239 | +0.029 | [0.018, 0.046] | **yes** |
+| `qwen3:4b` − `gemma4:e4b` | wrapped only (213) | +0.024 | [0.013, 0.040] | **yes** |
+| `qwen3:4b` − `gemma4:e2b` | wrapped only (213) | +0.035 | [0.024, 0.049] | **yes** |
+
+**The tie was an artifact of the prompt bug.** Fixing the example format gained `qwen3:4b` about
+0.021 and `gemma4:e4b` about 0.003 — e4b was already emitting clean JSON and had nothing to gain.
+The separation now holds on the wrapped-only subset, so it does not depend on the no-op cases
+either.
+
+This is worth stating carefully, because it cuts against the reviewer's own recommendation and the
+reviewer was right anyway: **the tie was real at the time it was measured.** It was measured on the
+harness as committed, which is the correct thing to review. The bug that produced it was found in
+the same pass.
+
+`gemma4:e4b` remains cleaner on the invariant — 2 violations against 7. That difference is
+**reliability, not safety**: the substring gate rejects every violating span by construction, so no
+authored text reaches the search provider under either model. The gap is how often extraction fails
+and falls back to the verbatim prompt, roughly 3% against 1%.
+
+### The ranking is partly a ranking of something else
+
+Dropping the `format` JSON schema, with an explicit instruction to reply with bare text:
+
+| model | with schema | without |
+| --- | --- | --- |
+| `qwen3:4b` | 0.948 | **0.000** |
+| `gemma4:e4b` | 0.941 | 0.935 |
+| `gemma4:e2b` | 0.860 | **0.921** |
+
+Without the schema the leader stops answering and emits reasoning prose — even when told not to.
+Both Gemma models are indifferent to it or better without it. So the choice of decoding mode is
+**winner-dependent**: the harness happens to use the one mode `qwen3:4b` can function in at all,
+while the competitors neither gain nor lose much from that choice. That is legitimate — the
+production path uses the schema — but it makes the leader's characteristic failures (`"2:015"`,
+`"cleop:"`, a degenerate `1.1.1.1` repetition loop) **structural** rather than incidental: they are
+the failure mode of the only mode it works in.
+
+`think: false` was checked in the same pass and is correct. With thinking enabled `qwen3:4b` spends
+its entire budget in the thinking channel and returns empty content on 60 of 60 cases; the Gemma
+models are unaffected.
+
+### What could not be broken
+
+The overfitting hypothesis is dead, which is worth recording because it was the most likely
+explanation for the result. Across 11 system-prompt variants — zero-shot, one example, four
+examples, different subjects, rewritten instructions, JSON-formatted examples, a no-op
+demonstration — `qwen3:4b` won every one, and its **worst** prompt beat every other model's
+**best** prompt on identical cases.
+
+The twist: **the committed prompt was the worst prompt for every model tested, including the
+winner.** A from-scratch rewrite scored 0.980 against 0.948. The iteration that produced it tuned
+toward exact-match style compliance, not F1. The file comment claiming instruction-only prompting
+made every model return the whole message did not survive the corpus — zero-shot beats the two
+examples for every model tested. That observation came from eleven hand-written cases and did not
+generalise, and the comment has been corrected in place.
+
+### A fix that was reverted
+
+One change from this pass was withdrawn after being measured. Wrapper assignment was switched from
+`index % 9` to `(index * 7) % 9`, on the reasoning that the modular scheme tied wrapper to corpus
+position. The corpus **is** positionally structured — wh-question rate runs 0.38 / 0.80 / 0.70
+across its thirds — but `index % 9` already gives each wrapper an evenly spaced stratified sample,
+and the per-wrapper spread is identical to two decimal places under both schemes.
+
+It is recorded rather than deleted quietly because it is the same error the harness was making: a
+plausible mechanism plus a real underlying phenomenon is not evidence that one causes the other.
+
+### Deliberately unresolved
+
+The fraction of prompts that arrive already-clean decides the `gemma4:e2b` comparison — 26/240 is
+the first ratio at which that gap clears zero; at 5% it does not. There is no principled way to set
+it. The source corpora are search-box queries and so are 100% bare by construction; the
+conversational-search literature measures cross-turn context dependence, which is a different
+phenomenon whose rates would not transfer. Citing it would launder an arbitrary choice through a
+reference that does not support it.
+
+So the harness reports **per-framing scores** instead, and no blended number is treated as the
+result. The reader applies their own prior. The one genuinely external basis available is Quorum's
+own prompt history — counting a bare/wrapped ratio over real user prompts stores nothing and needs
+less than the curated cases already took. That is the way to close this if it ever matters; it does
+not currently, since the live comparison is `qwen3:4b` against `gemma4:e4b` and that one separates
+regardless.
+
+### Standing conclusion
+
+`qwen3:4b` is the right choice, but the honest reason is narrower than "it is the best extractor."
+It is the best extractor **under grammar-constrained decoding**, which is the mode this codebase
+uses; it is the only model of the four that cannot work without it; and `gemma4:e4b`, which is
+close behind and cleaner on the invariant, is 9.6 GB against a 16 GB card that must also hold the
+hub and the classifier. **`qwen3:4b` is what fits.**
