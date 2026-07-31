@@ -16,6 +16,7 @@ import {
   isLoopbackHostname,
   normalizeSearchBaseUrl,
 } from "./outbound-url.js";
+import { readSlotSettings } from "./slot-settings.js";
 
 export const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 
@@ -231,9 +232,25 @@ export function loadConfig(): AppConfig {
       ? { searxngBaseUrl: normalizedSearxngBaseUrl }
       : {}),
   };
-  const primaryModel = process.env["QUORUM_LOCAL_MODEL"] ?? "qwen3.5:9b";
-  const codingModel = process.env["QUORUM_LOCAL_CODING_MODEL"]?.trim();
-  const reasoningModel = process.env["QUORUM_LOCAL_REASONING_MODEL"]?.trim();
+  const dataDirectory = resolveFromProjectRoot(
+    process.env["QUORUM_DATA_DIR"] ?? "./var",
+  );
+  // Operator-saved slot assignments, consulted only where the environment is
+  // silent. Every `??` below reads left to right as: environment, then saved
+  // setting, then built-in default. Reversing any of those pairs would change
+  // behaviour for deployments that configure models by environment, which is
+  // all of them today, and nothing would appear to fail.
+  const storedSlots = readSlotSettings(dataDirectory).slots;
+  const primaryModel =
+    process.env["QUORUM_LOCAL_MODEL"] ??
+    storedSlots.general?.model ??
+    "qwen3.5:9b";
+  const codingModel =
+    process.env["QUORUM_LOCAL_CODING_MODEL"]?.trim() ??
+    storedSlots.coding?.model;
+  const reasoningModel =
+    process.env["QUORUM_LOCAL_REASONING_MODEL"]?.trim() ??
+    storedSlots.reasoning?.model;
   const localModels: LocalModelConfig[] = [
     {
       role: "general",
@@ -242,7 +259,7 @@ export function loadConfig(): AppConfig {
       specialties: [],
       contextWindow: positiveInteger(
         process.env["QUORUM_LOCAL_CONTEXT_WINDOW"],
-        16_384,
+        storedSlots.general?.contextWindow ?? 16_384,
       ),
       qualityRating: 75,
       reasoningEffort: "none",
@@ -256,7 +273,7 @@ export function loadConfig(): AppConfig {
       specialties: ["coding"],
       contextWindow: positiveInteger(
         process.env["QUORUM_LOCAL_CODING_CONTEXT_WINDOW"],
-        16_384,
+        storedSlots.coding?.contextWindow ?? 16_384,
       ),
       qualityRating: 65,
       // The general and reasoning roles have always set this; the coding role
@@ -278,7 +295,7 @@ export function loadConfig(): AppConfig {
       specialties: ["reasoning"],
       contextWindow: positiveInteger(
         process.env["QUORUM_LOCAL_REASONING_CONTEXT_WINDOW"],
-        16_384,
+        storedSlots.reasoning?.contextWindow ?? 16_384,
       ),
       qualityRating: 65,
       reasoningEffort: "none",
@@ -289,7 +306,7 @@ export function loadConfig(): AppConfig {
     host,
     port: Number(process.env["PORT"] ?? 8787),
     logLevel: process.env["LOG_LEVEL"] ?? "info",
-    dataDirectory: resolveFromProjectRoot(process.env["QUORUM_DATA_DIR"] ?? "./var"),
+    dataDirectory,
     local: {
       baseUrl: normalizeLoopbackBaseUrl(
         process.env["QUORUM_LOCAL_BASE_URL"] ??
