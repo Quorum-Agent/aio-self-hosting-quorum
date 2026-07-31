@@ -1530,3 +1530,103 @@ dependency's behaviour, execute it against the pinned version.* A `llama-server`
 binary is 140 MB and answered every one of these questions in under an hour. The
 research that produced the wrong answers took longer than the experiment that
 corrected them.
+
+---
+
+## 18. Location tiers — red team of the refactor (2026-07-31)
+
+`ExecutionLocation` grew from `device | local | cloud` to five ordered tiers, and
+`PolicyDefinition`'s booleans became two egress ceilings. An external reviewer was asked
+one question above all others: **did any egress get wider?**
+
+### The central claim held
+
+All 60 cells (5 policies × 4 locations × 3 transports) were enumerated three ways — the
+old predicate copied verbatim from `main`, the new predicate, and what `RoutePlanner`
+*actually selects* given a model rated high enough that only a refusal can exclude it.
+**Zero deltas.** The `private × cloud/in_process` cell — the one that would have been a
+widening — is refused.
+
+### One fact, two fields, read by different surfaces
+
+Every defect in this area turned out to share a shape, and naming it was worth more than
+any individual finding:
+
+| Fact | Enforcement reads | Disclosure reads |
+| --- | --- | --- |
+| how far a model reaches | `modelReach(model)` | `model.location` |
+| how far the search tool reaches | `tool.location` | `tool.contextMayLeaveDevice` |
+| whether the analyzer left the device | *nothing* | a hardcoded literal |
+| whose words the user read | which provider streamed | `plan.modelId` |
+| whether a tool is permitted | `toolCeiling === "none"` | a tier comparison |
+
+Three of those were diverging live.
+
+**A metasearch proxy classified as local.** A SearXNG on loopback reported
+`location: "local"` beside its own `contextMayLeaveDevice: true`. SearXNG *forwards the
+query to Google* — where the instance listens is not where the query goes. This was not
+cosmetic: `policies.ts` recommended tightening `private`'s tool ceiling to `"local"`,
+which would have admitted that tool on the strength of the wrong field and then proxied
+the query out. **The privacy mode would have permitted the exact egress the tightening
+was meant to prevent**, while the disclosure honestly reported it left.
+
+**`plan.modelId` naming a model that wrote nothing.** Under relay, once failed drafts
+spend the budget, the spoke streams directly — and the branch handling that credited the
+hub, which has no entry in `attempts`. The hub-failure branch does the rewrite, and its
+comment warns that doing this per-branch is what let an earlier bug survive. The warning
+was then reproduced one branch over.
+
+**`toolCeiling` was not a ceiling.** The orchestrator tested only for `"none"` while the
+comment claimed a tier comparison and `systemContext` already performed one, so the
+system prompt would hide a tool the orchestrator would run.
+
+### The check that has teeth
+
+A "did we tell the user the truth" assertion would have called the worst bug in this
+pass **healthy**. When `modelReach` let a cloud model pass every ceiling, the disclosure
+was correct throughout — the plan honestly reported `route=cloud` and emitted the
+notice, while `private` routed to cloud. Truthfulness was never the failure.
+
+The check that catches it asserts the two fields **agree**. Written as properties rather
+than examples, because the recurring failure here is a fixture that cannot reach the
+wrong answer, and a property has no fixture to get wrong:
+
+- `modelReach` never reports a further tier than the model declares
+- disclosure is present exactly when the plan leaves the device
+- a tool's `contextMayLeaveDevice` equals `leavesDevice(tool.location)`
+
+**The third failed when written.** That failure is the evidence the divergence was real
+rather than stylistic.
+
+### Vacuity, found four more times
+
+§8 recorded that a fixture making the wrong answer unreachable tests nothing. This pass
+found four more instances, **two of them written by the author of the file that catches
+it**:
+
+- `supportsCapability`'s offline test asserts a loopback model is excluded — which stays
+  true when *everything* is excluded, so it stayed green through a regression that showed
+  no starter prompts at all.
+- A "refuses a non-private address" row that actually threw on the credentials check.
+- A classification-location test that looked in `plan.steps` and guarded with
+  `if (found)`; classification surfaces as a *trace*, so the guard never fired and the
+  test asserted nothing.
+- A fixture-strength guard extended to new tiers by hardcoding the value it was meant to
+  guard, which would drift silently the moment a fixture changed.
+
+The pattern is not carelessness about tests. It is that **a passing test and a
+meaningful test look identical from the outside**, and only a mutation distinguishes
+them.
+
+### Corrections the reviewer made to their own findings
+
+Twice, and both mattered. A claim that `systemContext` regressed under `offline` was
+withdrawn — `main` had been *over-claiming*, listing loopback models as available under a
+policy that refuses every one, so the new code is more accurate. And a recommendation to
+loosen `private`'s tool ceiling was retracted once it emerged that no tool can be
+`location: "local"` any more, making the change a no-op an operator would mistake for a
+loosening.
+
+Recorded because the second correction arrived after the first was already acted on. A
+reviewer who revises their own consequence is more useful than one who is right first
+time.
