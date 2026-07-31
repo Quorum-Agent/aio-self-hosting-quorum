@@ -30,6 +30,13 @@ import type { PolicyDefinition, PolicyMode } from "./types.js";
  * two live values and its ordering buys nothing — the ordered comparison is
  * kept because it is what makes such a tool safe to add later, rather than
  * something that needs this rule rediscovered.
+ *
+ * The tool ceilings say `"web"` rather than `"cloud"`. Both permit today's
+ * providers, since `web` sits below `cloud`, but `"web"` is the precise
+ * statement: tools may reach the public internet, and that is a different
+ * permission from letting a model reach a vendor's API. Writing `"cloud"` here
+ * granted more than was meant and read as though a search provider were a
+ * model vendor.
  */
 export const POLICIES: Record<PolicyMode, PolicyDefinition> = {
   private: {
@@ -46,7 +53,7 @@ export const POLICIES: Record<PolicyMode, PolicyDefinition> = {
     description:
       "Prefer local execution; allow automatic web search and cloud only when they add clear value.",
     inferenceCeiling: "cloud",
-    toolCeiling: "cloud",
+    toolCeiling: "web",
     preferLocal: true,
   },
   quality: {
@@ -54,7 +61,7 @@ export const POLICIES: Record<PolicyMode, PolicyDefinition> = {
     label: "Best quality",
     description: "Choose the strongest available route for each request.",
     inferenceCeiling: "cloud",
-    toolCeiling: "cloud",
+    toolCeiling: "web",
     preferLocal: false,
   },
   offline: {
@@ -74,7 +81,7 @@ export const POLICIES: Record<PolicyMode, PolicyDefinition> = {
     label: "Cost controlled",
     description: "Prefer free local routes and cap exceptional cloud use.",
     inferenceCeiling: "cloud",
-    toolCeiling: "cloud",
+    toolCeiling: "web",
     preferLocal: true,
     cloudBudgetUsd: 1,
   },

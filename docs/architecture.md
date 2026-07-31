@@ -293,13 +293,19 @@ The resulting decision belongs in a local usage ledger.
 Execution locations are **ordered**, not a local/cloud binary:
 
 ```
-device  →  local  →  network  →  remote  →  cloud
-in-proc    loopback   your LAN    a box you    a vendor's
-                                  rent         API
+device  →  local  →  network  →  remote  →  web  →  cloud
+in-proc    loopback   your LAN    a box you   public   a vendor's
+                                  rent        internet  API
 ```
 
-`local` means *does not leave your device*. `remote` and `cloud` differ in who
-controls the stack rather than in network exposure — self-hosted inference on
+`local` means *does not leave your device*. `web` is the public internet reached by a
+**tool**, and is deliberately not `cloud`: `cloud` means a vendor's inference API, which
+receives the whole conversation under that vendor's retention terms, while a search
+provider receives a query string. It sits below `cloud` because less travels, which lets
+a policy say "tools may reach the internet, models may not" — a statement the earlier
+vocabulary could not make. A model is never `web`; the type excludes it.
+
+`remote` and `cloud` differ in who controls the stack rather than in network exposure — self-hosted inference on
 rented hardware runs your weights under your configuration; a vendor API does
 not — so a user who declines vendor APIs on principle can still permit rented
 GPU.

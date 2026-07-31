@@ -934,7 +934,7 @@ export class ConfigurableWebSearchProvider implements WebSearchProvider {
   get tool(): RuntimeToolDescriptor {
     const settings = this.#effective();
     const selected = this.#definition(settings.provider);
-    // Always "cloud", including a SearXNG on loopback.
+    // Always "web", including a SearXNG on loopback.
     //
     // This used to report "local" when the SearXNG base URL was a loopback
     // address, which described where the instance LISTENS rather than where
@@ -954,7 +954,12 @@ export class ConfigurableWebSearchProvider implements WebSearchProvider {
     // Self-hosting a proxy is a real privacy gain (no API key tied to you, no
     // vendor query log) but it is not "the query stayed here", and this field
     // is the one that decides whether the query is permitted.
-    const location = "cloud" as const;
+    //
+    // `web` rather than `cloud` deliberately. In this codebase `cloud` means a
+    // vendor's INFERENCE API, which receives the whole conversation under that
+    // vendor's retention terms; a search provider receives a query string.
+    // Reusing `cloud` here made every search provider read as a model vendor.
+    const location = "web" as const;
     return {
       id: `web-search:${settings.provider}`,
       label:

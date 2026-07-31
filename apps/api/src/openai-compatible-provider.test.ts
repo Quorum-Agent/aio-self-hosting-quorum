@@ -275,7 +275,7 @@ describe("OpenAICompatibleProvider", () => {
           id: "web-search:test",
           label: "Test Search",
           capabilities: ["web"],
-          location: "cloud",
+          location: "web",
           available: true,
           contextMayLeaveDevice: true,
         },

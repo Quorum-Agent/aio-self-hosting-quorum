@@ -35,6 +35,18 @@ export type ResponseVerbosity = "concise" | "standard" | "detailed";
  * APIs on principle may still accept rented GPU, and the old union forced
  * those into one bucket.
  *
+ * `web` is the public internet reached by a TOOL, and it is deliberately not
+ * `cloud`. In this codebase `cloud` means a vendor's inference API — it
+ * receives the entire conversation under that vendor's retention terms. A
+ * search provider receives a query string and returns public content. Calling
+ * both "cloud" borrowed a connotation that does not apply, and it made a
+ * search provider look like a model vendor in every ceiling, log line and
+ * disclosure.
+ *
+ * It sits BELOW `cloud` for that reason: what travels is smaller. A ceiling of
+ * `web` is the precise statement "tools may reach the internet, models may
+ * not", which no arrangement of the previous vocabulary could express.
+ *
  * The order is meaningful. `EXECUTION_LOCATIONS` below is the ordering, and
  * policies express what they permit as a ceiling within it.
  */
@@ -43,6 +55,7 @@ export type ExecutionLocation =
   | "local"
   | "network"
   | "remote"
+  | "web"
   | "cloud";
 
 /** Ordered nearest-to-furthest. Index is the tier; compare, do not equate. */
@@ -51,6 +64,7 @@ export const EXECUTION_LOCATIONS = [
   "local",
   "network",
   "remote",
+  "web",
   "cloud",
 ] as const satisfies readonly ExecutionLocation[];
 
@@ -82,7 +96,7 @@ export function leavesDevice(location: ExecutionLocation): boolean {
  * and then check transport separately.
  */
 export function modelReach(model: {
-  location: Exclude<ExecutionLocation, "device">;
+  location: Exclude<ExecutionLocation, "device" | "web">;
   transport: "in_process" | "loopback" | "remote";
 }): ExecutionLocation {
   // `in_process` only downgrades a model that ALSO declares itself local.
@@ -126,7 +140,12 @@ export interface ModelDescriptor {
   label: string;
   provider: string;
   role?: LocalModelRole;
-  location: Exclude<ExecutionLocation, "device">;
+  /**
+   * `web` is excluded as well as `device`: a model runs somewhere specific —
+   * this machine, your network, a box you rent, a vendor — and "the public
+   * internet" is not a place a model runs. That tier belongs to tools.
+   */
+  location: Exclude<ExecutionLocation, "device" | "web">;
   transport: "in_process" | "loopback" | "remote";
   capabilities: Capability[];
   contextWindow: number;
