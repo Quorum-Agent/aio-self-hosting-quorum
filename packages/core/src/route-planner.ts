@@ -23,6 +23,14 @@ import type {
 function planReach(steps: readonly PlanStep[]): Exclude<ExecutionLocation, "device"> {
   let reach: Exclude<ExecutionLocation, "device"> = "local";
   for (const step of steps) {
+    // Only stages that receive conversation content. Retrieval is excluded on
+    // purpose: it egresses too, but it egresses a *query*, and it carries its
+    // own disclosure via `webSearch.contextMayHaveLeftDevice`. Including it
+    // would report a local model as a cloud route whenever a search ran, which
+    // is a different lie rather than a fix. Filtering by kind also means a step
+    // spliced in later — retrieval is added by the orchestrator after this
+    // runs — cannot silently change the route.
+    if (step.kind !== "model" && step.kind !== "synthesis") continue;
     if (step.location === "device") continue;
     if (locationTier(step.location) > locationTier(reach)) reach = step.location;
   }

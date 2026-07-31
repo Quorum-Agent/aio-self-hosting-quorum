@@ -352,6 +352,12 @@ export class Orchestrator {
           webSearchStep,
           ...plan.steps.slice(2),
         ],
+        // `route` is deliberately NOT recomputed here. Retrieval reaching the
+        // internet is disclosed by `webSearch.contextMayHaveLeftDevice`
+        // immediately below, and folding it into `route` would report a local
+        // model as a cloud route — misleading in the opposite direction. The
+        // two egresses are not equivalent: a search provider receives the
+        // query, a model receives the conversation.
         webSearch: {
           provider: this.#webSearch.tool.label,
           query: searchQuery,
