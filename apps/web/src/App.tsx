@@ -684,8 +684,8 @@ export default function App() {
               <span className="eyebrow">Local-first by design</span>
               <h1>Your models. Your data.<br />One coherent assistant.</h1>
               <p>
-                Quorum chooses the best local path first, shows its work, and only
-                reaches for the cloud when your policy allows it.
+                Quorum prefers a local path, shows its work, and only reaches
+                further out when your policy allows it.
               </p>
               {error && (
                 <div className="error-banner" role="alert">

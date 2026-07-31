@@ -1,5 +1,6 @@
 import {
   WebSearchExecutionError,
+  leavesDevice,
   type RuntimeToolDescriptor,
   type WebSearchAttempt,
   type WebSearchProvider,
@@ -550,9 +551,15 @@ function providerTool(
     id: `web-search:${id}`,
     label,
     capabilities: ["web"],
+    // Derived, never written by hand. This field and `location` are one fact
+    // read by two surfaces — enforcement reads the tier, disclosure reads this
+    // flag — and hand-writing the second is how they drift. A tool that
+    // terminates on the device gets `false` here automatically, which is what
+    // makes the UI's "Search stayed on this device" branch reachable at all
+    // rather than a promise with no mechanism behind it.
+    contextMayLeaveDevice: leavesDevice(location),
     location,
     available: true,
-    contextMayLeaveDevice: true,
   };
 }
 
@@ -977,7 +984,8 @@ export class ConfigurableWebSearchProvider implements WebSearchProvider {
       location,
       available:
         settings.enabled && this.#candidateIds(settings).length > 0,
-      contextMayLeaveDevice: true,
+      // Derived, as at the other descriptor site above.
+      contextMayLeaveDevice: leavesDevice(location),
     };
   }
 
