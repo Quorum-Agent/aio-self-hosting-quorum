@@ -114,10 +114,16 @@ Not offered as a specialist, with reasons:
   with the dedicated front-ends that own that use case.
 - **Agents / computer interaction / video** — need plumbing before a model choice means
   anything. No tool-calling loop exists (see the `tools` symptom above).
-- **Generative media** — excluded for a *product* reason, not a supply one: 424 GGUF
-  `text-to-image` models and a healthy `text-to-audio` population (ace-step, stable-audio,
-  thinksound) mean this is locally runnable. Quorum has no path for producing an image or
-  an audio clip as an answer. The blocker is the message model, not the ecosystem.
+- **Generative media — image, audio, and video** — excluded for a *product* reason, not a
+  supply one. 424 GGUF `text-to-image` models, a healthy `text-to-audio` population
+  (ace-step, stable-audio, thinksound), and 148 `text-to-video` / 158 `image-to-video`
+  models mean all three are locally runnable. Quorum has no path for returning any of them
+  as an answer. The blocker is the message model, not the ecosystem.
+- **3D generation** — excluded on *product positioning*, and it is the only exclusion made
+  on that basis rather than on shape, supply, or demand. Supply is thin in GGUF terms
+  (`text-to-3d` 4, `image-to-3d` 8), but the deciding reason is that ComfyUI owns this
+  space and there is nothing to gain by contesting it. Recorded plainly so it is not later
+  mistaken for an oversight or a supply judgement.
 - **Audio source separation and music information retrieval** — real and locally runnable
   (Demucs, BSRoformer; chord, beat and piano-transcription models), but they are
   media-production tools rather than answers to a prompt. Separation has no return path,
@@ -207,10 +213,15 @@ tiers from ADR-adjacent work, a slot's provider may live on another machine. Wha
 operator can run concurrently is a deployment question and does not bound what Quorum
 offers.
 
-**Slot assignments must persist, and nothing stores them today.** `apps/api/src/config.ts`
-reads `process.env` 41 times, and there is no user-settings store anywhere in the API. A
-slot model is worth very little if the operator re-designates every launch, so persistence
-is a prerequisite rather than a refinement.
+**Slot assignments must persist.** A slot model is worth very little if the operator
+re-designates every launch, so persistence is a prerequisite rather than a refinement.
+
+*Implemented for the roles that exist today* in `apps/api/src/slot-settings.ts`: a
+`settings.json` under the configured data directory, read by `loadConfig`, holding a model
+and optional context window per slot. It covers `general`, `coding`, and `reasoning` —
+the current `LocalModelRole` members — and a compile-time guard fails the build if that
+type gains a role the store does not persist. The remaining slots in this ADR gain
+persistence when they gain types; nothing further is needed for them here.
 
 It belongs in the API and is **not gated on the desktop shell**. The API is a Node process
 that already writes files with deliberate permissions — `managed-llama-runtime.ts` writes
@@ -221,7 +232,10 @@ a dependency runs the other way.
 
 **Saved settings layer *under* the environment, and the environment wins.** Reversing that
 precedence would silently change behaviour for every existing deployment and for the tests
-that set those 41 variables.
+that set those 41 variables. Enforced and mutation-verified: flipping the precedence in
+`config.ts` fails a test that asserts the environment value survives a conflicting saved
+one, with the environment value, the saved value, and the built-in default all distinct so
+each outcome is distinguishable.
 
 **A saved assignment can go stale, and must say so.** A pinned artifact can be deleted, or
 the runtime rebuilt so the artifact no longer loads — the `requires: b10192` problem. The
@@ -257,10 +271,16 @@ I already have", not "is this multi-modal".
 
 **Offering generative slots is a schema decision, not a presentation one.**
 `PUBLIC_ANSWER_SCHEMA` is `{ answer: string }` with `additionalProperties: false`, and every
-provider is validated against it. Image or audio output does not need a node; it needs the
-definition of *an answer* to change, along with the streaming path, storage, and a
-disclosure model for non-text payloads. **Open decision, deliberately not taken here** — it
-should be made on its merits rather than absorbed as a layout detail.
+provider is validated against it. Generative output — **image, audio, and video** — does
+not need a node; it needs the definition of *an answer* to change, along with the streaming
+path, storage, and a disclosure model for non-text payloads. **Open decision, deliberately
+not taken here** — it should be made on its merits rather than absorbed as a layout detail.
+
+Note what the disclosure question makes non-obvious. A non-text payload has to carry the
+same egress and provenance facts a text answer does, and every one of those facts is
+currently computed over a string. Widening the answer type is therefore not only a
+transport change; it reopens the surface where this repository has found most of its
+defects.
 
 ## Alternatives considered
 
