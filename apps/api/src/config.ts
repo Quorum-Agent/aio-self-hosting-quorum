@@ -243,6 +243,15 @@ export function loadConfig(): AppConfig {
         16_384,
       ),
       qualityRating: 65,
+      // The general and reasoning roles have always set this; the coding role
+      // did not, which is backwards — coding specialists are among the most
+      // likely to be reasoning models. Measured on llama.cpp b10192: reasoning
+      // tokens are drawn from the same budget as the answer, so a thinking
+      // model under a tight `max_tokens` returns `finish_reason: "length"`
+      // with EMPTY content (0 characters at max_tokens 128, where the same
+      // model with reasoning suppressed answered normally). Empty content then
+      // fails answer validation, excludes the model, and re-plans.
+      reasoningEffort: "none",
     });
   }
   if (reasoningModel) {
