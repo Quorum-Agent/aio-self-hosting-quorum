@@ -864,3 +864,95 @@ before its single yield, so route mode has one generation of silence and relay h
 this genuinely better means yielding the draft as a distinct event the client renders as progress
 rather than as answer text, which is a feature rather than a fix.
 
+
+---
+
+## 15. Search query extraction — red team of an unshipped proposal (2026-07-31)
+
+Nothing in this section is shipped. It records a proposal that was measured, red-teamed, and found
+unsound as reasoned, so the reasoning is not repeated later. Three lenses attacked it: security,
+harness methodology, and comparison fairness.
+
+**The proposal.** Replace the verbatim prompt currently sent to the search provider
+(`orchestrator.ts:281`) with a span chosen by a local model, verified to be a literal substring of
+the prompt. **The claim was: "a model that can only select the user's words, never author new
+ones, cannot be made to leak arbitrary text by prompt injection."**
+
+### Q-59 · That claim is false, and its worst property is that it argues for removing the control that works [CONFIRMED]
+
+Two sensitive-content gates exist. **Gate A** (`orchestrator.ts:261` via
+`request-compiler.ts:542-548`) runs `detectSensitiveContent` over every user message, raw, before
+a query exists. **Gate B** (`orchestrator.ts:286`) checks the constructed query. Gate A is what
+actually protects secrets.
+
+The detectors match *ownership*, not the sensitive fact —
+`\b(i|we|my|our|patient's)\b[^.!?\n]{0,80}\b(diagnosis|salary|address|prescription|…)\b`. The
+extraction prompt instructs the model to "remove framing about who is asking or why," and *"my"*
+**is** that framing. In 13 of 15 trials the returned span passed the sensitive check while still
+containing the address or the diagnosis. It does not leak today because Gate A still sees the full
+message — but a clean-looking query displayed beside a "sensitive data" error reads as a false
+positive, and this claim is the argument that closes that ticket. **Gate A must stay on full
+messages permanently, and that reasoning must stay written down next to it.**
+
+Three further breaks, all reproduced against local models:
+
+- **"The user's own words" fails whenever the prompt contains pasted content.** With an injected
+  line inside a pasted vendor error body, 3 of 4 models returned a planted secret. Verified as a
+  genuine substring; both gates read clean. No conversation history required.
+- **A substring can invert meaning.** All 4 models turned "A colleague claims ibuprofen is safe to
+  combine with lithium. That sounds wrong to me." into a search for the claim stated
+  affirmatively. Negation attached to a verb survives; negation carried by a separate clause does
+  not. 2 of 4 turned a disclaimed allegation about a named organisation into an unhedged search.
+- **Extraction widens the egress window.** `slice(0, 500)` is a *positional* bound: only the first
+  500 characters can leave. A model-chosen span makes any 500-character window reachable —
+  including pasted content Gate A does not recognise.
+
+### Q-60 · Verification is only sound in its strictest form [CONFIRMED]
+
+`prompt.includes(span)` on raw strings is sufficient **and is the only sufficient form**.
+
+- `includes("")` is true, as are `" "` and `"a"`. A minimum length is required.
+- Raw `includes` fails on multi-line prompts, because the query builder collapses whitespace. This
+  creates real pressure to normalise both sides.
+- **Normalising both sides converts SELECT into AUTHOR.** With NFKC, format-character stripping and
+  confusable folding — the same normalisation `normalizeForSensitiveDetection` applies — 56
+  zero-width characters embedded in an otherwise genuine span carried a recoverable
+  `sk-live-4f9c2a` through both the substring check and the sensitive-content scan. Those
+  characters survive `orchestrator.ts:281-285` intact, being neither C0 controls nor JS `\s`.
+
+If multi-line support is needed: normalise the prompt **once**, extract from that, and verify
+against that same string. Never normalise the model's output.
+
+### Q-61 · The extractor reliably deletes the user's own vetoes [CONFIRMED]
+
+`NETWORK_DENIAL_PATTERN`, `LOCAL_SCOPE_PATTERN` and `PERSONAL_SCOPE_PATTERN` are, by the
+extractor's own definition, "framing about who is asking or why." In 11 of 11 trials, across every
+model, the span dropped them. "Do not search the web" became a search.
+
+This is harmless at `orchestrator.ts:281`, which is downstream of every veto, and catastrophic
+anywhere upstream. **A span must never reach `deriveRequirements`, never be persisted as the
+message, and never be produced by a client-side "clean up my query" feature.** A veto-consistency
+check — block when a veto matches the full message but not the span — is cheap insurance.
+
+### What the measurement actually supports
+
+Stripping conversational framing beats sending the prompt verbatim: +0.202 mean F1, winning 8 of 9
+framings, t(8)=4.43, and it holds on framings the regex author did not write. That is the whole
+result. Everything finer was noise:
+
+- A deterministic trim scored 0.950 on wrappers its author also wrote and **0.519** on twenty it
+  did not. Shared authorship, not skill.
+- The model ranking was substantially formatting. 101 of qwen3.5:2b's 111 "violations" were
+  quotation marks the system prompt had demonstrated. Realigned, it moves from last to mid-field.
+- `qwen3:4b` over the trim is +0.008 with t(8)=0.38, smaller than run-to-run variance at
+  temperature 0.
+- Reported per-model latencies rank model load order, not speed — a 29.6s cold load sat inside the
+  per-prompt mean.
+- Token F1 is order-blind, cannot tell which token was dropped, and rates deleting the
+  interrogative above keeping junk. A strategy that merely drops the prompt's first word beats
+  sending it verbatim.
+
+**If extraction is built, the honest framing is: we send strictly less than we send today, verified
+byte-for-byte against the prompt, with every existing gate still evaluated on the full message.**
+Not: the model can only select, so injection cannot matter. It can, it did, and the substring check
+caught none of the three attacks.
