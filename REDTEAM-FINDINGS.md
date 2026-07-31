@@ -1174,25 +1174,41 @@ The discipline that would have caught all four: **before explaining an effect, c
 is real in data audited for the defects you already know about.** Knowing a failure mode exists is
 not the same as having checked for it.
 
-**And the errors were not randomly signed. Every one ran in the direction of its author's prior.**
+**The errors also appear not to be randomly signed**, which if true matters more than their number.
 
 | Error | Author's prior | Direction of the error |
 | --- | --- | --- |
-| `gemma4:e4b` needs the schema | reviewer was attacking the harness's model choice | understated the model being defended |
 | Wrapper shuffle fixes a confound | author expected the harness to be biased | manufactured a defect to fix |
 | Format fix explains the reversal | author had already chosen `qwen3:4b` | favoured `qwen3:4b` |
+| Verifier scoring divergence | author had already chosen `qwen3:4b` | favoured `qwen3:4b` on its worst axis |
 | Committed prompt is worst for all | reviewer was hired to attack that prompt | understated the prompt under attack |
+| `gemma4:e4b` needs the schema | reviewer held two competing claims | **splits — see below** |
 
-The verification script's scoring divergence belongs on that list too: it transferred credit to
-`qwen3:4b` on the exact axis `qwen3:4b` was worst at, and `qwen3:4b` was the author's existing
-choice. Five errors, five distinct mechanisms, one direction.
+**Four of the five classify unambiguously. The fifth does not.** The schema error served its
+author's claim that the JSON schema props up `qwen3:4b` — the fabricated 0.702 was the evidence
+that `gemma4:e4b` needed the schema too — while simultaneously undercutting their claim that
+`gemma4:e4b` was a serious competitor, by making it look more fragile than it is. It ran with one
+prior and against another. Recording it as "understated the model being defended" would mean
+picking whichever reading fits the pattern.
 
-This belongs in the permanent record because the review was, by construction, the careful pass —
-adversarial, externally staffed, explicitly hunting for this class of error. It produced five
-instances anyway. The rate on unreviewed work should be assumed higher, and more importantly the
-**bias** should be assumed higher, because the failure is not that mistakes happen. It is that they
-are signed. Random error is absorbed by more measurement; directional error is not, and this review
-found no instance of a mistake that inconvenienced the person who made it.
+That distinction is not pedantry, because **the direction column is a post-hoc classification made
+by the two people who made the errors.** There is no third coder, no rule fixed in advance for
+which of an author's several claims an error "serves," and n=5. Assigning a link rather than
+testing one is the precise failure this section documents. An unqualified version of this finding
+would be the sixth row — and it would be the most quotable line in the file, therefore the least
+likely to be re-checked by whoever inherits it.
+
+So it is recorded as a **hypothesis this pass suggests, not a result it establishes.** Four for four
+on the unambiguous cases is still worth a reader's attention.
+
+What is load-bearing, and does not depend on the count: **random error is absorbed by more
+measurement; directional error is not.** Re-running the comparison would have found none of these
+five. That reframes what this review was for — it was not noise reduction, and treating "measure it
+again, more carefully" as the remedy would have missed every instance.
+
+The rate should be assumed higher on unreviewed work, because this was the careful pass:
+adversarial, externally staffed, explicitly hunting this error class. It produced five instances
+anyway.
 
 ### Deliberately unresolved
 
