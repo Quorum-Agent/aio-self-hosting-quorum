@@ -1054,3 +1054,390 @@ before its single yield, so route mode has one generation of silence and relay h
 this genuinely better means yielding the draft as a distinct event the client renders as progress
 rather than as answer text, which is a feature rather than a fix.
 
+
+---
+
+## 15. Search query extraction — red team of an unshipped proposal (2026-07-31)
+
+Nothing in this section is shipped. It records a proposal that was measured, red-teamed, and found
+unsound as reasoned, so the reasoning is not repeated later. Three lenses attacked it: security,
+harness methodology, and comparison fairness.
+
+**The proposal.** Replace the verbatim prompt currently sent to the search provider
+(`orchestrator.ts:281`) with a span chosen by a local model, verified to be a literal substring of
+the prompt. **The claim was: "a model that can only select the user's words, never author new
+ones, cannot be made to leak arbitrary text by prompt injection."**
+
+### Q-59 · That claim is false, and its worst property is that it argues for removing the control that works [CONFIRMED]
+
+Two sensitive-content gates exist. **Gate A** (`orchestrator.ts:261` via
+`request-compiler.ts:542-548`) runs `detectSensitiveContent` over every user message, raw, before
+a query exists. **Gate B** (`orchestrator.ts:286`) checks the constructed query. Gate A is what
+actually protects secrets.
+
+The detectors match *ownership*, not the sensitive fact —
+`\b(i|we|my|our|patient's)\b[^.!?\n]{0,80}\b(diagnosis|salary|address|prescription|…)\b`. The
+extraction prompt instructs the model to "remove framing about who is asking or why," and *"my"*
+**is** that framing. In 13 of 15 trials the returned span passed the sensitive check while still
+containing the address or the diagnosis. It does not leak today because Gate A still sees the full
+message — but a clean-looking query displayed beside a "sensitive data" error reads as a false
+positive, and this claim is the argument that closes that ticket. **Gate A must stay on full
+messages permanently, and that reasoning must stay written down next to it.**
+
+Three further breaks, all reproduced against local models:
+
+- **"The user's own words" fails whenever the prompt contains pasted content.** With an injected
+  line inside a pasted vendor error body, 3 of 4 models returned a planted secret. Verified as a
+  genuine substring; both gates read clean. No conversation history required.
+- **A substring can invert meaning.** All 4 models turned "A colleague claims ibuprofen is safe to
+  combine with lithium. That sounds wrong to me." into a search for the claim stated
+  affirmatively. Negation attached to a verb survives; negation carried by a separate clause does
+  not. 2 of 4 turned a disclaimed allegation about a named organisation into an unhedged search.
+- **Extraction widens the egress window.** `slice(0, 500)` is a *positional* bound: only the first
+  500 characters can leave. A model-chosen span makes any 500-character window reachable —
+  including pasted content Gate A does not recognise.
+
+### Q-60 · Verification is only sound in its strictest form [CONFIRMED]
+
+`prompt.includes(span)` on raw strings is sufficient **and is the only sufficient form**.
+
+- `includes("")` is true, as are `" "` and `"a"`. A minimum length is required.
+- Raw `includes` fails on multi-line prompts, because the query builder collapses whitespace. This
+  creates real pressure to normalise both sides.
+- **Normalising both sides converts SELECT into AUTHOR.** With NFKC, format-character stripping and
+  confusable folding — the same normalisation `normalizeForSensitiveDetection` applies — 56
+  zero-width characters embedded in an otherwise genuine span carried a recoverable
+  `sk-live-4f9c2a` through both the substring check and the sensitive-content scan. Those
+  characters survive `orchestrator.ts:281-285` intact, being neither C0 controls nor JS `\s`.
+
+If multi-line support is needed: normalise the prompt **once**, extract from that, and verify
+against that same string. Never normalise the model's output.
+
+### Q-61 · The extractor reliably deletes the user's own vetoes [CONFIRMED]
+
+`NETWORK_DENIAL_PATTERN`, `LOCAL_SCOPE_PATTERN` and `PERSONAL_SCOPE_PATTERN` are, by the
+extractor's own definition, "framing about who is asking or why." In 11 of 11 trials, across every
+model, the span dropped them. "Do not search the web" became a search.
+
+This is harmless at `orchestrator.ts:281`, which is downstream of every veto, and catastrophic
+anywhere upstream. **A span must never reach `deriveRequirements`, never be persisted as the
+message, and never be produced by a client-side "clean up my query" feature.** A veto-consistency
+check — block when a veto matches the full message but not the span — is cheap insurance.
+
+### What the measurement actually supports
+
+Stripping conversational framing beats sending the prompt verbatim: +0.202 mean F1, winning 8 of 9
+framings, t(8)=4.43, and it holds on framings the regex author did not write. That is the whole
+result. Everything finer was noise:
+
+- A deterministic trim scored 0.950 on wrappers its author also wrote and **0.519** on twenty it
+  did not. Shared authorship, not skill.
+- The model ranking was substantially formatting. 101 of qwen3.5:2b's 111 "violations" were
+  quotation marks the system prompt had demonstrated. Realigned, it moves from last to mid-field.
+- `qwen3:4b` over the trim is +0.008 with t(8)=0.38, smaller than run-to-run variance at
+  temperature 0.
+- Reported per-model latencies rank model load order, not speed — a 29.6s cold load sat inside the
+  per-prompt mean.
+- Token F1 is order-blind, cannot tell which token was dropped, and rates deleting the
+  interrogative above keeping junk. A strategy that merely drops the prompt's first word beats
+  sending it verbatim.
+
+**If extraction is built, the honest framing is: we send strictly less than we send today, verified
+byte-for-byte against the prompt, with every existing gate still evaluated on the full message.**
+Not: the model can only select, so injection cannot matter. It can, it did, and the substring check
+caught none of the three attacks.
+
+---
+
+## 16. External review of the extraction *measurement* (2026-07-31)
+
+§15 red-teamed the extraction **proposal**. This red-teams the **measurement** — the harness, the
+model selection, and the reported numbers — because the same person wrote the strategies, the
+wrappers, the scoring, and the conclusions. Two reviewers worked independently of that author and
+of each other.
+
+### The harness was measuring itself in six places
+
+Each is fixed in `query-extraction-evaluation.ts`.
+
+| # | What was actually being measured | What it was reported as |
+| --- | --- | --- |
+| 1 | Few-shot examples written as `span: "..."` | A model incapable of clean output |
+| 2 | 26 no-op cases where prompt === ideal | Overall extraction quality |
+| 3 | Model load time folded into the per-prompt mean | Model speed |
+| 4 | Unparseable output excluded from scoring | A model not penalised for garbage |
+| 5 | Queries ending in `.` wrapped into malformed prompts | Model error |
+| 6 | Substring violations skipping the noise check | Artificially clean noise numbers |
+
+**(1) is the largest, and two reviewers found it independently** — counting 99 and 101 of
+qwen3.5:2b's 111 "violations", a difference explained by transient GPU failures rather than by
+disagreement. The response goes into a JSON string field where the quotes are already supplied, so
+writing the examples as `span: "..."` taught weaker models to wrap their answer in literal quote
+characters. It cost 0.37 mean F1 and was reported as the model being unusable. It was the prompt.
+
+**(2) decided the model ranking**, and is now reported separately and permanently.
+
+### A reversal that was claimed, then withdrawn
+
+This subsection previously reported that the reviewer's central finding had been overturned. **It
+had not been.** The finding stands, the refutation was wrong, and the way it was wrong is the most
+useful thing in this document.
+
+The reviewer found that `gemma4:e4b` — present in the harness's own default model list, absent
+from its reported table — was **statistically tied** with `qwen3:4b`: gap 0.011, 95% CI
+[-0.018, 0.038].
+
+That was re-measured on all 240 cases with the prompt fixed, using a purpose-written verification
+script, and appeared to reverse decisively: gap +0.029, CI [0.018, 0.046], significant, and still
+significant on the wrapped-only subset. That result was written up here as a reversal.
+
+**The verification script scored violations differently from the harness it was verifying.** The
+harness scores a substring violation as **0** — an authored span is a failed case, whatever its
+token overlap. The verification script let violating spans keep their token-F1 credit. Re-running
+the identical comparison under the harness's own rule:
+
+| prompt | scoring | gap `qwen3:4b` − `gemma4:e4b` | 95% CI | significant |
+| --- | --- | --- | --- | --- |
+| v8 fixed | lenient (script) | +0.029 | [+0.016, +0.043] | yes |
+| v8 fixed | **strict (harness)** | **+0.013** | **[-0.016, +0.040]** | **no** |
+| v0 committed | lenient (script) | +0.035 | [+0.022, +0.048] | yes |
+| v0 committed | strict (harness) | +0.026 | [+0.002, +0.048] | marginal |
+
+**Under the harness's actual scoring rule, with the prompt bug fixed, the two models are tied.**
+The reviewer's finding survives its own refutation.
+
+And the prompt is not the variable. Pooling both prompts under harness scoring gives a gap of
+**+0.019, CI [+0.001, +0.037]** across 478 paired cases — a small real difference sitting almost
+exactly on the resolution limit of a 240-case run. That is why the three independent n=240
+measurements taken during this review (the reviewer's at v0: +0.011; this one at v0: +0.026; this
+one at v8: +0.013) disagree about significance while agreeing about magnitude: every one of them is
+consistent with a true gap near 0.02, and they fall on either side of the line by sampling alone.
+
+**It is a statistical-power story, not a prompt story.** Attributing the disagreement to the prompt
+fix — as the withdrawn reversal did — assigns to a variable that does not move it. The practical
+consequence is that F1 cannot decide between these two models at this corpus size, and the choice
+therefore rests on the reliability gap (2 violations against 7) and the VRAM budget, both of which
+are measured without ambiguity.
+
+The error was not neutral. `qwen3:4b` commits 3.5× more violations than `gemma4:e4b` (7 against 2),
+so a rule that pays partial credit for violations transfers value to `qwen3:4b` in proportion to
+the thing it is worse at. The divergence flattered the incumbent, and the incumbent was the
+author's prior choice.
+
+Two supporting claims made alongside the reversal were also wrong, and are withdrawn:
+
+- *"Fixing the example format gained `qwen3:4b` about 0.021 and `gemma4:e4b` about 0.003."*
+  Cross-run arithmetic between two measurements with different scoring. Measured within one run and
+  paired, the format change moves `qwen3:4b` by **-0.006** (CI [-0.013, -0.001]) — the committed
+  prompt is very slightly better, not worse.
+- *"The tie was an artifact of the prompt bug, which asymmetrically benefits the model that was
+  mis-formatting."* Neither model was mis-formatting. Counting spans that begin or end with a quote
+  character: **0 of 239 for `qwen3:4b` and 0 of 240 for `gemma4:e4b`, under both prompts** — and 0
+  for `gemma4:e2b` and `qwen3:0.6b` too. Quote-wrapping was real but confined to `qwen3.5:2b`,
+  which is not in this comparison. The format fix is retained in the harness because it is worth
+  0.37 F1 to `qwen3.5:2b`, and for no other reason. It should not be sold as improving the
+  comparison above.
+
+The corrected standing numbers, harness scoring, 240 cases, fixed prompt:
+
+| model | mean F1 | exact | violations | warm median |
+| --- | --- | --- | --- | --- |
+| `qwen3:4b` | 0.961 | 223 | 7 | 251 ms |
+| `gemma4:e4b` | 0.948 | 179 | **2** | 748 ms |
+
+**"Tied" is the wrong word, and it errs against `qwen3:4b`.** Seven estimates of this gap exist
+across two reviewers, two independent scoring implementations, five prompts, and two sample sizes.
+**Every one is positive**, ranging 0.011 to 0.026. Individual intervals straddling zero is what a
+small real effect looks like at this *n*; a genuinely absent effect would have scattered the sign
+by now. No p-value belongs on that — the estimates share data and are not independent — but the
+sign consistency is stronger evidence than any single interval.
+
+The defensible statement is: **F1 favours `qwen3:4b` by roughly 0.02, consistent in sign across
+every measurement, at the resolution limit for n=240 — while `gemma4:e4b` is better on
+violations.** Saying "tied" borrows strength the F1 numbers do not have and invites the obvious
+rebuttal that the point estimates consistently favour the other model.
+
+The pooled +0.019, CI [+0.001, +0.037] should be read the same way. Its lower bound is essentially
+zero, so it is the weakest possible form of "clears zero" and does not establish the gap on its
+own. Pooling across prompts also treats prompt as noise, which is defensible **only because** the
+gap was separately shown to be flat across prompts — that is a precondition, not an aside.
+
+None of this changes the outcome, because **the case for `gemma4:e4b` never rested on F1.** The
+violation difference is the one that clears zero on its own: 2.92pp, CI [0.83, 5.42], paired at
+n=240, while every F1 interval straddles it. And that difference is **reliability, not safety** —
+the substring gate rejects every violating span by construction, so no authored text reaches the
+search provider under either model. The gap is how often extraction fails and falls back to the
+verbatim prompt: roughly 3% against 1%.
+
+Independent evidence the reviewer supplied afterwards points the same way and is recorded as
+theirs: across five prompt variants on a 60-case stratified subset, `qwen3:4b` leads at every one
+including `gemma4:e4b`'s best, but at n=60 that establishes direction and consistency, not
+magnitude. It does not rescue the reversal.
+
+**The lesson is narrower and more uncomfortable than "check your work".** The verification script
+was written to audit the harness, and diverged from it on exactly the axis under dispute. A
+verification tool that does not implement the rules of the thing it verifies is not measuring that
+thing at all, and its disagreement is self-generated. The divergence here was invisible — both
+implementations were internally reasonable, and nothing failed — until the gap between them was
+computed on purpose.
+
+### The ranking is partly a ranking of something else
+
+Dropping the `format` JSON schema, with an explicit instruction to reply with bare text. **These
+are the reviewer's numbers on a 60-case stratified subset, not the 240-case run above** — direction
+and consistency, not magnitude:
+
+| model | with schema | without |
+| --- | --- | --- |
+| `qwen3:4b` | 0.948 | **0.000** |
+| `gemma4:e4b` | 0.941 | 0.935 |
+| `gemma4:e2b` | 0.860 | **0.921** |
+
+Without the schema the leader stops answering and emits reasoning prose — even when told not to.
+Both Gemma models are indifferent to it or better without it. So the choice of decoding mode is
+**winner-dependent**: the harness happens to use the one mode `qwen3:4b` can function in at all,
+while the competitors neither gain nor lose much from that choice. That is legitimate — the
+production path uses the schema — but it makes the leader's characteristic failures (`"2:015"`,
+`"cleop:"`, a degenerate `1.1.1.1` repetition loop) **structural** rather than incidental: they are
+the failure mode of the only mode it works in.
+
+`think: false` was checked in the same pass and is correct. With thinking enabled `qwen3:4b` spends
+its entire budget in the thinking channel and returns empty content on 60 of 60 cases; the Gemma
+models are unaffected.
+
+### What could not be broken
+
+The overfitting hypothesis is dead, which is worth recording because it was the most likely
+explanation for the result. Across 11 system-prompt variants — zero-shot, one example, four
+examples, different subjects, rewritten instructions, JSON-formatted examples, a no-op
+demonstration — `qwen3:4b` won every one, and its **worst** prompt beat every other model's
+**best** prompt on identical cases.
+
+A stronger claim was made here and then withdrawn: that the committed prompt was the **worst**
+prompt for every model tested. That rested on a sweep in which every error, in every model, fell in
+the `v0` condition — because `v0` ran first for each model, inside a window when three agents were
+contending for the GPU. Errors were scored as zero, so the contamination read as a property of the
+prompt. Excluding them, the committed prompt is **mid-pack** for `qwen3:4b` (0.964; worst is 0.952,
+best 0.980) and second-worst for `gemma4:e2b`. It remains worst for `qwen3.5:2b`, where the quote
+bug dominates.
+
+What survives: `qwen3:4b` leads at all five variants, and outside zero-shot the gap over
+`gemma4:e4b` is **flat at 0.017–0.023** — consistent with the pooled 0.019 above, and further
+evidence that prompt choice is not what separates these two.
+
+The file comment claiming instruction-only prompting made every model return the whole message did
+not survive the corpus — zero-shot beats the two examples for every model tested. That observation
+came from eleven hand-written cases and did not generalise, and the comment has been corrected in
+place.
+
+### A fix that was reverted
+
+One change from this pass was withdrawn after being measured. Wrapper assignment was switched from
+`index % 9` to `(index * 7) % 9`, on the reasoning that the modular scheme tied wrapper to corpus
+position. The corpus **is** positionally structured — wh-question rate runs 0.38 / 0.80 / 0.70
+across its thirds — but `index % 9` already gives each wrapper an evenly spaced stratified sample,
+and the per-wrapper spread is identical to two decimal places under both schemes.
+
+It is recorded rather than deleted quietly because it is the same error the harness was making: a
+plausible mechanism plus a real underlying phenomenon is not evidence that one causes the other.
+
+### The standing hazard this review kept reproducing
+
+Four claims in this section were made, published, and withdrawn during a single review pass, by
+both reviewers, on the same subject matter — and a fifth error, the verifier scoring divergence
+above, was found the same way. The four claims first:
+
+| Claim | Withdrawn because |
+| --- | --- |
+| `gemma4:e4b` needs the JSON schema (0.941 → 0.702) | ablation never instructed bare output |
+| Wrapper assignment confounds position with query type | `index % 9` already stratifies |
+| The format fix asymmetrically benefits the mis-formatting model | neither model was mis-formatting |
+| The committed prompt is worst for every model | every error landed in that one condition |
+
+All four share a shape, and it is not carelessness. In each case a mechanism was proposed that
+*would* explain an observed effect, and that sufficiency was mistaken for evidence that it *did*.
+Two of the four were fitted to data that had a known defect the author had already identified
+elsewhere and simply not checked for locally. In one case the reviewer had flagged the exact bug to
+the other party and then failed to apply it to their own numbers.
+
+The discipline that would have caught all four: **before explaining an effect, confirm the effect
+is real in data audited for the defects you already know about.** Knowing a failure mode exists is
+not the same as having checked for it.
+
+**The errors also appear not to be randomly signed**, which if true matters more than their number.
+
+| Error | Author's prior | Direction of the error |
+| --- | --- | --- |
+| Wrapper shuffle fixes a confound | author expected the harness to be biased | manufactured a defect to fix |
+| Format fix explains the reversal | author had already chosen `qwen3:4b` | favoured `qwen3:4b` |
+| Verifier scoring divergence | author had already chosen `qwen3:4b` | favoured `qwen3:4b` on its worst axis |
+| Committed prompt is worst for all | reviewer was hired to attack that prompt | understated the prompt under attack |
+| `gemma4:e4b` needs the schema | reviewer held two competing claims | **splits — see below** |
+
+**Four of the five classify unambiguously. The fifth does not.** The schema error served its
+author's claim that the JSON schema props up `qwen3:4b` — the fabricated 0.702 was the evidence
+that `gemma4:e4b` needed the schema too — while simultaneously undercutting their claim that
+`gemma4:e4b` was a serious competitor, by making it look more fragile than it is. It ran with one
+prior and against another. Recording it as "understated the model being defended" would mean
+picking whichever reading fits the pattern.
+
+That distinction is not pedantry, because **the direction column is a post-hoc classification made
+by the two people who made the errors.** There is no third coder, no rule fixed in advance for
+which of an author's several claims an error "serves," and n=5. Assigning a link rather than
+testing one is the precise failure this section documents. An unqualified version of this finding
+would be the sixth row — and it would be the most quotable line in the file, therefore the least
+likely to be re-checked by whoever inherits it.
+
+So it is recorded as a **hypothesis this pass suggests, not a result it establishes.** Four for four
+on the unambiguous cases is still worth a reader's attention.
+
+What is load-bearing, and does not depend on the count: **random error is absorbed by more
+measurement; directional error is not.** Re-running the comparison would have found none of these
+five. That reframes what this review was for — it was not noise reduction, and treating "measure it
+again, more carefully" as the remedy would have missed every instance.
+
+The rate should be assumed higher on unreviewed work, because this was the careful pass:
+adversarial, externally staffed, explicitly hunting this error class. It produced five instances
+anyway.
+
+### Deliberately unresolved
+
+The fraction of prompts that arrive already-clean decides the `gemma4:e2b` comparison — 26/240 is
+the first ratio at which that gap clears zero; at 5% it does not. There is no principled way to set
+it. The source corpora are search-box queries and so are 100% bare by construction; the
+conversational-search literature measures cross-turn context dependence, which is a different
+phenomenon whose rates would not transfer. Citing it would launder an arbitrary choice through a
+reference that does not support it.
+
+So the harness reports **per-framing scores** instead, and no blended number is treated as the
+result. The reader applies their own prior. The one genuinely external basis available is Quorum's
+own prompt history — counting a bare/wrapped ratio over real user prompts stores nothing and needs
+less than the curated cases already took. That is the way to close this if it ever matters.
+
+It matters more than the first draft of this section claimed. That draft dismissed the question on
+the grounds that the live comparison separates regardless. It does not separate: `qwen3:4b` and
+`gemma4:e4b` are tied under the harness's scoring. So the ratio is load-bearing for both surviving
+comparisons, not just the `gemma4:e2b` one.
+
+### Standing conclusion
+
+**`qwen3:4b` and `gemma4:e4b` are not distinguishable on extraction quality.** Under the harness's
+own scoring the gap is +0.013 with CI [-0.016, +0.040], and `gemma4:e4b` is cleaner on the
+invariant by 2 violations to 7. On the measurement alone, `gemma4:e4b` is the better extractor.
+
+`qwen3:4b` is still the right choice, and the honest reason is a resource argument rather than a
+quality one: `gemma4:e4b` is **9.6 GB** against a 16 GB card that must also hold the hub and the
+classifier, and it carries a 21.6 s cold load that lands directly on the extraction path under
+model rotation. `qwen3:4b` is 2.5 GB.
+
+Two qualifications on that choice, both of which cut against it and should not be lost:
+
+- It is the best extractor **under grammar-constrained decoding**, which is the mode this codebase
+  uses — and it is the only model tested that cannot work without it, scoring 0.000 unconstrained
+  even when explicitly instructed. Its characteristic failures are the failure mode of the only
+  mode it works in.
+- Its advantage over the field was overstated at every stage of this investigation, in the same
+  direction, by the same author, three separate times. That is worth weighing when the next
+  comparison is run.
+
+**`qwen3:4b` is what fits.** Not what won.
