@@ -26,6 +26,8 @@ interface ExtractionCase {
   readonly ideal: string;
   /** Phrases that must NOT survive into the query. */
   readonly noise: readonly string[];
+  /** True when the prompt is already the query, so the answer is to do nothing. */
+  readonly bare?: boolean;
 }
 
 interface Strategy {
@@ -47,9 +49,18 @@ const SPAN_SCHEMA = {
 // The model selects; it never authors. Whatever comes back is checked against
 // the prompt before it is allowed anywhere near a search provider, so a model
 // that paraphrases fails the case rather than quietly changing what egresses.
-// Two examples do the heavy lifting. Instruction-only prompting made every
-// model return the entire message: "if it is already a good query, return it
-// whole" is the easiest branch to take, and small models take it every time.
+//
+// The examples are written as JSON objects because the response goes into a
+// JSON string field where the quotes are already supplied. Writing them as
+// `span: "..."` taught weaker models to emit the answer wrapped in literal
+// quote characters: it cost qwen3.5:2b 99 of its 111 recorded "violations" and
+// 0.37 mean F1. Two reviewers found that independently. Keep this shape.
+//
+// An earlier comment here claimed instruction-only prompting made every model
+// return the whole message. That did not survive the corpus: zero-shot beats
+// these examples for every model tested. The observation came from eleven
+// hand-written cases and did not generalise. The examples are retained because
+// they raise exact-match style compliance, not because they raise F1.
 const SPAN_SYSTEM = [
   "You extract the search query hidden inside a chat message.",
   "Return the SHORTEST span of the message that a search engine needs, copied character-for-character from the message.",
@@ -58,11 +69,18 @@ const SPAN_SYSTEM = [
   "Keep facts the question depends on.",
   "",
   'Message: "Hi there, my colleague and I disagree about the fastest sorting algorithm for nearly sorted data. Any thoughts?"',
-  'span: "fastest sorting algorithm for nearly sorted data"',
+  '{"span": "fastest sorting algorithm for nearly sorted data"}',
   "",
   'Message: "Could you please tell me when the next total solar eclipse is? Thanks so much!"',
-  'span: "when the next total solar eclipse is"',
+  '{"span": "when the next total solar eclipse is"}',
 ].join("\n");
+
+// A model that returns unparseable JSON has failed at the task, which is not
+// the same as the endpoint being unreachable. Throwing both as plain Errors
+// put a model failure and an infrastructure failure in the same bucket, and
+// the infrastructure bucket is excluded from scoring — so a model that emitted
+// garbage was being let off rather than penalised.
+class ModelOutputError extends Error {}
 
 async function modelSpan(model: string, prompt: string): Promise<string> {
   const response = await fetch(OLLAMA_URL, {
@@ -72,8 +90,16 @@ async function modelSpan(model: string, prompt: string): Promise<string> {
       model,
       stream: false,
       format: SPAN_SCHEMA,
+      // Correct for every model measured, and load-bearing for the leader:
+      // qwen3:4b with thinking enabled spends its entire token budget in the
+      // thinking channel and returns empty content on 60 of 60 cases. It costs
+      // the Gemma models nothing — e2b is better without it, e4b unchanged but
+      // five times slower.
       think: false,
-      keep_alive: "5m",
+      // Long enough that a model is not evicted between its own cases. At "5m"
+      // a six-model sweep reloaded mid-run and the reload time landed in that
+      // model's per-prompt average.
+      keep_alive: "10m",
       options: { temperature: 0, num_predict: 300 },
       messages: [
         { role: "system", content: SPAN_SYSTEM },
@@ -84,25 +110,58 @@ async function modelSpan(model: string, prompt: string): Promise<string> {
   if (!response.ok) throw new Error(`${model}: HTTP ${response.status}`);
   const payload = (await response.json()) as { message?: { content?: string } };
   const raw = payload.message?.content ?? "";
-  const parsed = JSON.parse(raw) as { span?: unknown };
+  let parsed: { span?: unknown };
+  try {
+    parsed = JSON.parse(raw) as { span?: unknown };
+  } catch {
+    throw new ModelOutputError(`${model}: unparseable response ${JSON.stringify(raw.slice(0, 80))}`);
+  }
   return typeof parsed.span === "string" ? parsed.span.trim() : "";
 }
 
-// A model that echoes the quoting style of the few-shot examples, or changes
-// case, has not authored anything — it has reformatted. Realign such a span
-// back onto the prompt's own bytes so the comparison measures extraction
-// rather than punctuation habits, and so what would egress is still literally
-// the prompt's text.
+// A model that echoes the quoting style of the few-shot examples, changes
+// case, or collapses whitespace has not authored anything — it has
+// reformatted. Realign such a span back onto the prompt's own bytes so the
+// comparison measures extraction rather than punctuation habits, and so what
+// would egress is still literally the prompt's text.
+//
+// The invariant being protected is "the model did not author new content".
+// Case and whitespace do not violate it. Fixing a typo, substituting a word,
+// or completing a title does, and those still fail: this only ever returns a
+// slice of the prompt, never the model's own bytes.
 //
 // Without this the harness scored qwen3.5:2b last of eight on 111 "violations"
 // of which 101 were quotation marks the system prompt had taught it to add.
 function realign(prompt: string, span: string): string | undefined {
   if (span === "") return undefined;
   if (prompt.includes(span)) return span;
-  const unquoted = span.replace(/^["'“”‘’]+|["'“”‘’]+$/gu, "").trim();
-  if (unquoted && prompt.includes(unquoted)) return unquoted;
-  const at = prompt.toLowerCase().indexOf(unquoted.toLowerCase());
-  if (unquoted && at >= 0) return prompt.slice(at, at + unquoted.length);
+  const trimmed = span.replace(/^["'“”‘’\s]+|["'“”‘’\s]+$/gu, "").trim();
+  if (trimmed && prompt.includes(trimmed)) return trimmed;
+  const at = prompt.toLowerCase().indexOf(trimmed.toLowerCase());
+  if (trimmed && at >= 0) return prompt.slice(at, at + trimmed.length);
+  // Whitespace-insensitive last resort: match on collapsed text, then map the
+  // hit back to the prompt's own offsets so the returned span stays verbatim.
+  if (trimmed) {
+    const collapsed = trimmed.replace(/\s+/gu, " ").toLowerCase();
+    const offsets: number[] = [];
+    let flat = "";
+    for (let index = 0; index < prompt.length; index += 1) {
+      const character = prompt[index]!;
+      if (/\s/u.test(character)) {
+        if (flat.endsWith(" ")) continue;
+        flat += " ";
+      } else {
+        flat += character.toLowerCase();
+      }
+      offsets.push(index);
+    }
+    const hit = flat.indexOf(collapsed);
+    if (hit >= 0) {
+      const start = offsets[hit]!;
+      const end = offsets[Math.min(hit + collapsed.length - 1, offsets.length - 1)]!;
+      return prompt.slice(start, end + 1);
+    }
+  }
   return undefined;
 }
 
@@ -255,18 +314,44 @@ const WRAPPERS: ReadonlyArray<(query: string) => string> = [
   (q) => `${q}`,
 ];
 
+// The last wrapper is the identity. Those cases are no-ops where the correct
+// answer is to return the message unchanged, and they are scored separately
+// because they measure a different skill from trimming — and because they
+// decide the outcome. On the first corpus run the 26 no-op cases carried half
+// the gap between the top two models: the leader scores a perfect 1.000 on
+// them, which is precisely the behaviour the eleven curated cases had been
+// iterated against. Reporting one blended number let a sub-task the harness
+// author had tuned for silently pick the winner.
+const BARE_WRAPPER_INDEX = WRAPPERS.length - 1;
+
 function corpusCases(): ExtractionCase[] {
   const queries = JSON.parse(
     readFileSync(new URL("./query-extraction-corpus.json", import.meta.url), "utf8"),
   ) as string[];
   return queries.map((raw, index) => {
-    const query = raw.replace(/\?+$/u, "");
-    const prompt = WRAPPERS[index % WRAPPERS.length]!(query);
+    // Strip any trailing terminator, not just "?". Stripping only question
+    // marks left queries ending in "." to be wrapped into prompts like
+    // "chart for foods low in potassium.? Could you help us out?", where the
+    // gold span is unreachable because the prompt is malformed. The model was
+    // then scored down for the harness's own punctuation bug.
+    //
+    // Typos in the source queries are deliberately NOT repaired. A model that
+    // "fixes" one has authored words the user did not write, which is the
+    // exact failure this harness exists to catch, so those cases must keep
+    // failing for the models that rewrite them.
+    const query = raw.replace(/[?.!]+$/u, "").trim();
+    // Assigning wrappers by `index % length` ties the wrapper to the corpus
+    // position. The corpus is grouped by source, so that made "which wrapper"
+    // partly a proxy for "which dataset" — a confound in whichever direction
+    // the two differ. A fixed multiplier coprime with the wrapper count keeps
+    // the assignment balanced and reproducible while breaking the correlation.
+    const wrapper = (index * 7) % WRAPPERS.length;
     return {
       name: `corpus ${index}`,
-      prompt,
+      prompt: WRAPPERS[wrapper]!(query),
       ideal: query,
       noise: [],
+      bare: wrapper === BARE_WRAPPER_INDEX,
     } satisfies ExtractionCase;
   });
 }
@@ -334,43 +419,64 @@ async function main(): Promise<void> {
 
   for (const strategy of STRATEGIES) {
     let exact = 0;
-    let totalF1 = 0;
     let noiseLeaks = 0;
     let notSubstring = 0;
     let errors = 0;
     let reformatted = 0;
-    const started = performance.now();
+    // Scores are kept per case rather than summed, so the bare and wrapped
+    // subsets can be reported separately and so a paired comparison against
+    // another strategy is possible at all.
+    const scores: number[] = [];
+    const bareScores: number[] = [];
+    const wrappedScores: number[] = [];
+    const latencies: number[] = [];
 
     for (const testCase of cases) {
       let actual: string;
+      const callStarted = performance.now();
       try {
         actual = await strategy.extract(testCase.prompt);
       } catch (error) {
-        errors += 1;
-        console.log(
-          `  ERROR ${strategy.name} :: ${testCase.name} :: ${(error as Error).message}`,
-        );
+        // A model that returned garbage failed the case and scores zero. Only
+        // an infrastructure failure — endpoint unreachable, HTTP error — is
+        // excluded, because scoring it would silently depress whichever model
+        // happened to run during a bad window rather than measuring the model.
+        if (error instanceof ModelOutputError) {
+          notSubstring += 1;
+          scores.push(0);
+          (testCase.bare ? bareScores : wrappedScores).push(0);
+          console.log(`  BAD-OUTPUT ${strategy.name} :: ${testCase.name} :: ${error.message}`);
+        } else {
+          errors += 1;
+          console.log(
+            `  ERROR ${strategy.name} :: ${testCase.name} :: ${(error as Error).message}`,
+          );
+        }
         continue;
       }
+      latencies.push(performance.now() - callStarted);
       // The invariant, enforced rather than assumed. Reformatting is repaired
       // first; genuine authoring still fails.
       const aligned = realign(testCase.prompt, actual);
       if (aligned !== undefined && aligned !== actual) reformatted += 1;
       if (aligned !== undefined) actual = aligned;
+      const leaked = testCase.noise.filter((phrase) =>
+        actual.toLowerCase().includes(phrase.toLowerCase()),
+      );
+      if (leaked.length > 0) noiseLeaks += 1;
       if (!testCase.prompt.includes(actual)) {
         notSubstring += 1;
+        scores.push(0);
+        (testCase.bare ? bareScores : wrappedScores).push(0);
         console.log(
           `  NOT-A-SUBSTRING ${strategy.name} :: ${testCase.name} :: ${actual}`,
         );
         continue;
       }
       const score = f1(actual, testCase.ideal);
-      totalF1 += score;
+      scores.push(score);
+      (testCase.bare ? bareScores : wrappedScores).push(score);
       if (actual === testCase.ideal) exact += 1;
-      const leaked = testCase.noise.filter((phrase) =>
-        actual.toLowerCase().includes(phrase.toLowerCase()),
-      );
-      if (leaked.length > 0) noiseLeaks += 1;
       if (score < 1 && !useCorpus) {
         console.log(
           `  ${score.toFixed(2)} ${testCase.name}\n      got: ${actual}\n      want: ${testCase.ideal}`,
@@ -378,17 +484,35 @@ async function main(): Promise<void> {
       }
     }
 
-    const elapsed = performance.now() - started;
+    // The first call pays the model load, which on a cold 9.6GB model is over
+    // twenty seconds. Folding that into a per-prompt mean gave whichever model
+    // Ollama happened to have resident an advantage of roughly 12% — an
+    // artifact of run order, not a property of the model. Median of the
+    // remaining calls is the number that survives being run in a different
+    // order.
+    const warm = latencies.slice(1).sort((left, right) => left - right);
+    const median = warm.length > 0 ? warm[Math.floor(warm.length / 2)]! : 0;
     console.log(
-      `SUMMARY ${strategy.name}: exact ${exact}/${cases.length}, ` +
-        `mean F1 ${(totalF1 / cases.length).toFixed(3)}, ` +
-        (useCorpus ? "" : `noise leaked in ${noiseLeaks}/${cases.length}, `) +
+      `SUMMARY ${strategy.name}: exact ${exact}/${scores.length}, ` +
+        `mean F1 ${mean(scores).toFixed(3)}` +
+        (bareScores.length > 0 && wrappedScores.length > 0
+          ? ` (wrapped ${mean(wrappedScores).toFixed(3)} on ${wrappedScores.length}, ` +
+            `already-clean ${mean(bareScores).toFixed(3)} on ${bareScores.length})`
+          : "") +
+        `, ` +
+        (useCorpus ? "" : `noise leaked in ${noiseLeaks}/${scores.length}, `) +
         `authored (rejected) ${notSubstring}, ` +
         `reformatted (repaired) ${reformatted}, ` +
-        `errors ${errors}, ` +
-        `${(elapsed / cases.length).toFixed(2)}ms per prompt\n`,
+        `excluded (infrastructure) ${errors}, ` +
+        `${median.toFixed(0)}ms warm median, ` +
+        `${(latencies[0] ?? 0).toFixed(0)}ms first call\n`,
     );
   }
+}
+
+function mean(values: readonly number[]): number {
+  if (values.length === 0) return 0;
+  return values.reduce((total, value) => total + value, 0) / values.length;
 }
 
 await main();
