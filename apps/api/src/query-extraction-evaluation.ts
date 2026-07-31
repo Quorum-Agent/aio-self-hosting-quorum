@@ -87,6 +87,42 @@ const CASES: readonly ExtractionCase[] = [
     ideal: "best open weight embedding model right now",
     noise: ["my friend disagrees", "I am building"],
   },
+
+  // The three below are the shapes that broke the first deterministic trim when
+  // it met real prompts from the conversation history. They are written from
+  // that structure rather than copied, so the failure is reproducible without
+  // putting anyone's conversations in the repository. Each one punishes a
+  // different wrong assumption, and a strategy that scores well on the cases
+  // above while failing these has learned the test rather than the task.
+
+  {
+    // Broke "prefer the last sentence": here the earlier sentence carries the
+    // constraint the question is meaningless without. The trim returned only
+    // "How many units can it finish in 30 minutes".
+    name: "premise carries the constraint",
+    prompt:
+      "A local service handles 120 units in 8 minutes at a constant rate. How many units can it finish in 30 minutes?",
+    ideal:
+      "A local service handles 120 units in 8 minutes at a constant rate. How many units can it finish in 30 minutes",
+    noise: [],
+  },
+  {
+    // Broke the lead-in pattern: "Hello" was consumed and "there," stranded,
+    // producing "there, what are your current limits".
+    name: "greeting fused to the question",
+    prompt: "Hello there, what are your current rate limits",
+    ideal: "current rate limits",
+    noise: ["Hello", "there,"],
+  },
+  {
+    // The worst observed failure: the framing clause matched greedily across
+    // the substance and the whole prompt collapsed to a single word.
+    name: "enumeration is the substance",
+    prompt:
+      "I am thinking about building an application but I don't know if I should use SQL, Oracle, MongoDB, or Dataverse",
+    ideal: "SQL, Oracle, MongoDB, or Dataverse",
+    noise: ["I am thinking about"],
+  },
 ];
 
 // Conversational scaffolding that carries no retrieval value. Deterministic on
