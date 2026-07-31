@@ -1783,9 +1783,35 @@ Which makes the authority split:
 
 ### Not verified
 
-- `local-ai-zone`'s `quantFormat`, `license`, `downloadCount` and `likeCount` were not
-  checked. Given `fileSize` failed at 18/18, none of them should be trusted without the
-  same treatment.
+### The remaining fields, measured — and the like/download ratio is unsafe
+
+Checked against HF's API over a 15-row deterministic sample. Three distinct failure modes,
+which is more useful than a pass rate:
+
+| Field | Result | What it is |
+| --- | --- | --- |
+| `quantFormat` | **15/15** | Reliable, and the reason is instructive: it is read off the filename, so it is transcribed rather than inferred |
+| `license` | **0/15** | Every row `"Not specified"` while HF carries a real licence (apache-2.0, llama3.1). Not wrong — **missing, presented as a value**, the same shape as `minRamGB: 8` on a zero-byte file |
+| `downloadCount` | **0/15** | Always *lower* than HF's 30-day figure — 3.78M vs 5.11M, 3430 vs 9189, 1198 vs 5734. A stale snapshot |
+| `likeCount` | **12/15** | Mismatches off by 1 to 8. Near-current |
+
+**This invalidates the like-to-download ratio as computed from this source.** The numerator
+is near-current and the denominator is substantially stale, so the ratio is biased high —
+and not uniformly. The gap is widest on fast-growing models (0.21 and 0.37 of HF's figure)
+and narrowest on settled ones (0.85, 0.74), so the instrument **over-rates exactly the new,
+fast-moving artifacts it was built to discriminate against**. That is worse than noise; it
+is biased in the direction that defeats its purpose. HF's API returns `likes` and
+`downloads` on one call — source both there.
+
+A flaw in the measurement itself, recorded because it would otherwise read as a result: the
+comparison against `downloadsAllTime` was vacuous, because that endpoint returned
+`undefined` for the field. The staleness finding rests on the 30-day figures alone.
+
+### Not verified
+
+- Whether `downloadCount` matches HF's all-time downloads from an endpoint that actually
+  returns them. The direction of the 30-day gap is consistent, but "stale snapshot" remains
+  an inference rather than a measurement.
 - `agent/agent_init.py` (2743 lines) and `model_tools.py` (1448) were read at their model
   assignment and public-surface level, not in full.
 ### Measured: the HF-to-models.dev join (same day)
