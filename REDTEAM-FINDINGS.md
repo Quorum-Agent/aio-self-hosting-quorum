@@ -1441,3 +1441,92 @@ Two qualifications on that choice, both of which cut against it and should not b
   comparison is run.
 
 **`qwen3:4b` is what fits.** Not what won.
+
+---
+
+## 17. The llama.cpp migration and the location model (2026-07-31)
+
+Two phases of work against ADR 0001, verified against a real `llama-server`
+(pinned build `b10192` / `9ebfc3a8c`) rather than only against mocks. Recorded here
+because four separate claims were made and then disproved by execution, and the
+pattern is more useful than the individual fixes.
+
+### Claims that did not survive contact with the binary
+
+| Claim | Source | What execution showed |
+| --- | --- | --- |
+| `response_format` + thinking silently fails open ([#20345](https://github.com/ggml-org/llama.cpp/issues/20345)) | research agent, upstream issue | **Does not reproduce on b10192.** Schema-compliant output, reasoning in `reasoning_content` |
+| Ollama's GGUF blobs are unusable by llama.cpp | inferred from the spike's Qwen3.5 failure | **Qwen3 0.6B loads fine.** The incompatibility is qwen3.5 metadata, not Ollama packaging |
+| `isPrivateHostname` can serve as a network-tier acceptance check | this author | Accepts `evil.example` — it is a deliberately over-broad *rejection* list |
+| `modelReach` may trust `transport` over `location` | this author | Lets a `cloud`+`in_process` descriptor pass **every** ceiling |
+
+The first two were adopted from a research report that **explicitly flagged its own
+version caveat**, which was then under-weighted. The report was right to hedge; the
+error was in reading a hedged claim as settled.
+
+### Two regressions introduced by the refactor, and how each was found
+
+**A `cloud` model with `in_process` transport bypassed every policy.** `modelReach()`
+treats an in-process model as tier `device` — the mechanism that lets `offline` stop
+being special-cased by name in the planner. The first version trusted `transport`
+unconditionally, so a descriptor whose two fields *disagree* reported `device` and was
+selected under both `private` and `offline`. The boolean check it replaced refused it.
+
+Not found by review. Found by writing the contradictory descriptor and asking the
+planner what it would do:
+
+```
+private: SELECTED cloud:smuggled  route=cloud  disclosure=true
+offline: SELECTED cloud:smuggled  route=cloud  disclosure=true
+```
+
+Note that disclosure was *correct* throughout — the plan honestly reported that context
+left the device. Only the policy was bypassed. A disclosure-only check would have
+reported the system healthy.
+
+**The `network` validator accepted `evil.example`.** Reusing `isPrivateHostname` was a
+category error: it is an SSRF **rejection** list, deliberately over-broad, matching
+reserved TLDs and decimal-encoded integers. Broad is correct for "refuse to fetch this"
+and wrong for "accept this as a peer". An acceptance predicate must enumerate what is
+allowed rather than negate what is denied. Caught by a test written in the same commit
+as the code, which is the argument for not writing tests afterwards.
+
+### What the measurement supports
+
+The compatible transport's answer protocol was measured on a real model, same six
+prompts:
+
+| protocol | usable |
+| --- | --- |
+| prompt-requested `<quorum-final>` envelope | **3/6** |
+| `response_format` json_schema | **6/6** |
+
+The three failures were a bare answer, a markdown fence, and an unclosed tag. Each
+discards the whole response, and since every local model carries the identical
+instruction, the orchestrator excludes the model and re-plans into another that fails
+identically, down to the scaffold. **A transport-shaped defect presents as a
+model-quality problem**, which is why it survived so long.
+
+Separately measured, and the reason reasoning suppression is not optional:
+
+| | finish | reasoning | content |
+| --- | --- | --- | --- |
+| thinking on, `max_tokens` 128 | `length` | ≈100 tok | **0 chars** |
+| thinking off, `max_tokens` 128 | `stop` | 0 | 240 chars |
+
+Reasoning is drawn from the answer's budget. The coding role was the only local role
+not setting `reasoningEffort: "none"` — backwards, since coding specialists are the
+most likely to be reasoning models.
+
+### The standing lesson, sharpened
+
+§16 recorded that a mechanism which *would* explain an effect gets mistaken for
+evidence that it *does*. This pass adds a second failure mode with the same shape:
+**a claim about a dependency is not a claim about the version you pin.** Two of the
+four disproved claims above were true of llama.cpp master and false of `b10192`.
+
+The operational rule that would have caught all four: *before designing around a
+dependency's behaviour, execute it against the pinned version.* A `llama-server`
+binary is 140 MB and answered every one of these questions in under an hour. The
+research that produced the wrong answers took longer than the experiment that
+corrected them.
