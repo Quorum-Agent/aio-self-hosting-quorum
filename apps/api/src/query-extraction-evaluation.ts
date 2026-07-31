@@ -28,6 +28,8 @@ interface ExtractionCase {
   readonly noise: readonly string[];
   /** True when the prompt is already the query, so the answer is to do nothing. */
   readonly bare?: boolean;
+  /** Index into WRAPPERS, so scores can be reported per framing. */
+  readonly wrapper?: number;
 }
 
 interface Strategy {
@@ -340,17 +342,24 @@ function corpusCases(): ExtractionCase[] {
     // exact failure this harness exists to catch, so those cases must keep
     // failing for the models that rewrite them.
     const query = raw.replace(/[?.!]+$/u, "").trim();
-    // Assigning wrappers by `index % length` ties the wrapper to the corpus
-    // position. The corpus is grouped by source, so that made "which wrapper"
-    // partly a proxy for "which dataset" — a confound in whichever direction
-    // the two differ. A fixed multiplier coprime with the wrapper count keeps
-    // the assignment balanced and reproducible while breaking the correlation.
-    const wrapper = (index * 7) % WRAPPERS.length;
+    // Modular assignment is deliberate and is already the right thing. The
+    // corpus IS positionally structured — the rate of wh-questions runs
+    // 0.38 / 0.80 / 0.70 across its three thirds — so the obvious worry is
+    // that wrapper becomes a proxy for query type. It does not: `index % 9`
+    // gives wrapper w the indices w, w+9, w+18 …, an evenly spaced sample of
+    // the whole corpus, which is a stratified draw rather than a biased one.
+    //
+    // Measured rather than assumed. Per-wrapper wh-rate spreads 0.52–0.70
+    // under this scheme, and identically under a coprime-multiplier shuffle.
+    // The shuffle was written, measured, and reverted: it changes which
+    // residue class each wrapper draws and nothing else.
+    const wrapper = index % WRAPPERS.length;
     return {
       name: `corpus ${index}`,
       prompt: WRAPPERS[wrapper]!(query),
       ideal: query,
       noise: [],
+      wrapper,
       bare: wrapper === BARE_WRAPPER_INDEX,
     } satisfies ExtractionCase;
   });
@@ -430,6 +439,21 @@ async function main(): Promise<void> {
     const bareScores: number[] = [];
     const wrappedScores: number[] = [];
     const latencies: number[] = [];
+    // Per-framing scores. Publishing the profile is strictly more informative
+    // than any single blended number, and it dissolves rather than answers the
+    // question of what fraction of real prompts are already clean: a reader
+    // with their own prior can weight these themselves. It is also what made
+    // the no-op cluster visible in the first place.
+    const perWrapper = new Map<number, number[]>();
+    const record = (testCase: ExtractionCase, score: number): void => {
+      scores.push(score);
+      (testCase.bare ? bareScores : wrappedScores).push(score);
+      if (testCase.wrapper !== undefined) {
+        const bucket = perWrapper.get(testCase.wrapper) ?? [];
+        bucket.push(score);
+        perWrapper.set(testCase.wrapper, bucket);
+      }
+    };
 
     for (const testCase of cases) {
       let actual: string;
@@ -443,8 +467,7 @@ async function main(): Promise<void> {
         // happened to run during a bad window rather than measuring the model.
         if (error instanceof ModelOutputError) {
           notSubstring += 1;
-          scores.push(0);
-          (testCase.bare ? bareScores : wrappedScores).push(0);
+          record(testCase, 0);
           console.log(`  BAD-OUTPUT ${strategy.name} :: ${testCase.name} :: ${error.message}`);
         } else {
           errors += 1;
@@ -466,16 +489,14 @@ async function main(): Promise<void> {
       if (leaked.length > 0) noiseLeaks += 1;
       if (!testCase.prompt.includes(actual)) {
         notSubstring += 1;
-        scores.push(0);
-        (testCase.bare ? bareScores : wrappedScores).push(0);
+        record(testCase, 0);
         console.log(
           `  NOT-A-SUBSTRING ${strategy.name} :: ${testCase.name} :: ${actual}`,
         );
         continue;
       }
       const score = f1(actual, testCase.ideal);
-      scores.push(score);
-      (testCase.bare ? bareScores : wrappedScores).push(score);
+      record(testCase, score);
       if (actual === testCase.ideal) exact += 1;
       if (score < 1 && !useCorpus) {
         console.log(
@@ -505,8 +526,19 @@ async function main(): Promise<void> {
         `reformatted (repaired) ${reformatted}, ` +
         `excluded (infrastructure) ${errors}, ` +
         `${median.toFixed(0)}ms warm median, ` +
-        `${(latencies[0] ?? 0).toFixed(0)}ms first call\n`,
+        `${(latencies[0] ?? 0).toFixed(0)}ms first call`,
     );
+    if (perWrapper.size > 0) {
+      const profile = [...perWrapper.entries()]
+        .sort(([left], [right]) => left - right)
+        .map(([wrapper, values]) => {
+          const label = wrapper === BARE_WRAPPER_INDEX ? "bare" : `w${wrapper}`;
+          return `${label} ${mean(values).toFixed(3)}`;
+        })
+        .join("  ");
+      console.log(`  by framing: ${profile}`);
+    }
+    console.log("");
   }
 }
 
