@@ -1000,11 +1000,23 @@ export class Orchestrator {
       plan = { ...plan, attempts: [...attempts] };
       yield { type: "plan", plan };
     } else if (hubStep) {
-      // Synthesis was planned but never attempted: the hub has no registered
-      // provider, or repeated failed drafts spent the budget and the model
-      // answered directly. Advertising the step while it silently does nothing
-      // is the decorative disclosure this design set out to remove.
-      plan = { ...plan, synthesisDegraded: true };
+      // Synthesis was planned but never attempted: repeated failed drafts
+      // spent the budget and the model answered directly. Advertising the step
+      // while it silently does nothing is the decorative disclosure this
+      // design set out to remove.
+      //
+      // The same modelId rewrite the hub-failure branch does, for the same
+      // reason. That branch's comment warns that doing this per-branch is what
+      // let the cancellation path keep claiming the hub had answered — and
+      // then this branch reproduced exactly that, one branch over: the hub
+      // never ran, `attempts` contains no synthesis entry, and `plan.modelId`
+      // named it anyway. `modelId` means "whose words the user read".
+      const { spokeModelId: draftedBy, ...planWithoutSpoke } = plan;
+      plan = {
+        ...planWithoutSpoke,
+        ...(draftedBy ? { modelId: draftedBy } : {}),
+        synthesisDegraded: true,
+      };
       yield {
         type: "trace",
         trace: executionTrace(

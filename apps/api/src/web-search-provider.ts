@@ -934,12 +934,27 @@ export class ConfigurableWebSearchProvider implements WebSearchProvider {
   get tool(): RuntimeToolDescriptor {
     const settings = this.#effective();
     const selected = this.#definition(settings.provider);
-    const location =
-      settings.provider === "searxng" &&
-      settings.searxngBaseUrl &&
-      isLoopbackHostname(new URL(settings.searxngBaseUrl).hostname)
-        ? "local"
-        : "cloud";
+    // Always "cloud", including a SearXNG on loopback.
+    //
+    // This used to report "local" when the SearXNG base URL was a loopback
+    // address, which described where the instance LISTENS rather than where
+    // the query GOES. SearXNG is a metasearch proxy: it forwards the query to
+    // Google, Bing and friends, so the query leaves the device no matter where
+    // the box sits. The descriptor's own `contextMayLeaveDevice: true` two
+    // lines below always said so — one fact carried by two fields that
+    // disagreed, with enforcement reading `location` and disclosure reading
+    // the other.
+    //
+    // That was not cosmetic. `policies.ts` suggests tightening `private`'s
+    // toolCeiling from "none" to "local"; doing so would have admitted a
+    // loopback SearXNG on the strength of this field, which would then proxy
+    // the query to Google — the exact egress the tightening was meant to
+    // prevent, while the disclosure honestly reported it left.
+    //
+    // Self-hosting a proxy is a real privacy gain (no API key tied to you, no
+    // vendor query log) but it is not "the query stayed here", and this field
+    // is the one that decides whether the query is permitted.
+    const location = "cloud" as const;
     return {
       id: `web-search:${settings.provider}`,
       label:

@@ -21,6 +21,7 @@
 import { describe, expect, it } from "vitest";
 
 import { RequestCompiler } from "./request-compiler.js";
+import { leavesDevice, locationTier, modelReach } from "./types.js";
 import { RoutePlanner } from "./route-planner.js";
 import type { ChatRequest, ModelDescriptor, PolicyMode } from "./types.js";
 
@@ -301,5 +302,59 @@ describe("a model cannot claim a nearer tier than its location", () => {
     const plan = planFor("offline", [contradictory, scaffold]);
 
     expect(plan.modelId).toBe(scaffold.id);
+  });
+});
+
+/**
+ * Properties over emitted plans, rather than examples.
+ *
+ * Every defect this file was written in response to has the same shape: one
+ * fact carried by two fields, read by different surfaces, allowed to disagree.
+ * `modelReach` versus `location`. A tool's `location` versus its
+ * `contextMayLeaveDevice`. Which provider streamed versus `plan.modelId`.
+ *
+ * Checking that either field is individually plausible does not catch that —
+ * when `modelReach` let a cloud model pass every ceiling, the disclosure was
+ * *correct* throughout, so any "did we tell the user the truth" assertion
+ * would have called the system healthy while `private` routed to cloud.
+ *
+ * These assert the two fields AGREE. They are also properties rather than
+ * examples deliberately: the recurring failure in this repo is a fixture that
+ * cannot reach the wrong answer, and a property has no fixture to get wrong.
+ */
+describe("fields describing the same fact do not disagree", () => {
+  it("modelReach never reports a further tier than the model declares", () => {
+    // The contract as a property, not as two examples. This is the shape of
+    // the bug that let `location: "cloud"` + `transport: "in_process"` pass
+    // every ceiling: reach may move a model NEARER, never further.
+    const locations = ["local", "network", "remote", "cloud"] as const;
+    const transports = ["in_process", "loopback", "remote"] as const;
+    for (const location of locations) {
+      for (const transport of transports) {
+        const reach = modelReach({ location, transport });
+        expect(locationTier(reach)).toBeLessThanOrEqual(locationTier(location));
+        // And it only moves nearer when the model itself claims to be local.
+        if (reach !== location) {
+          expect(location).toBe("local");
+          expect(transport).toBe("in_process");
+        }
+      }
+    }
+  });
+
+  it("disclosure is present exactly when the plan leaves the device", () => {
+    const cases: Array<[string, ModelDescriptor[], PolicyMode]> = [
+      ["local only", [localModel, scaffold], "balanced"],
+      ["cloud permitted", [localModel, overwhelmingCloudModel], "quality"],
+      ["cloud refused", [localModel, overwhelmingCloudModel], "private"],
+      ["scaffold only", [scaffold], "offline"],
+    ];
+    for (const [name, models, policy] of cases) {
+      const plan = planFor(policy, models);
+      expect(
+        `${name}: ${leavesDevice(plan.route)}`,
+        `disclosure disagreed with route for ${name}`,
+      ).toBe(`${name}: ${plan.cloudDisclosure !== undefined}`);
+    }
   });
 });

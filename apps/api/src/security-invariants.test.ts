@@ -14,7 +14,10 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import { loadConfig } from "./config.js";
+import { leavesDevice } from "@quorum/core";
+
 import { isLoopbackHostname } from "./outbound-url.js";
+import { ConfigurableWebSearchProvider } from "./web-search-provider.js";
 import {
   normalizeCloudBaseUrl,
   normalizeNetworkBaseUrl,
@@ -248,5 +251,31 @@ describe("a network peer is absent unless credentials are present", () => {
     const network = loadConfig().network;
     expect(network?.apiKey).toBe("peer-key");
     expect(network?.model).toBe("peer-model");
+  });
+});
+
+describe("a tool's declared location and its disclosure agree", () => {
+  // The property that was failing when this was written. A SearXNG on loopback
+  // reported `location: "local"` (read by enforcement) alongside
+  // `contextMayLeaveDevice: true` (read by disclosure) — one fact, two fields,
+  // opposite answers. SearXNG is a metasearch proxy, so the query reaches
+  // Google regardless of where the instance listens; the disclosure field was
+  // the correct one.
+  //
+  // It mattered because policies.ts suggests tightening private's toolCeiling
+  // to "local", which would have admitted that tool on the strength of the
+  // wrong field and then proxied the query out.
+  it.each([
+    ["searxng on loopback", { provider: "searxng" as const, searxngBaseUrl: "http://127.0.0.1:8888" }],
+    ["searxng remote", { provider: "searxng" as const, searxngBaseUrl: "https://search.example.com" }],
+    ["auto", { provider: "auto" as const }],
+  ])("%s", (_name, settings) => {
+    const provider = new ConfigurableWebSearchProvider({
+      enabled: true,
+      ...settings,
+    } as never);
+    const tool = provider.tool;
+
+    expect(tool.contextMayLeaveDevice).toBe(leavesDevice(tool.location));
   });
 });
