@@ -7,6 +7,7 @@
     "dev": "tsx watch --conditions=development src/index.ts",
     "evaluate:prompt": "tsx --conditions=development src/prompt-analyzer-evaluation.ts",
     "evaluate:llama-runtime": "tsx --conditions=development src/managed-llama-evaluation.ts",
+    "evaluate:extraction": "tsx --conditions=development src/query-extraction-evaluation.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
