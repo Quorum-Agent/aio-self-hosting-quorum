@@ -20,6 +20,8 @@
  */
 import { describe, expect, it } from "vitest";
 
+import { DemoProvider } from "./demo-provider.js";
+import { Orchestrator } from "./orchestrator.js";
 import { RequestCompiler } from "./request-compiler.js";
 import { leavesDevice, locationTier, modelReach } from "./types.js";
 import { RoutePlanner } from "./route-planner.js";
@@ -356,5 +358,55 @@ describe("fields describing the same fact do not disagree", () => {
         `disclosure disagreed with route for ${name}`,
       ).toBe(`${name}: ${plan.cloudDisclosure !== undefined}`);
     }
+  });
+});
+
+describe("the classification stage reports where it ran", () => {
+  // The analyzer receives the FULL message list, so it is conversation-bearing
+  // exactly as a model step is — but its step hardcoded `location: "local"`
+  // with nothing tying that literal to reality. It was true only because
+  // config puts the analyzer's base URL through a loopback validator, one
+  // layer above the place asserting it.
+  //
+  // Asserted against the TRACE, which is where the classification step
+  // actually surfaces — it is not added to `plan.steps`. A first version of
+  // this test looked in `plan.steps` and guarded with `if (found)`, so it
+  // passed by never asserting anything: the exact vacuity this file exists to
+  // catch.
+  it("takes the trace location from the analyzer, not a constant", async () => {
+    const analyzer = {
+      id: "peer:classifier",
+      label: "Peer classifier",
+      location: "network" as const,
+      analyze: async () => ({
+        intent: "conversation" as const,
+        confidence: 0.9,
+        taskSummary: "t",
+      }),
+    };
+    const orchestrator = new Orchestrator(
+      [new DemoProvider()],
+      undefined,
+      new RoutePlanner(),
+      analyzer,
+    );
+
+    const classificationLocations: string[] = [];
+    for await (const event of orchestrator.run({
+      conversationId: "c",
+      policy: "balanced",
+      messages: [
+        { id: "m", role: "user", content: "Hello.", createdAt: new Date(0).toISOString() },
+      ],
+    })) {
+      if (event.type === "trace" && event.trace.kind === "classification") {
+        classificationLocations.push(event.trace.location);
+      }
+    }
+
+    // Non-empty is half the assertion: an empty list would make the next line
+    // vacuously true.
+    expect(classificationLocations.length).toBeGreaterThan(0);
+    expect(new Set(classificationLocations)).toEqual(new Set(["network"]));
   });
 });

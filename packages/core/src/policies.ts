@@ -10,12 +10,26 @@ import type { PolicyDefinition, PolicyMode } from "./types.js";
  * conflated into — but they *are* two questions, so they get two ceilings
  * rather than one.
  *
- * Behaviour is deliberately preserved exactly, including one case that is
- * arguably wrong: `private` sets `toolCeiling: "none"`, so it blocks web
- * search even against a SearXNG on loopback that never leaves the device.
- * Under a ceiling that could now be `"local"`, and probably should be — but
- * that is a change to what a privacy mode does, and belongs to the operator
- * rather than to a refactor.
+ * Behaviour is deliberately preserved exactly.
+ *
+ * An earlier version of this comment recommended loosening `private`'s
+ * `toolCeiling` from `"none"` to `"local"`, on the grounds that a SearXNG on
+ * loopback "never leaves the device". **That premise was wrong and has been
+ * removed elsewhere**: SearXNG is a metasearch proxy that forwards the query
+ * to Google and Bing, so it egresses regardless of where the instance
+ * listens, and it is now classified `cloud` accordingly.
+ *
+ * The recommendation is also a no-op in the wrong direction today. No tool can
+ * be `location: "local"` — `providerTool` defaults to `"cloud"` and every
+ * concrete provider takes the default — so `toolCeiling: "local"` is
+ * behaviourally identical to `"none"`, and an operator following the old
+ * advice would think they had loosened `private` while changing nothing.
+ *
+ * A `local` tool ceiling becomes meaningful when a search tool exists that
+ * genuinely terminates on the device. None does. Until then the tool axis has
+ * two live values and its ordering buys nothing — the ordered comparison is
+ * kept because it is what makes such a tool safe to add later, rather than
+ * something that needs this rule rediscovered.
  */
 export const POLICIES: Record<PolicyMode, PolicyDefinition> = {
   private: {

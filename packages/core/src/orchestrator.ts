@@ -199,7 +199,10 @@ export class Orchestrator {
         id: randomUUID(),
         label: `Extract request intent with ${this.#promptAnalyzer.label}`,
         kind: "classification",
-        location: "local",
+        // Derived, not asserted. Classification sees the whole conversation,
+        // so if an analyzer ever runs off-device this step is the only record
+        // of it — and a literal cannot report that.
+        location: this.#promptAnalyzer.location ?? "local",
         modelId: this.#promptAnalyzer.id,
       };
       yield {
