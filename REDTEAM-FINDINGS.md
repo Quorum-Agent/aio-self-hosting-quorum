@@ -481,17 +481,207 @@ Verified, not assumed. Several are load-bearing:
 
 ---
 
-## 8. Open question — invariant test coverage
+## 8. Invariant test coverage — ANSWERED by mutation testing (2026-07-30)
 
-The review pass aimed at *"which of the documented security invariants in
-`docs/architecture.md` are enforced by no test"* did not produce usable output: the finder and its
-verifier were given contradictory briefs (one was told missing tests count as findings, the other
-that they don't), and all five results were discarded. **This question remains open** and should
-not be read as "coverage is fine."
+The original pass produced nothing usable: the finder and its verifier were given contradictory
+briefs (one was told missing tests count as findings, the other that they don't), and all five
+results were discarded.
 
-What is known: `npx vitest run` → 21 files / 664 tests passing on an unmodified tree. Two specific
-gaps surfaced incidentally — `inference-scheduler.test.ts` never passes `maximumWaitMs` (so Q-06's
-cap is untested), and no test asserts the cross-turn behaviour in Q-01.
+**Answered instead by mutation.** Reading tests cannot tell you what they enforce — a test can
+name an invariant in its title and still pass when the invariant is deleted. So each of the 13
+invariants in `docs/architecture.md` was broken *in the source*, the full suite was run, and the
+invariant counts as enforced only if something turned red.
+
+| # | Invariant | Mutation applied | Result |
+| --- | --- | --- | --- |
+| I-1 | Policy tightened, never weakened | `allowCloudModels: false` → `true` in `policies.ts` | caught (3) — see note |
+| I-2 | Sensitive classification excludes cloud | drop the `requiresLocalProcessing` filter | caught (3) |
+| I-3 | Web-grounded history excludes cloud | (same filter) | caught (3) |
+| I-4 | Offline excludes loopback too | drop the transport filter | caught (2) |
+| I-5 | Provider registered only when discoverable | force `available: true` | caught (1); a second mutation removing the install filter caught 4 |
+| I-6 | Local URL must be loopback | short-circuit `normalizeLoopbackBaseUrl` | caught (6) |
+| I-7 | Cloud URL must be HTTPS | short-circuit `normalizeCloudBaseUrl` | caught (6) |
+| I-8 | Policy cloud exclusion is not a preference | drop the `location === "cloud"` filter | **SURVIVED** → fixed |
+| I-8b | Cloud absent without credentials | register cloud unconditionally | **SURVIVED** → fixed |
+| I-9 | Conversation storage is local | — | structural (see below) |
+| I-10a | Client role not authoritative | trust `submittedUserMessage.role` | caught (3) |
+| I-10b | Client message id not authoritative | trust `submittedUserMessage.id` | caught (5) |
+| I-10c | Client timestamp not authoritative | trust `submittedUserMessage.createdAt` | caught (3) |
+| I-10d | Running/empty history filtered out | drop the `trustedHistory` filter | caught (2) |
+| I-11a | Privacy guard blocks web search | disable the sensitive-data check | caught (3) |
+| I-11b | Policy gates web search | disable the `allowNetwork` check | caught (3) |
+| I-12 | Disclosure derived from the actual plan | emit a synthesis step unconditionally | caught (20) |
+| I-13 | Loopback API is not an auth boundary | — | not yet buildable |
+
+**I-1 needs a note, because "caught" overstates what was catching it.** An independent reviewer
+re-ran the mutation and got 3 failures, not the 8 recorded here — a miscount on my part. More
+importantly, of those 3, the only *pre-existing* catch is an API test asserting on the
+**system-prompt inventory**: what the model is told about itself, not where requests route. The
+585-test core routing suite did not catch it at all. So before this branch, "policy may be
+tightened, never weakened" was enforced at routing level by nothing, and the new private-mode test
+is the first routing-level catch. It belongs closer to the two failures below than the table
+suggests.
+
+Related: the `it.each(["private", "offline"])` in the new test is misleading. Only the **private**
+row exercises the cloud filter — with that filter deleted the offline row still passes, because
+the transport filter (I-4) independently excludes a remote model. The offline row is a genuine
+assertion but it does not test what its placement implies.
+
+**Two invariants were enforced by nothing.** Both are now pinned by tests that were themselves
+verified against the mutation — written, confirmed red, then reverted.
+
+*I-8* is the more interesting failure. A test named for private mode existed and passed, but its
+cloud model was rated 90 against a local model rated 60, and `preferLocal` adds a flat +100. The
+cloud model lost on **sorting arithmetic**, not on policy, so deleting the policy filter entirely
+left the suite green while private-mode requests routed to cloud. This is the general shape of the
+danger: a test whose fixture makes the wrong answer unreachable tests nothing, however it is named.
+
+**And the replacement had the same defect.** The new fixture rated the cloud model 195, and this
+section originally stated that it "can only pass if the filter actually runs." That was reasoned,
+not tested. `localScore` is `(local ? 100 : 0) + qualityRating + 18 per matched specialty + 20 for
+freshness`, so local's worst case is `100 + 60 + 18 + 20 = 198` — *above* 195. The fixture passed
+only because that file's request happens to ask for no specialties and no freshness. A later
+change to the request, or a specialty added to the local model, would have silently returned the
+suite to green whether or not the filter existed.
+
+It is now rated 300, which clears local's true ceiling of 288 for **any** request rather than for
+that one, and a guard test asserts the margin directly so the next erosion fails loudly.
+
+The way it surfaced is the point: the guard went red on its first run, against a value already
+committed with a paragraph explaining why it was sufficient. Reasoning about the number produced
+the wrong answer; writing the check produced the right one in seconds. §16 records five instances
+of this same shape found during the extraction review — a mechanism that *would* explain something
+mistaken for evidence that it *does*. This is the sixth, and it is the one that occurred inside the
+test written to prevent it.
+
+*I-8b* is simpler and worse. Changing `config.ts` to register the cloud provider while ignoring
+the API key left **all 136 API tests passing**. A cloud model would then enter the registry, be
+selectable by the planner, and fail only at request time — or send unauthenticated requests to a
+real endpoint. Pinned in `apps/api/src/security-invariants.test.ts`, which also covers the blank
+key, since a key set to whitespace is a misconfiguration rather than consent to egress.
+
+Two invariants have no test because neither is a claim a test can currently falsify. **I-9** holds
+by construction: the only storage backend is `better-sqlite3` against a filesystem path, so there
+is no remote path to accidentally take. It becomes testable the moment a sync or backup target is
+added, and should get a test then. **I-13** concerns the per-launch secret in the desktop sidecar,
+which does not exist yet; the invariant is a design commitment, not current behaviour. Note that
+its precondition — the API stays on loopback — *is* now tested, since a non-loopback `HOST` must
+fail closed at startup for the rest of the claim to mean anything.
+
+**I-11 deserves a caveat.** Both guards are caught, but they run before generation, against the
+compiled request. That is the right shape — the invariant asks for authorization *outside* model
+output — yet it holds today partly because no model in this codebase can request a tool at all.
+When model-driven tool calls arrive, these tests will not be sufficient, because they never
+exercise the path the invariant is really about.
+
+### Two claims this section originally made were themselves wrong
+
+The first version of this section closed by repeating two coverage gaps inherited from the
+discarded original pass. Both were later put through the same mutation discipline as everything
+else. **Both are false.**
+
+| Claim as originally written | Mutation applied | Actual result |
+| --- | --- | --- |
+| "`inference-scheduler.test.ts` never passes `maximumWaitMs`, so Q-06's cap is untested" | make `acquire` ignore `maximumWaitMs` | caught (2) |
+| "no test asserts the cross-turn behaviour in Q-01" | force `containsWebGroundedData` to `false` | caught (2) |
+
+The scheduler cap is covered by *"honors an explicit caller wait budget instead of clamping it to
+the default"* and *"reports the wait duration that it actually enforces"*. They pass the budget
+**positionally** — `scheduler.acquire(undefined, 50)` — so the identifier `maximumWaitMs` never
+appears in the test file and a grep for the parameter name returns nothing. The claim was
+manufactured by searching for a name against a positional call.
+
+This is left in rather than quietly deleted, because it is this section's own thesis turning on its
+author. §8 exists to argue that **reading tests cannot establish what they enforce** — and then
+closed with two gaps established by reading. The mutation discipline was applied to thirteen
+invariants and skipped for the two claims that arrived pre-written. An inherited finding needs the
+same treatment as a new one; carrying it forward is a citation, not a verification.
+
+Corrected position: **no invariant in `docs/architecture.md` is currently known to be unenforced.**
+The two that are not falsifiable (I-9, I-13) are recorded above as such, and I-11's caveat stands.
+
+### The audit's real blind spot: controls that were never on the list
+
+Auditing "the documented invariants" answers only whether the documentation is enforced. It says
+nothing about controls the code actually relies on that were never written down — and those were
+never in scope for any part of this pass. An external reviewer found at least three:
+
+- **The request-time loopback `Origin`/`Host` guard** (`server.ts:122-128`). This is a real
+  request-time boundary, and it is tested — but it is absent from the list. It also sits in
+  tension with I-13's wording that the loopback API "is not an authorization boundary," since
+  this is precisely an authorization check performed there.
+- **SSRF prevention on web-search result URLs** — rejects non-HTTPS, embedded credentials, and
+  private hostnames before fetching.
+- **The SearXNG base URL must be loopback.**
+
+Plus the prompt-injection framing applied to untrusted draft and web data, and `safeDisplayText`'s
+control-character stripping.
+
+**None of these were audited by §8**, because §8 audited a list rather than the code. That is the
+structural limitation of this whole section, and it is worth more than any individual row in the
+table: *a mutation audit is only as complete as the inventory it starts from, and this inventory
+was written by the same people who wrote the code.* The next pass should derive the list from the
+controls that exist, not from the ones already documented.
+
+**Audited afterwards, and the gap was not hypothetical.** Rather than leave the point as an
+observation, the three were put through the same mutation discipline:
+
+| # | Unlisted control | Mutation | Result |
+| --- | --- | --- | --- |
+| U-1a | `onRequest` rejects a non-loopback `Host` | disable the check | caught (3) |
+| U-1b | `onRequest` rejects a non-loopback `Origin` | disable the check | caught (3) |
+| U-2a | Search results must be HTTPS | drop the protocol test | caught (3) |
+| U-2b | Result URLs may not carry credentials | drop `username`/`password` test | **SURVIVED** → fixed |
+| U-2c | Results may not point at private hosts | force `isPrivateHostname` false | caught (3) |
+
+Four of five were enforced. **U-2b was not**: deleting the `url.username || url.password` guard from
+the result filter left the entire suite green. The existing unsafe-URL list already covered
+`javascript:`, private addresses, plain HTTP, trailing-dot hostnames, IPv6 multicast and
+documentation ranges — credentials were simply the form nobody thought of, so the guard had been
+correct and untested since it was written.
+
+It matters for the reason Q-03 matters: the rendered source list uses the URL as its own anchor
+text, so a result pointing at `https://accounts.google.com@evil.example/` reads as Google to a user
+the product explicitly instructs to "inspect links before opening." Same deception, different
+field. Now pinned, verified red against the mutation.
+
+That is a **third unenforced control** found in this pass, and the only one found by deliberately
+auditing outside the documented list — which is the argument for doing that first next time rather
+than last.
+
+### Reconciling I-13 with the `Origin`/`Host` guard
+
+I-13 says the loopback API "is not an authorization boundary." `server.ts:120` performs an
+authorization-shaped check there. Both are correct, and the apparent contradiction dissolves once
+the two threat models are separated — which the current wording does not do.
+
+```ts
+app.addHook("onRequest", async (request, reply) => {
+  if (!request.url.startsWith("/api/")) return;
+  if (!isLoopbackHostname(request.hostname)) {         // anti-DNS-rebinding
+    return reply.code(403).send({ message: "Untrusted request host." });
+  }
+  const origin = request.headers.origin;
+  if (!origin) return;                                  // ← the whole answer
+  …                                                     // anti-cross-origin
+});
+```
+
+The guard defends against **browser-originated** attack: the hostname check blocks DNS rebinding,
+and the `Origin` check blocks a malicious page's cross-origin `fetch`. Browsers always attach
+`Origin` on cross-origin requests, so both apply.
+
+**`if (!origin) return;` is why I-13 still holds.** A local non-browser process sends no `Origin`
+header and passes straight through, and any local process can present `Host: 127.0.0.1`. So a
+script running on the box faces no check at all — which is exactly what the desktop sidecar's
+per-launch secret is for.
+
+The fix is to the sentence, not the code: scope the guard as an **anti-rebinding / anti-cross-origin
+control against browser requests**, and keep I-13's claim scoped as it already is — *not* an
+authentication boundary against other **local non-browser processes**. Stating the first alongside
+the second removes the contradiction without weakening either.
+
+Verified by reading the handler, not from the summary that proposed it.
 
 ---
 

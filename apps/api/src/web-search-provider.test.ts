@@ -68,6 +68,24 @@ describe("web search providers", () => {
               url: "https://198.51.100.1/",
               content: "Must not become a clickable source.",
             },
+            // Credentials embedded in a result URL. Mutation showed the
+            // `url.username || url.password` guard was enforced by no test:
+            // deleting it left the whole suite green. The rendered source list
+            // shows the URL as its own anchor text, so a result titled
+            // plausibly and pointing at
+            // "https://accounts.google.com@evil.example/" reads as Google to a
+            // user told to "inspect links before opening" — the same class as
+            // Q-03's bidi override, arriving through a different field.
+            {
+              title: "Credentialed result",
+              url: "https://user:secret@example.org/article",
+              content: "Must not become a clickable source.",
+            },
+            {
+              title: "Userinfo-spoofed result",
+              url: "https://accounts.google.com@evil.example/",
+              content: "Must not become a clickable source.",
+            },
             ...Array.from({ length: 7 }, (_, index) => ({
               title: `Extra ${index}`,
               url: `https://example.org/${index}`,
@@ -106,6 +124,12 @@ describe("web search providers", () => {
     );
     expect(result.results.map((entry) => entry.title)).not.toContain(
       "Rebinding-style result",
+    );
+    expect(result.results.map((entry) => entry.title)).not.toContain(
+      "Credentialed result",
+    );
+    expect(result.results.map((entry) => entry.title)).not.toContain(
+      "Userinfo-spoofed result",
     );
     expect(result.results.map((entry) => entry.title)).not.toContain(
       "Plain HTTP result",

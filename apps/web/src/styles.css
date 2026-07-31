@@ -286,7 +286,16 @@ button {
 .main {
   position: relative;
   display: grid;
+  /* Without an explicit column the implicit track is auto, so it sizes to the
+     topbar's max-content width and overflows the grid cell, which overflow:
+     hidden below then clips — silently amputating the controls at the right
+     edge. */
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: 62px minmax(0, 1fr) auto;
+  /* The conversation column, not the viewport, is what constrains everything
+     inside it: the inspector can take 326px at any window width. */
+  container-type: inline-size;
+  container-name: main;
   min-width: 0;
   min-height: 0;
   height: 100%;
@@ -1873,7 +1882,11 @@ button {
   }
 }
 
-@media (max-width: 560px) {
+/* Keyed to the conversation column rather than the viewport. These controls
+   are clipped by how much room .main actually has, which shrinks by the width
+   of the inspector — so a 900px window with the inspector open needs the same
+   compaction a 560px window does. */
+@container main (max-width: 560px) {
   .topbar {
     padding: 0 10px;
   }
@@ -1927,7 +1940,11 @@ button {
   .composer-wrap {
     width: calc(100% - 20px);
   }
+}
 
+/* The settings dialog is a fixed overlay and a sibling of .main, so it is
+   sized by the viewport, not by the conversation column. */
+@media (max-width: 560px) {
   .settings-backdrop {
     padding: 0;
   }
