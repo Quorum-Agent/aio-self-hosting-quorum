@@ -1055,10 +1055,29 @@ The corrected standing numbers, harness scoring, 240 cases, fixed prompt:
 | `qwen3:4b` | 0.961 | 223 | 7 | 251 ms |
 | `gemma4:e4b` | 0.948 | 179 | **2** | 748 ms |
 
-Tied on F1. `gemma4:e4b` is cleaner on the invariant, and that difference is **reliability, not
-safety** — the substring gate rejects every violating span by construction, so no authored text
-reaches the search provider under either model. The gap is how often extraction fails and falls
-back to the verbatim prompt: roughly 3% against 1%.
+**"Tied" is the wrong word, and it errs against `qwen3:4b`.** Seven estimates of this gap exist
+across two reviewers, two independent scoring implementations, five prompts, and two sample sizes.
+**Every one is positive**, ranging 0.011 to 0.026. Individual intervals straddling zero is what a
+small real effect looks like at this *n*; a genuinely absent effect would have scattered the sign
+by now. No p-value belongs on that — the estimates share data and are not independent — but the
+sign consistency is stronger evidence than any single interval.
+
+The defensible statement is: **F1 favours `qwen3:4b` by roughly 0.02, consistent in sign across
+every measurement, at the resolution limit for n=240 — while `gemma4:e4b` is better on
+violations.** Saying "tied" borrows strength the F1 numbers do not have and invites the obvious
+rebuttal that the point estimates consistently favour the other model.
+
+The pooled +0.019, CI [+0.001, +0.037] should be read the same way. Its lower bound is essentially
+zero, so it is the weakest possible form of "clears zero" and does not establish the gap on its
+own. Pooling across prompts also treats prompt as noise, which is defensible **only because** the
+gap was separately shown to be flat across prompts — that is a precondition, not an aside.
+
+None of this changes the outcome, because **the case for `gemma4:e4b` never rested on F1.** The
+violation difference is the one that clears zero on its own: 2.92pp, CI [0.83, 5.42], paired at
+n=240, while every F1 interval straddles it. And that difference is **reliability, not safety** —
+the substring gate rejects every violating span by construction, so no authored text reaches the
+search provider under either model. The gap is how often extraction fails and falls back to the
+verbatim prompt: roughly 3% against 1%.
 
 Independent evidence the reviewer supplied afterwards points the same way and is recorded as
 theirs: across five prompt variants on a 60-case stratified subset, `qwen3:4b` leads at every one
@@ -1135,7 +1154,8 @@ plausible mechanism plus a real underlying phenomenon is not evidence that one c
 ### The standing hazard this review kept reproducing
 
 Four claims in this section were made, published, and withdrawn during a single review pass, by
-both reviewers, on the same subject matter:
+both reviewers, on the same subject matter — and a fifth error, the verifier scoring divergence
+above, was found the same way. The four claims first:
 
 | Claim | Withdrawn because |
 | --- | --- |
@@ -1154,9 +1174,25 @@ The discipline that would have caught all four: **before explaining an effect, c
 is real in data audited for the defects you already know about.** Knowing a failure mode exists is
 not the same as having checked for it.
 
+**And the errors were not randomly signed. Every one ran in the direction of its author's prior.**
+
+| Error | Author's prior | Direction of the error |
+| --- | --- | --- |
+| `gemma4:e4b` needs the schema | reviewer was attacking the harness's model choice | understated the model being defended |
+| Wrapper shuffle fixes a confound | author expected the harness to be biased | manufactured a defect to fix |
+| Format fix explains the reversal | author had already chosen `qwen3:4b` | favoured `qwen3:4b` |
+| Committed prompt is worst for all | reviewer was hired to attack that prompt | understated the prompt under attack |
+
+The verification script's scoring divergence belongs on that list too: it transferred credit to
+`qwen3:4b` on the exact axis `qwen3:4b` was worst at, and `qwen3:4b` was the author's existing
+choice. Five errors, five distinct mechanisms, one direction.
+
 This belongs in the permanent record because the review was, by construction, the careful pass —
-adversarial, externally staffed, explicitly hunting for this class of error. It produced four
-instances anyway. The rate on unreviewed work should be assumed higher.
+adversarial, externally staffed, explicitly hunting for this class of error. It produced five
+instances anyway. The rate on unreviewed work should be assumed higher, and more importantly the
+**bias** should be assumed higher, because the failure is not that mistakes happen. It is that they
+are signed. Random error is absorbed by more measurement; directional error is not, and this review
+found no instance of a mistake that inconvenienced the person who made it.
 
 ### Deliberately unresolved
 
