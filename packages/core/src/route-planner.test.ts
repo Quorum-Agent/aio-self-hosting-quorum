@@ -353,6 +353,62 @@ describe("RoutePlanner in relay mode", () => {
     );
   }
 
+  // A cloud model with role "general" must never become the hub. Nothing
+  // reaches this today — `runtime.ts` builds the cloud descriptor without a
+  // `role`, so the role check alone already excludes it — but the location
+  // check is not therefore redundant, because the failure it prevents is
+  // silent and severe.
+  //
+  // `route` is derived from the SPOKE's location (`route-planner.ts`: "const
+  // route = selected.location"), and `cloudDisclosure` is attached only when
+  // `route === "cloud"`. A cloud hub behind a local spoke would therefore
+  // report `route: "local"`, emit no disclosure, and ship the whole
+  // conversation off the device with the plan claiming it stayed — a direct
+  // violation of the disclosure invariant in docs/architecture.md.
+  //
+  // Mutation-verified: deleting `model.location === "local"` from #selectHub
+  // left the entire suite green before this test existed. One line added to a
+  // cloud descriptor in runtime.ts is all it would take to make it reachable.
+  it("never makes a cloud model the hub, even when it is the only general model", () => {
+    const cloudGeneral: ModelDescriptor = {
+      ...cloudModel,
+      id: "cloud:general",
+      label: "Cloud general",
+      role: "general",
+      // Must declare "coding" or `supports()` drops it before hub selection is
+      // ever reached, and this test passes without exercising anything. The
+      // first version of it did exactly that.
+      capabilities: ["chat", "reasoning", "coding", "web", "documents"],
+      // Deliberately WEAK, which is the opposite of the usual fixture trick.
+      // The hub is chosen after the spoke, from the same ranked candidate
+      // list. A cloud model rated high enough to win outright becomes the
+      // spoke instead, and the plan then correctly reports route "cloud" with
+      // a disclosure — a different situation entirely. To reach the bug, the
+      // cloud model has to LOSE primary selection to the local spoke
+      // (100 + 70 + 18 = 188) and still be sitting in the list when
+      // #selectHub looks for a general model.
+      qualityRating: 90,
+    };
+
+    const plan = codingPlan([cloudGeneral, codingSpoke]);
+
+    expect(plan.modelId).not.toBe(cloudGeneral.id);
+    expect(plan.spokeModelId).toBeUndefined();
+    expect(plan.steps.every((step) => step.location !== "cloud")).toBe(true);
+  });
+
+  // The same failure seen from the disclosure side: if a cloud hub ever were
+  // selected, this is the assertion that would catch the user being told their
+  // context stayed local while it did not.
+  it("keeps route and disclosure consistent with every step in the plan", () => {
+    const plan = codingPlan([hubModel, codingSpoke]);
+    const reachesCloud = plan.steps.some((step) => step.location === "cloud");
+
+    expect(reachesCloud).toBe(false);
+    expect(plan.route).toBe("local");
+    expect(plan.cloudDisclosure).toBeUndefined();
+  });
+
   it("drafts with the spoke and gives the hub the final word", () => {
     const plan = codingPlan([hubModel, codingSpoke]);
     const modelSteps = plan.steps.filter(
