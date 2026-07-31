@@ -281,6 +281,25 @@ export class Orchestrator {
         };
         return;
       }
+      // The comparison the ceiling actually names. Previously only `"none"`
+      // was tested, so `toolCeiling` was a boolean wearing an ordered type —
+      // setting it to `"local"` would have permitted a cloud search provider,
+      // while `systemContext` already compared tiers and would have hidden
+      // that same tool from the model. The field promised enforcement that
+      // did not happen, in the one direction where it matters.
+      if (
+        locationTier(this.#webSearch.tool.location) >
+        locationTier(policy.toolCeiling)
+      ) {
+        yield {
+          type: "error",
+          message:
+            `${policy.label} mode allows retrieval no further than ${policy.toolCeiling}, ` +
+            `but the configured web-search provider runs at ${this.#webSearch.tool.location}.`,
+          recoverable: true,
+        };
+        return;
+      }
 
       const searchQuery = request.prompt
         .replace(/[\u0000-\u001f\u007f]+/gu, " ")
@@ -981,11 +1000,23 @@ export class Orchestrator {
       plan = { ...plan, attempts: [...attempts] };
       yield { type: "plan", plan };
     } else if (hubStep) {
-      // Synthesis was planned but never attempted: the hub has no registered
-      // provider, or repeated failed drafts spent the budget and the model
-      // answered directly. Advertising the step while it silently does nothing
-      // is the decorative disclosure this design set out to remove.
-      plan = { ...plan, synthesisDegraded: true };
+      // Synthesis was planned but never attempted: repeated failed drafts
+      // spent the budget and the model answered directly. Advertising the step
+      // while it silently does nothing is the decorative disclosure this
+      // design set out to remove.
+      //
+      // The same modelId rewrite the hub-failure branch does, for the same
+      // reason. That branch's comment warns that doing this per-branch is what
+      // let the cancellation path keep claiming the hub had answered — and
+      // then this branch reproduced exactly that, one branch over: the hub
+      // never ran, `attempts` contains no synthesis entry, and `plan.modelId`
+      // named it anyway. `modelId` means "whose words the user read".
+      const { spokeModelId: draftedBy, ...planWithoutSpoke } = plan;
+      plan = {
+        ...planWithoutSpoke,
+        ...(draftedBy ? { modelId: draftedBy } : {}),
+        synthesisDegraded: true,
+      };
       yield {
         type: "trace",
         trace: executionTrace(

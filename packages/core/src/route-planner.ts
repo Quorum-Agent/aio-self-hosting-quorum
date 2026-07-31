@@ -16,9 +16,17 @@ import type {
  * How far this plan actually reaches: the furthest tier of any step.
  *
  * Previously `route` was the *spoke's* location, so a stage running further
- * out than the spoke — a cloud hub behind a local spoke — was invisible to
- * every consumer that keyed off it, including the disclosure. Taking a maximum
- * means hub, spoke and retrieval are covered by one rule.
+ * out than the spoke would have been invisible to every consumer that keyed
+ * off it, including the disclosure.
+ *
+ * Two honest caveats. Retrieval is **not** covered — it is excluded by the
+ * kind filter below and disclosed separately, because a search provider
+ * receives the query while a model receives the conversation. And the maximum
+ * is currently unreachable: `#selectHub` requires a hub with
+ * `location === "local"`, the lowest tier any `ModelDescriptor` can have, so
+ * `max(spoke, hub)` always equals the spoke. Reverting this to
+ * `selected.location` passes every test. It is kept as the correct shape for
+ * when a hub may sit further out, not because it changes an outcome today.
  */
 function planReach(steps: readonly PlanStep[]): Exclude<ExecutionLocation, "device"> {
   let reach: Exclude<ExecutionLocation, "device"> = "local";

@@ -174,6 +174,24 @@ describe("runtime view", () => {
     ).toBe(false);
   });
 
+  // The test above cannot distinguish "offline correctly excludes loopback"
+  // from "offline excludes everything" — its fixture cannot reach the wrong
+  // answer, so it stayed green through a regression that made offline show no
+  // starter prompts at all. This is the other half: offline must still admit
+  // the in-process model it exists to be served by.
+  it("still exposes the in-process model offline mode runs on", () => {
+    const inProcessModel: ModelDescriptor = {
+      ...chatModel,
+      id: "local:scaffold",
+      transport: "in_process",
+      capabilities: ["chat"],
+    };
+
+    expect(
+      supportsCapability([inProcessModel], "chat", offlinePolicy),
+    ).toBe(true);
+  });
+
   it("can require a local route instead of silently exposing a cloud-only starter", () => {
     const cloudCodingModel: ModelDescriptor = {
       ...chatModel,

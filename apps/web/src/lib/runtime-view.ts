@@ -1,4 +1,4 @@
-import { leavesDevice, locationTier } from "@quorum/core";
+import { leavesDevice, locationTier, modelReach } from "@quorum/core";
 import type {
   Capability,
   ExecutionAttempt,
@@ -140,10 +140,15 @@ export function supportsCapability(
       model.available &&
       model.capabilities.includes(capability) &&
       (route === "any" || model.location === "local") &&
+      // modelReach, not location. `ModelDescriptor.location` excludes
+      // "device", so its minimum tier is 1, while offline's ceiling is
+      // "device" = tier 0 — `1 <= 0` was false for EVERY model, and offline
+      // showed no starter prompts at all. The transport clause that was meant
+      // to handle this ran after a comparison nothing could pass. Matches the
+      // planner, which has always used modelReach here.
       (!policy ||
-        (locationTier(model.location) <= locationTier(policy.inferenceCeiling) &&
-          (policy.inferenceCeiling !== "device" ||
-            model.transport === "in_process"))),
+        locationTier(modelReach(model)) <=
+          locationTier(policy.inferenceCeiling)),
   );
 }
 

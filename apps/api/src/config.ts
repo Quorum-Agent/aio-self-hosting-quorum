@@ -325,13 +325,20 @@ export function loadConfig(): AppConfig {
     // Absent without credentials, exactly as cloud is. A peer that answers
     // unauthenticated is a peer anyone on the network can impersonate, so
     // there is no anonymous mode: no key, no provider.
-    ...(networkApiKey && process.env["QUORUM_NETWORK_BASE_URL"]?.trim()
+    ...(networkApiKey &&
+    process.env["QUORUM_NETWORK_BASE_URL"]?.trim() &&
+    // A model name is required, not defaulted. Cloud can default to a vendor's
+    // catalogue name; a peer's model is whatever that machine happens to
+    // serve, so guessing is meaningless. Without this the provider registered
+    // with an empty id and a blank label, was planner-selectable, and failed
+    // only at request time.
+    process.env["QUORUM_NETWORK_MODEL"]?.trim()
       ? {
           network: {
             baseUrl: normalizeNetworkBaseUrl(
               process.env["QUORUM_NETWORK_BASE_URL"]!.trim(),
             ),
-            model: process.env["QUORUM_NETWORK_MODEL"]?.trim() ?? "",
+            model: process.env["QUORUM_NETWORK_MODEL"]!.trim(),
             apiKey: networkApiKey,
             contextWindow: positiveInteger(
               process.env["QUORUM_NETWORK_CONTEXT_WINDOW"],

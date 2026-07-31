@@ -14,7 +14,10 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import { loadConfig } from "./config.js";
+import { leavesDevice } from "@quorum/core";
+
 import { isLoopbackHostname } from "./outbound-url.js";
+import { ConfigurableWebSearchProvider } from "./web-search-provider.js";
 import {
   normalizeCloudBaseUrl,
   normalizeNetworkBaseUrl,
@@ -23,6 +26,7 @@ import {
 const TOUCHED = [
   "QUORUM_NETWORK_API_KEY",
   "QUORUM_NETWORK_BASE_URL",
+  "QUORUM_NETWORK_MODEL",
   "QUORUM_CLOUD_API_KEY",
   "QUORUM_CLOUD_BASE_URL",
   "QUORUM_CLOUD_MODEL",
@@ -155,10 +159,30 @@ describe("the network tier permits a LAN peer without permitting the internet", 
     "http://8.8.8.8:8080/v1",
     "https://api.openai.com/v1",
     "http://evil.example/v1",
+    // Userinfo trick: the host is evil.example, not 192.168.1.10.
     "http://192.168.1.10@evil.example/v1",
-    "http://2130706433/v1",
   ])("refuses the non-private address %s", (url) => {
     expect(() => normalizeNetworkBaseUrl(url)).toThrow();
+  });
+
+  // Integer encodings are NOT rejected, and should not be: `new URL()`
+  // resolves them to a dotted quad before the predicate runs, so the check
+  // sees — and the request goes to — the address they denote. Pinned because
+  // the obvious reading of "decimal-encoded addresses were why isPrivateHostname
+  // was too broad" is that they are refused here. They are not; they are
+  // normalised, and then judged on where they actually point.
+  it.each([
+    ["http://3232235777/v1", "192.168.1.1, accepted"],
+    ["http://0xC0A80101/v1", "192.168.1.1, accepted"],
+  ])("normalises %s before judging it (%s)", (url) => {
+    expect(() => normalizeNetworkBaseUrl(url)).not.toThrow();
+  });
+
+  it("refuses loopback, which has its own tier rather than being unsafe", () => {
+    // Includes the decimal form, which normalises to 127.0.0.1.
+    for (const url of ["http://127.0.0.1/v1", "http://2130706433/v1"]) {
+      expect(() => normalizeNetworkBaseUrl(url)).toThrow(/private network host/u);
+    }
   });
 
   it("refuses embedded credentials and fragments", () => {
@@ -200,15 +224,58 @@ describe("a network peer is absent unless credentials are present", () => {
 
   it("refuses a peer address that is not on a private network", () => {
     process.env["QUORUM_NETWORK_API_KEY"] = "peer-key";
+    process.env["QUORUM_NETWORK_MODEL"] = "peer-model";
     process.env["QUORUM_NETWORK_BASE_URL"] = "https://api.openai.com/v1";
 
     expect(() => loadConfig()).toThrow(/private network host/u);
   });
 
-  it("registers a peer when both are genuinely present", () => {
+  // A model name is required rather than defaulted. Cloud can default to a
+  // vendor's catalogue name; a peer serves whatever that machine serves, so
+  // guessing is meaningless. Without this the provider registered with an
+  // empty id and a blank label, was planner-selectable, and failed only at
+  // request time.
+  it("omits the peer when no model name is given", () => {
     process.env["QUORUM_NETWORK_API_KEY"] = "peer-key";
     process.env["QUORUM_NETWORK_BASE_URL"] = "http://192.168.1.10:8080/v1";
+    delete process.env["QUORUM_NETWORK_MODEL"];
 
-    expect(loadConfig().network?.apiKey).toBe("peer-key");
+    expect(loadConfig().network).toBeUndefined();
+  });
+
+  it("registers a peer when all three are genuinely present", () => {
+    process.env["QUORUM_NETWORK_API_KEY"] = "peer-key";
+    process.env["QUORUM_NETWORK_MODEL"] = "peer-model";
+    process.env["QUORUM_NETWORK_BASE_URL"] = "http://192.168.1.10:8080/v1";
+
+    const network = loadConfig().network;
+    expect(network?.apiKey).toBe("peer-key");
+    expect(network?.model).toBe("peer-model");
+  });
+});
+
+describe("a tool's declared location and its disclosure agree", () => {
+  // The property that was failing when this was written. A SearXNG on loopback
+  // reported `location: "local"` (read by enforcement) alongside
+  // `contextMayLeaveDevice: true` (read by disclosure) — one fact, two fields,
+  // opposite answers. SearXNG is a metasearch proxy, so the query reaches
+  // Google regardless of where the instance listens; the disclosure field was
+  // the correct one.
+  //
+  // It mattered because policies.ts suggests tightening private's toolCeiling
+  // to "local", which would have admitted that tool on the strength of the
+  // wrong field and then proxied the query out.
+  it.each([
+    ["searxng on loopback", { provider: "searxng" as const, searxngBaseUrl: "http://127.0.0.1:8888" }],
+    ["searxng remote", { provider: "searxng" as const, searxngBaseUrl: "https://search.example.com" }],
+    ["auto", { provider: "auto" as const }],
+  ])("%s", (_name, settings) => {
+    const provider = new ConfigurableWebSearchProvider({
+      enabled: true,
+      ...settings,
+    } as never);
+    const tool = provider.tool;
+
+    expect(tool.contextMayLeaveDevice).toBe(leavesDevice(tool.location));
   });
 });
