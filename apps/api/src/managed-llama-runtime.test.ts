@@ -211,6 +211,7 @@ describe("managed llama.cpp runtime", () => {
         baseUrl: "http://127.0.0.1:43123/v1",
         apiKey: "ephemeral",
         modelIds: ["quorum-prompt", "quorum-main"],
+        contextWindows: new Map(),
       }).local,
     ).toMatchObject({
       baseUrl: "http://127.0.0.1:43123/v1",
@@ -223,7 +224,52 @@ describe("managed llama.cpp runtime", () => {
         baseUrl: "http://127.0.0.1:43123/v1",
         apiKey: "ephemeral",
         modelIds: ["quorum-main"],
+        contextWindows: new Map(),
       }),
     ).toThrow("missing configured model IDs: quorum-prompt");
+  });
+
+  // The manifest renders contextWindow into the preset as `ctx-size`, so it
+  // describes the server that is actually running. Before this, only the
+  // endpoint was swapped and the declared window survived, which let
+  // fitConversationToContext budget input against a window the server did not
+  // have — surfacing as a provider fault rather than a misconfiguration.
+  it("takes each model's context window from the manifest, not the environment", () => {
+    const reconciled = withManagedLlamaEndpoint(appConfig, {
+      baseUrl: "http://127.0.0.1:43123/v1",
+      apiKey: "ephemeral",
+      modelIds: ["quorum-prompt", "quorum-main"],
+      contextWindows: new Map([
+        ["quorum-main", 8_192],
+        ["quorum-prompt", 2_048],
+      ]),
+    }).local;
+
+    expect(appConfig.local.models[0]?.contextWindow).toBe(16_384);
+    expect(reconciled.models[0]?.contextWindow).toBe(8_192);
+    expect(reconciled.promptAnalyzer.contextWindow).toBe(2_048);
+  });
+
+  it("keeps the declared window when the manifest does not name the model", () => {
+    const reconciled = withManagedLlamaEndpoint(appConfig, {
+      baseUrl: "http://127.0.0.1:43123/v1",
+      apiKey: "ephemeral",
+      modelIds: ["quorum-prompt", "quorum-main"],
+      contextWindows: new Map([["quorum-main", 8_192]]),
+    }).local;
+
+    expect(reconciled.models[0]?.contextWindow).toBe(8_192);
+    expect(reconciled.promptAnalyzer.contextWindow).toBe(4_096);
+  });
+
+  it("does not mutate the configuration it was given", () => {
+    const before = JSON.stringify(appConfig);
+    withManagedLlamaEndpoint(appConfig, {
+      baseUrl: "http://127.0.0.1:43123/v1",
+      apiKey: "ephemeral",
+      modelIds: ["quorum-prompt", "quorum-main"],
+      contextWindows: new Map([["quorum-main", 8_192]]),
+    });
+    expect(JSON.stringify(appConfig)).toBe(before);
   });
 });

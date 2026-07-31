@@ -77,6 +77,17 @@ export interface ManagedLlamaRuntime {
   baseUrl: string;
   apiKey: string;
   modelIds: string[];
+  /**
+   * The context window each model was actually started with, by model ID.
+   *
+   * The manifest renders `contextWindow` into the preset as `ctx-size`, so this
+   * is the server's real configuration rather than an assumption about it.
+   * Without exposing it, `withManagedLlamaEndpoint` could only swap the
+   * endpoint, leaving `config.local.models[].contextWindow` on whatever
+   * `QUORUM_LOCAL_CONTEXT_WINDOW` said — and `fitConversationToContext` would
+   * then pack input against a window the server does not have.
+   */
+  contextWindows: ReadonlyMap<string, number>;
   pid: number;
   stop(): Promise<void>;
 }
@@ -347,7 +358,10 @@ async function waitUntilReady(options: {
 
 export function withManagedLlamaEndpoint(
   config: AppConfig,
-  runtime: Pick<ManagedLlamaRuntime, "baseUrl" | "apiKey" | "modelIds">,
+  runtime: Pick<
+    ManagedLlamaRuntime,
+    "baseUrl" | "apiKey" | "modelIds" | "contextWindows"
+  >,
 ): AppConfig {
   const requiredModels = [
     config.local.promptAnalyzer.name,
@@ -361,6 +375,22 @@ export function withManagedLlamaEndpoint(
       `Managed llama.cpp manifest is missing configured model IDs: ${missing.join(", ")}.`,
     );
   }
+  // The manifest wins, and it is not a tie being broken arbitrarily: the
+  // manifest's contextWindow was rendered into the preset as `ctx-size`, so it
+  // describes what the server is actually running, while
+  // QUORUM_LOCAL_CONTEXT_WINDOW only describes what Quorum would otherwise
+  // assume. Leaving the assumption in place lets fitConversationToContext pack
+  // input against a window that does not exist — the server then either
+  // rejects the request or silently shifts context, and it surfaces as a
+  // provider fault rather than a misconfiguration.
+  //
+  // This does not throw on disagreement the way the model-ID check above does.
+  // The default of 16,384 is a value nobody chose, so a manifest specifying
+  // anything else would fail startup for every user who never touched the
+  // setting.
+  const reconcile = (name: string, declared: number): number =>
+    runtime.contextWindows.get(name) ?? declared;
+
   return {
     ...config,
     local: {
@@ -368,6 +398,17 @@ export function withManagedLlamaEndpoint(
       baseUrl: runtime.baseUrl,
       apiKey: runtime.apiKey,
       transport: "openai-compatible",
+      models: config.local.models.map((model) => ({
+        ...model,
+        contextWindow: reconcile(model.name, model.contextWindow),
+      })),
+      promptAnalyzer: {
+        ...config.local.promptAnalyzer,
+        contextWindow: reconcile(
+          config.local.promptAnalyzer.name,
+          config.local.promptAnalyzer.contextWindow,
+        ),
+      },
     },
   };
 }
@@ -440,6 +481,9 @@ export async function startManagedLlamaRuntime(
       baseUrl,
       apiKey,
       modelIds: manifest.models.map((model) => model.id),
+      contextWindows: new Map(
+        manifest.models.map((model) => [model.id, model.contextWindow]),
+      ),
       pid: child.pid ?? -1,
       stop: async () => stopProcess(managedProcess!),
     };
