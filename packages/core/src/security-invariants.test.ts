@@ -49,9 +49,11 @@ const localModel: ModelDescriptor = {
 // for no specialties and no freshness — accidentally sufficient, which is the
 // same defect it was written to repair.
 //
-// 300 clears local's true ceiling: 100 (local) + 60 (quality) + 108 (all six
-// non-chat capabilities matched at 18 each) + 20 (freshness) = 288. The margin
-// no longer depends on what this file's request asks for.
+// 300 clears this fixture's ceiling: 100 (local) + 60 (`localModel`'s rating)
+// + 108 (all six non-chat entries in the `Capability` union matched as
+// SPECIALTIES at 18 each — `matchedSpecialties` reads `model.specialties`, not
+// `model.capabilities`) + 20 (freshness) = 288. The margin no longer depends
+// on what this file's request asks for.
 const overwhelmingCloudModel: ModelDescriptor = {
   id: "cloud:strong",
   label: "Cloud strong",

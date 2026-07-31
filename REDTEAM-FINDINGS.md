@@ -494,11 +494,11 @@ invariant counts as enforced only if something turned red.
 
 | # | Invariant | Mutation applied | Result |
 | --- | --- | --- | --- |
-| I-1 | Policy tightened, never weakened | `allowCloudModels: false` → `true` in `policies.ts` | caught (8) |
+| I-1 | Policy tightened, never weakened | `allowCloudModels: false` → `true` in `policies.ts` | caught (3) — see note |
 | I-2 | Sensitive classification excludes cloud | drop the `requiresLocalProcessing` filter | caught (3) |
 | I-3 | Web-grounded history excludes cloud | (same filter) | caught (3) |
 | I-4 | Offline excludes loopback too | drop the transport filter | caught (2) |
-| I-5 | Provider registered only when discoverable | force `available: true` | caught (1) |
+| I-5 | Provider registered only when discoverable | force `available: true` | caught (1); a second mutation removing the install filter caught 4 |
 | I-6 | Local URL must be loopback | short-circuit `normalizeLoopbackBaseUrl` | caught (6) |
 | I-7 | Cloud URL must be HTTPS | short-circuit `normalizeCloudBaseUrl` | caught (6) |
 | I-8 | Policy cloud exclusion is not a preference | drop the `location === "cloud"` filter | **SURVIVED** → fixed |
@@ -512,6 +512,20 @@ invariant counts as enforced only if something turned red.
 | I-11b | Policy gates web search | disable the `allowNetwork` check | caught (3) |
 | I-12 | Disclosure derived from the actual plan | emit a synthesis step unconditionally | caught (20) |
 | I-13 | Loopback API is not an auth boundary | — | not yet buildable |
+
+**I-1 needs a note, because "caught" overstates what was catching it.** An independent reviewer
+re-ran the mutation and got 3 failures, not the 8 recorded here — a miscount on my part. More
+importantly, of those 3, the only *pre-existing* catch is an API test asserting on the
+**system-prompt inventory**: what the model is told about itself, not where requests route. The
+585-test core routing suite did not catch it at all. So before this branch, "policy may be
+tightened, never weakened" was enforced at routing level by nothing, and the new private-mode test
+is the first routing-level catch. It belongs closer to the two failures below than the table
+suggests.
+
+Related: the `it.each(["private", "offline"])` in the new test is misleading. Only the **private**
+row exercises the cloud filter — with that filter deleted the offline row still passes, because
+the transport filter (I-4) independently excludes a remote model. The offline row is a genuine
+assertion but it does not test what its placement implies.
 
 **Two invariants were enforced by nothing.** Both are now pinned by tests that were themselves
 verified against the mutation — written, confirmed red, then reverted.
