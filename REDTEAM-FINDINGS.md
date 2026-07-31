@@ -519,10 +519,26 @@ verified against the mutation — written, confirmed red, then reverted.
 *I-8* is the more interesting failure. A test named for private mode existed and passed, but its
 cloud model was rated 90 against a local model rated 60, and `preferLocal` adds a flat +100. The
 cloud model lost on **sorting arithmetic**, not on policy, so deleting the policy filter entirely
-left the suite green while private-mode requests routed to cloud. The new test in
-`packages/core/src/security-invariants.test.ts` uses a cloud model rated 195 — above the sorting
-bonus — so it can only pass if the filter actually runs. This is the general shape of the danger:
-a test whose fixture makes the wrong answer unreachable tests nothing, however it is named.
+left the suite green while private-mode requests routed to cloud. This is the general shape of the
+danger: a test whose fixture makes the wrong answer unreachable tests nothing, however it is named.
+
+**And the replacement had the same defect.** The new fixture rated the cloud model 195, and this
+section originally stated that it "can only pass if the filter actually runs." That was reasoned,
+not tested. `localScore` is `(local ? 100 : 0) + qualityRating + 18 per matched specialty + 20 for
+freshness`, so local's worst case is `100 + 60 + 18 + 20 = 198` — *above* 195. The fixture passed
+only because that file's request happens to ask for no specialties and no freshness. A later
+change to the request, or a specialty added to the local model, would have silently returned the
+suite to green whether or not the filter existed.
+
+It is now rated 300, which clears local's true ceiling of 288 for **any** request rather than for
+that one, and a guard test asserts the margin directly so the next erosion fails loudly.
+
+The way it surfaced is the point: the guard went red on its first run, against a value already
+committed with a paragraph explaining why it was sufficient. Reasoning about the number produced
+the wrong answer; writing the check produced the right one in seconds. §16 records five instances
+of this same shape found during the extraction review — a mechanism that *would* explain something
+mistaken for evidence that it *does*. This is the sixth, and it is the one that occurred inside the
+test written to prevent it.
 
 *I-8b* is simpler and worse. Changing `config.ts` to register the cloud provider while ignoring
 the API key left **all 136 API tests passing**. A cloud model would then enter the registry, be
