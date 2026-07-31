@@ -16,6 +16,7 @@
  * strategy whose output is not a literal substring fails the case outright,
  * whatever its score would have been.
  */
+import { readFileSync } from "node:fs";
 import { performance } from "node:perf_hooks";
 
 interface ExtractionCase {
@@ -215,6 +216,43 @@ function trimFraming(prompt: string): string {
   return text.replace(/^[\s,—-]+|[\s,—-]+$/gu, "").replace(/[.?!]+$/u, "");
 }
 
+// A larger set built from real search queries — MS MARCO and Natural Questions,
+// i.e. things people actually typed into a search engine — wrapped in
+// conversational scaffolding. The gold span is the original query, so it is a
+// substring by construction and no hand-labelling is involved.
+//
+// The queries are real; the wrappers are not. This removes the bias in WHAT is
+// being asked, which was the larger problem with eleven hand-written cases, but
+// it does not remove the bias in HOW it is framed. Read it as a broad ordering
+// signal and keep the curated cases for the specific shapes known to break.
+const WRAPPERS: ReadonlyArray<(query: string) => string> = [
+  (q) => `Hey, quick question — ${q}?`,
+  (q) => `My friend and I were arguing about this. ${q}? Could you help us out?`,
+  (q) => `So I was wondering, could you tell me ${q}? Thanks!`,
+  (q) => `Please could you look up ${q}. Thank you kindly.`,
+  (q) => `${q}? Any thoughts?`,
+  (q) => `Hi there, ${q}`,
+  (q) => `I am working on something and got stuck. ${q}?`,
+  (q) => `Can you tell me ${q}? Cheers.`,
+  (q) => `${q}`,
+];
+
+function corpusCases(): ExtractionCase[] {
+  const queries = JSON.parse(
+    readFileSync(new URL("./query-extraction-corpus.json", import.meta.url), "utf8"),
+  ) as string[];
+  return queries.map((raw, index) => {
+    const query = raw.replace(/\?+$/u, "");
+    const prompt = WRAPPERS[index % WRAPPERS.length]!(query);
+    return {
+      name: `corpus ${index}`,
+      prompt,
+      ideal: query,
+      noise: [],
+    } satisfies ExtractionCase;
+  });
+}
+
 const MODELS = (
   process.env["QUORUM_EXTRACTION_MODELS"] ??
   "qwen3.5:2b,qwen3:4b,phi4-mini:latest,gemma4:e2b,gemma4:e4b,qwen3.5:9b"
@@ -260,7 +298,13 @@ function f1(actual: string, ideal: string): number {
 }
 
 async function main(): Promise<void> {
-  for (const testCase of CASES) {
+  const useCorpus = process.env["QUORUM_EXTRACTION_CORPUS"] === "1";
+  const cases: readonly ExtractionCase[] = useCorpus ? corpusCases() : CASES;
+  console.log(
+    `${cases.length} cases (${useCorpus ? "generated from real search queries" : "curated failure shapes"})
+`,
+  );
+  for (const testCase of cases) {
     if (!testCase.prompt.includes(testCase.ideal)) {
       console.error(
         `BROKEN CASE "${testCase.name}": ideal is not a substring of prompt.`,
@@ -278,7 +322,7 @@ async function main(): Promise<void> {
     let errors = 0;
     const started = performance.now();
 
-    for (const testCase of CASES) {
+    for (const testCase of cases) {
       let actual: string;
       try {
         actual = await strategy.extract(testCase.prompt);
@@ -304,7 +348,7 @@ async function main(): Promise<void> {
         actual.toLowerCase().includes(phrase.toLowerCase()),
       );
       if (leaked.length > 0) noiseLeaks += 1;
-      if (score < 1) {
+      if (score < 1 && !useCorpus) {
         console.log(
           `  ${score.toFixed(2)} ${testCase.name}\n      got: ${actual}\n      want: ${testCase.ideal}`,
         );
@@ -313,12 +357,12 @@ async function main(): Promise<void> {
 
     const elapsed = performance.now() - started;
     console.log(
-      `SUMMARY ${strategy.name}: exact ${exact}/${CASES.length}, ` +
-        `mean F1 ${(totalF1 / CASES.length).toFixed(3)}, ` +
-        `noise leaked in ${noiseLeaks}/${CASES.length}, ` +
+      `SUMMARY ${strategy.name}: exact ${exact}/${cases.length}, ` +
+        `mean F1 ${(totalF1 / cases.length).toFixed(3)}, ` +
+        `noise leaked in ${noiseLeaks}/${cases.length}, ` +
         `substring violations ${notSubstring}, ` +
         `errors ${errors}, ` +
-        `${(elapsed / CASES.length).toFixed(2)}ms per prompt\n`,
+        `${(elapsed / cases.length).toFixed(2)}ms per prompt\n`,
     );
   }
 }
