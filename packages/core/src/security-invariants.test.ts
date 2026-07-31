@@ -113,6 +113,28 @@ function planFor(policy: PolicyMode, models: ModelDescriptor[]) {
   );
 }
 
+// The two tiers between local and cloud. Defined at module scope rather than
+// inside the describe that uses them, so the fixture-strength guard below can
+// read their real ratings instead of a copy.
+const lanPeer: ModelDescriptor = {
+  id: "network:peer",
+  label: "LAN peer",
+  provider: "test",
+  location: "network",
+  transport: "remote",
+  capabilities: ["chat", "reasoning", "coding", "documents"],
+  contextWindow: 128_000,
+  qualityRating: 300,
+  available: true,
+};
+
+const rentedBox: ModelDescriptor = {
+  ...lanPeer,
+  id: "remote:rented",
+  label: "Rented GPU",
+  location: "remote",
+};
+
 // The fixture above only tests anything while the cloud model would actually
 // WIN the sort if the policy filter were removed. That is arithmetic, not an
 // assumption, and it is the exact thing the original test got wrong — so it is
@@ -134,14 +156,26 @@ describe("the fixture can actually detect the bug it was written for", () => {
   // Every capability except "chat", which specialtyScore excludes.
   const MAX_SPECIALTIES = 6;
 
-  it("outranks local on score alone, whatever the request asks for", () => {
-    const localCeiling =
-      LOCAL_BONUS +
-      localModel.qualityRating +
-      SPECIALTY_BONUS * MAX_SPECIALTIES +
-      FRESHNESS_BONUS;
+  const localCeiling =
+    LOCAL_BONUS +
+    localModel.qualityRating +
+    SPECIALTY_BONUS * MAX_SPECIALTIES +
+    FRESHNESS_BONUS;
 
-    expect(overwhelmingCloudModel.qualityRating).toBeGreaterThan(localCeiling);
+  // Every off-device fixture, not just the first one. The guard originally
+  // covered `overwhelmingCloudModel` alone; the `network` and `remote`
+  // fixtures added later reused its rating without inheriting its guarantee,
+  // so they cleared the bar by luck rather than by construction — one bonus
+  // change away from the exact defect this describe block exists to prevent.
+  it.each<[string, ModelDescriptor]>([
+    ["cloud", overwhelmingCloudModel],
+    ["network peer", lanPeer],
+    ["rented remote", rentedBox],
+  ])("the %s fixture outranks local on score alone", (_name, model) => {
+    // Reads the fixture, not a copy of its rating. A guard holding its own
+    // literal drifts silently the moment the fixture is edited, which is the
+    // defect it was written to prevent wearing a different hat.
+    expect(model.qualityRating).toBeGreaterThan(localCeiling);
   });
 });
 
@@ -203,24 +237,6 @@ describe("offline refuses every endpoint that is not in-process", () => {
 // Every assertion above tests the two endpoints of that range; these test the
 // middle, which is where a binary `=== "cloud"` check silently answers "no".
 describe("the tiers between local and cloud are not treated as local", () => {
-  const lanPeer: ModelDescriptor = {
-    id: "network:peer",
-    label: "LAN peer",
-    provider: "test",
-    location: "network",
-    transport: "remote",
-    capabilities: ["chat", "reasoning", "coding", "documents"],
-    contextWindow: 128_000,
-    qualityRating: 300,
-    available: true,
-  };
-  const rentedBox: ModelDescriptor = {
-    ...lanPeer,
-    id: "remote:rented",
-    label: "Rented GPU",
-    location: "remote",
-  };
-
   it.each<[string, ModelDescriptor]>([
     ["network", lanPeer],
     ["remote", rentedBox],
