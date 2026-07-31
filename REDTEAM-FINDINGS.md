@@ -987,45 +987,83 @@ characters. It cost 0.37 mean F1 and was reported as the model being unusable. I
 
 **(2) decided the model ranking**, and is now reported separately and permanently.
 
-### The one conclusion that reversed
+### A reversal that was claimed, then withdrawn
 
-Under the committed (buggy) prompt, `gemma4:e4b` was **statistically tied** with `qwen3:4b` —
-gap 0.011, 95% CI [-0.018, 0.038]. That finding was correct, and it mattered, because `gemma4:e4b`
-was in the harness's own default model list and absent from the reported table.
+This subsection previously reported that the reviewer's central finding had been overturned. **It
+had not been.** The finding stands, the refutation was wrong, and the way it was wrong is the most
+useful thing in this document.
 
-Re-measured on all 240 cases with the prompt fixed, errors excluded, and normalised scoring:
+The reviewer found that `gemma4:e4b` — present in the harness's own default model list, absent
+from its reported table — was **statistically tied** with `qwen3:4b`: gap 0.011, 95% CI
+[-0.018, 0.038].
+
+That was re-measured on all 240 cases with the prompt fixed, using a purpose-written verification
+script, and appeared to reverse decisively: gap +0.029, CI [0.018, 0.046], significant, and still
+significant on the wrapped-only subset. That result was written up here as a reversal.
+
+**The verification script scored violations differently from the harness it was verifying.** The
+harness scores a substring violation as **0** — an authored span is a failed case, whatever its
+token overlap. The verification script let violating spans keep their token-F1 credit. Re-running
+the identical comparison under the harness's own rule:
+
+| prompt | scoring | gap `qwen3:4b` − `gemma4:e4b` | 95% CI | significant |
+| --- | --- | --- | --- | --- |
+| v8 fixed | lenient (script) | +0.029 | [+0.016, +0.043] | yes |
+| v8 fixed | **strict (harness)** | **+0.013** | **[-0.016, +0.040]** | **no** |
+| v0 committed | lenient (script) | +0.035 | [+0.022, +0.048] | yes |
+| v0 committed | strict (harness) | +0.026 | [+0.002, +0.048] | marginal |
+
+**Under the harness's actual scoring rule, with the prompt bug fixed, the two models are tied.**
+The reviewer's finding survives its own refutation.
+
+The error was not neutral. `qwen3:4b` commits 3.5× more violations than `gemma4:e4b` (7 against 2),
+so a rule that pays partial credit for violations transfers value to `qwen3:4b` in proportion to
+the thing it is worse at. The divergence flattered the incumbent, and the incumbent was the
+author's prior choice.
+
+Two supporting claims made alongside the reversal were also wrong, and are withdrawn:
+
+- *"Fixing the example format gained `qwen3:4b` about 0.021 and `gemma4:e4b` about 0.003."*
+  Cross-run arithmetic between two measurements with different scoring. Measured within one run and
+  paired, the format change moves `qwen3:4b` by **-0.006** (CI [-0.013, -0.001]) — the committed
+  prompt is very slightly better, not worse.
+- *"The tie was an artifact of the prompt bug, which asymmetrically benefits the model that was
+  mis-formatting."* Neither model was mis-formatting. Counting spans that begin or end with a quote
+  character: **0 of 239 for `qwen3:4b` and 0 of 240 for `gemma4:e4b`, under both prompts** — and 0
+  for `gemma4:e2b` and `qwen3:0.6b` too. Quote-wrapping was real but confined to `qwen3.5:2b`,
+  which is not in this comparison. The format fix is retained in the harness because it is worth
+  0.37 F1 to `qwen3.5:2b`, and for no other reason. It should not be sold as improving the
+  comparison above.
+
+The corrected standing numbers, harness scoring, 240 cases, fixed prompt:
 
 | model | mean F1 | exact | violations | warm median |
 | --- | --- | --- | --- | --- |
-| `qwen3:4b` | **0.985** | 223 | 7 | 251 ms |
-| `gemma4:e4b` | 0.956 | 179 | **2** | 748 ms |
-| `gemma4:e2b` | 0.938 | 168 | 3 | 421 ms |
-| `qwen3:0.6b` | 0.900 | 184 | 12 | 182 ms |
+| `qwen3:4b` | 0.961 | 223 | 7 | 251 ms |
+| `gemma4:e4b` | 0.948 | 179 | **2** | 748 ms |
 
-| paired comparison | subset | gap | 95% CI | significant |
-| --- | --- | --- | --- | --- |
-| `qwen3:4b` − `gemma4:e4b` | all 239 | +0.029 | [0.018, 0.046] | **yes** |
-| `qwen3:4b` − `gemma4:e4b` | wrapped only (213) | +0.024 | [0.013, 0.040] | **yes** |
-| `qwen3:4b` − `gemma4:e2b` | wrapped only (213) | +0.035 | [0.024, 0.049] | **yes** |
+Tied on F1. `gemma4:e4b` is cleaner on the invariant, and that difference is **reliability, not
+safety** — the substring gate rejects every violating span by construction, so no authored text
+reaches the search provider under either model. The gap is how often extraction fails and falls
+back to the verbatim prompt: roughly 3% against 1%.
 
-**The tie was an artifact of the prompt bug.** Fixing the example format gained `qwen3:4b` about
-0.021 and `gemma4:e4b` about 0.003 — e4b was already emitting clean JSON and had nothing to gain.
-The separation now holds on the wrapped-only subset, so it does not depend on the no-op cases
-either.
+Independent evidence the reviewer supplied afterwards points the same way and is recorded as
+theirs: across five prompt variants on a 60-case stratified subset, `qwen3:4b` leads at every one
+including `gemma4:e4b`'s best, but at n=60 that establishes direction and consistency, not
+magnitude. It does not rescue the reversal.
 
-This is worth stating carefully, because it cuts against the reviewer's own recommendation and the
-reviewer was right anyway: **the tie was real at the time it was measured.** It was measured on the
-harness as committed, which is the correct thing to review. The bug that produced it was found in
-the same pass.
-
-`gemma4:e4b` remains cleaner on the invariant — 2 violations against 7. That difference is
-**reliability, not safety**: the substring gate rejects every violating span by construction, so no
-authored text reaches the search provider under either model. The gap is how often extraction fails
-and falls back to the verbatim prompt, roughly 3% against 1%.
+**The lesson is narrower and more uncomfortable than "check your work".** The verification script
+was written to audit the harness, and diverged from it on exactly the axis under dispute. A
+verification tool that does not implement the rules of the thing it verifies is not measuring that
+thing at all, and its disagreement is self-generated. The divergence here was invisible — both
+implementations were internally reasonable, and nothing failed — until the gap between them was
+computed on purpose.
 
 ### The ranking is partly a ranking of something else
 
-Dropping the `format` JSON schema, with an explicit instruction to reply with bare text:
+Dropping the `format` JSON schema, with an explicit instruction to reply with bare text. **These
+are the reviewer's numbers on a 60-case stratified subset, not the 240-case run above** — direction
+and consistency, not magnitude:
 
 | model | with schema | without |
 | --- | --- | --- |
@@ -1083,14 +1121,32 @@ reference that does not support it.
 So the harness reports **per-framing scores** instead, and no blended number is treated as the
 result. The reader applies their own prior. The one genuinely external basis available is Quorum's
 own prompt history — counting a bare/wrapped ratio over real user prompts stores nothing and needs
-less than the curated cases already took. That is the way to close this if it ever matters; it does
-not currently, since the live comparison is `qwen3:4b` against `gemma4:e4b` and that one separates
-regardless.
+less than the curated cases already took. That is the way to close this if it ever matters.
+
+It matters more than the first draft of this section claimed. That draft dismissed the question on
+the grounds that the live comparison separates regardless. It does not separate: `qwen3:4b` and
+`gemma4:e4b` are tied under the harness's scoring. So the ratio is load-bearing for both surviving
+comparisons, not just the `gemma4:e2b` one.
 
 ### Standing conclusion
 
-`qwen3:4b` is the right choice, but the honest reason is narrower than "it is the best extractor."
-It is the best extractor **under grammar-constrained decoding**, which is the mode this codebase
-uses; it is the only model of the four that cannot work without it; and `gemma4:e4b`, which is
-close behind and cleaner on the invariant, is 9.6 GB against a 16 GB card that must also hold the
-hub and the classifier. **`qwen3:4b` is what fits.**
+**`qwen3:4b` and `gemma4:e4b` are not distinguishable on extraction quality.** Under the harness's
+own scoring the gap is +0.013 with CI [-0.016, +0.040], and `gemma4:e4b` is cleaner on the
+invariant by 2 violations to 7. On the measurement alone, `gemma4:e4b` is the better extractor.
+
+`qwen3:4b` is still the right choice, and the honest reason is a resource argument rather than a
+quality one: `gemma4:e4b` is **9.6 GB** against a 16 GB card that must also hold the hub and the
+classifier, and it carries a 21.6 s cold load that lands directly on the extraction path under
+model rotation. `qwen3:4b` is 2.5 GB.
+
+Two qualifications on that choice, both of which cut against it and should not be lost:
+
+- It is the best extractor **under grammar-constrained decoding**, which is the mode this codebase
+  uses — and it is the only model tested that cannot work without it, scoring 0.000 unconstrained
+  even when explicitly instructed. Its characteristic failures are the failure mode of the only
+  mode it works in.
+- Its advantage over the field was overstated at every stage of this investigation, in the same
+  direction, by the same author, three separate times. That is worth weighing when the next
+  comparison is run.
+
+**`qwen3:4b` is what fits.** Not what won.
