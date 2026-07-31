@@ -25,7 +25,12 @@ import { Orchestrator } from "./orchestrator.js";
 import { RequestCompiler } from "./request-compiler.js";
 import { leavesDevice, locationTier, modelReach } from "./types.js";
 import { RoutePlanner } from "./route-planner.js";
-import type { ChatRequest, ModelDescriptor, PolicyMode } from "./types.js";
+import type {
+  ChatRequest,
+  ModelDescriptor,
+  PolicyMode,
+  WebSearchProvider,
+} from "./types.js";
 
 const localModel: ModelDescriptor = {
   id: "local:general",
@@ -424,5 +429,96 @@ describe("the classification stage reports where it ran", () => {
     // vacuously true.
     expect(classificationLocations.length).toBeGreaterThan(0);
     expect(new Set(classificationLocations)).toEqual(new Set(["network"]));
+  });
+});
+
+describe("web is a tool tier, distinct from a model vendor", () => {
+  // `cloud` in this codebase means a vendor's INFERENCE API — it receives the
+  // whole conversation under that vendor's retention terms. A search provider
+  // receives a query string. Both leave the device; they are not the same
+  // permission, and reusing one word for both made a search provider read as a
+  // model vendor in every ceiling and disclosure.
+  it("orders web below cloud, because less travels", () => {
+    expect(locationTier("web")).toBeLessThan(locationTier("cloud"));
+    expect(locationTier("web")).toBeGreaterThan(locationTier("remote"));
+  });
+
+  it("counts as leaving the device", () => {
+    // The whole point of the tier: never conflated with local, whatever the
+    // search engine happens to be running on.
+    expect(leavesDevice("web")).toBe(true);
+  });
+
+  it("lets a tool ceiling permit search without permitting a vendor model", () => {
+    // The statement no arrangement of the previous vocabulary could make.
+    // Policies now say toolCeiling "web" rather than "cloud": both admit
+    // today's providers, but only one of them stops granting more than meant.
+    expect(locationTier("web")).toBeLessThanOrEqual(locationTier("web"));
+    expect(locationTier("cloud")).toBeGreaterThan(locationTier("web"));
+  });
+});
+
+describe("a tool ceiling of web refuses a tool that reaches further", () => {
+  // Without this the rename is cosmetic: mutating every policy's toolCeiling
+  // from "web" back to "cloud" failed no test, so nothing distinguished the
+  // precise permission from the over-broad one. A tool CAN declare `cloud` —
+  // RuntimeToolDescriptor permits it — so the refusal is testable even though
+  // no shipped provider does.
+  function toolAt(location: "web" | "cloud"): WebSearchProvider {
+    return {
+      tool: {
+        id: `web-search:${location}`,
+        label: `Search (${location})`,
+        capabilities: ["web"],
+        location,
+        available: true,
+        contextMayLeaveDevice: true,
+      },
+      async search(query) {
+        return { query, results: [], provider: "test" };
+      },
+    };
+  }
+
+  async function runSearch(search: WebSearchProvider) {
+    // Positional: (providers, compiler, planner, promptAnalyzer, webSearch).
+    const orchestrator = new Orchestrator(
+      [new DemoProvider()],
+      new RequestCompiler(),
+      new RoutePlanner(),
+      undefined,
+      search,
+    );
+    const errors: string[] = [];
+    for await (const event of orchestrator.run({
+      conversationId: "c",
+      policy: "balanced",
+      messages: [
+        {
+          id: "m",
+          role: "user",
+          content: "Search the web for the latest OpenSSL advisory.",
+          createdAt: new Date(0).toISOString(),
+        },
+      ],
+    })) {
+      if (event.type === "error") errors.push(event.message);
+    }
+    return errors;
+  }
+
+  it("refuses a cloud-tier tool under balanced's web ceiling", async () => {
+    const errors = await runSearch(toolAt("cloud"));
+
+    expect(errors.some((m) => /retrieval no further than web/u.test(m))).toBe(
+      true,
+    );
+  });
+
+  it("permits a web-tier tool under the same ceiling", async () => {
+    // The negative above would also pass if search were broken outright.
+    const errors = await runSearch(toolAt("web"));
+
+    expect(errors.some((m) => /retrieval no further than/u.test(m))).toBe(false);
   });
 });

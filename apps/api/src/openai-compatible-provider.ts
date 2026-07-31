@@ -36,7 +36,8 @@ interface OpenAICompatibleOptions {
   label: string;
   provider: string;
   role?: LocalModelRole;
-  location: Exclude<ExecutionLocation, "device">;
+  /** Matches ModelDescriptor: a provider serves a model, and no model is on "the web". */
+  location: Exclude<ExecutionLocation, "device" | "web">;
   baseUrl: string;
   apiKey: string;
   model: string;
