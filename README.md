@@ -171,10 +171,36 @@ QUORUM_CLOUD_QUALITY_RATING=80
 ```
 
 The cloud provider is not registered when the key is blank. Private and Offline modes
-never select a cloud model. Requests detected as sensitive never use cloud; when no
+never select a network peer or a cloud model. Requests detected as sensitive stay on
+this device entirely — not merely off cloud, which also rules out a LAN peer and
+rented hardware; when no
 capable local model exists, Quorum reports the failure instead of fabricating a
 scaffold answer. Set the context window and quality rating to match the provider you
 actually configure; routing does not assume that every cloud model is equally capable.
+
+### Optional network peer
+
+A model on another machine you run — a second desktop, a home server, a box you rent.
+This is a **separate tier from cloud**, because the difference that matters is who
+controls the stack: your weights under your configuration, rather than a vendor's API
+under its retention terms.
+
+```dotenv
+QUORUM_NETWORK_BASE_URL=http://192.168.1.50:11434/v1
+QUORUM_NETWORK_MODEL=qwen3-coder:30b
+QUORUM_NETWORK_API_KEY=your-shared-secret
+QUORUM_NETWORK_CONTEXT_WINDOW=16384
+QUORUM_NETWORK_QUALITY_RATING=70
+```
+
+All three of base URL, model, and key are required together; a peer that answers
+unauthenticated is one anyone on the network can impersonate, so there is no anonymous
+mode. The address must be genuinely private — RFC1918, link-local, ULA, CGNAT, or a
+`.local`/`.lan`/`.internal`/`.home` name. Plain HTTP is permitted here and nowhere
+further out. Discovery and pairing are deliberately not built; configure it by hand.
+
+**Balanced and Best quality may select this peer**, which sends the conversation to
+that machine. Private, Offline, and any request detected as sensitive will not.
 
 ### Web search
 
@@ -183,8 +209,8 @@ sources. It is not used for ordinary explanation or analysis. Quorum retrieves a
 small bounded source set, passes it to a local model as explicitly framed untrusted
 evidence, and renders its source links from structured execution data rather than
 concatenating untrusted titles into the answer. The provider and sources remain in
-the durable execution record. Retrieved web data and later turns derived from it are
-kept away from cloud models.
+the durable execution record. Retrieved web data, and later turns derived from it,
+never leave this device — not merely never reach a cloud model.
 
 Search is enabled out of the box. With no configuration, Auto mode uses keyless
 DuckDuckGo. Configure the master toggle, provider, result count, SearXNG URL, and
@@ -222,9 +248,20 @@ that provider and disable automatic provider fallback. Setting
 `QUORUM_WEB_SEARCH_ENABLED=false` is an operator kill switch: saved UI settings cannot
 turn search back on.
 
+**A loopback SearXNG does not keep your query on the machine.** SearXNG is a
+metasearch *proxy*: it forwards every query to Google, Bing and other upstream
+engines, so the query leaves the device regardless of where the instance listens.
+Quorum classifies it `location: "web"` with `contextMayLeaveDevice: true` for exactly
+that reason, and Private and Offline never reach it.
+
+That distinction is stated first because the restriction below is about a different
+thing, and reading it alone leads to the opposite conclusion — as it has, more than
+once.
+
 SearXNG accepts explicit loopback HTTP or HTTPS URLs; remote instances are rejected
-to keep the configurable endpoint out of Quorum's server-side request boundary.
-Quorum does not rotate through public instances. Private and Offline modes never
+to keep **the configurable endpoint** out of Quorum's server-side request boundary.
+That is a defence against a hostile URL in configuration, not a guarantee about where
+your query travels. Quorum does not rotate through public instances. Private and Offline modes never
 search, and requests detected as sensitive never search. Each logical search has one
 eight-second deadline, does not follow redirects, allows at most two concurrent and
 30 per minute, and feeds only bounded HTTPS results that pass lexical safety
@@ -331,8 +368,8 @@ channel; do not treat loopback binding alone as an authorization boundary.
 | Mode | Current routing behavior |
 | --- | --- |
 | Private | Local models only |
-| Balanced | Prefer the strongest suitable local model; search when freshness requires it |
-| Best quality | Select the strongest eligible route using quality plus matched specialization |
+| Balanced | Prefer a local model, but may select a network peer or cloud model when one clearly outranks it; searches when freshness requires it |
+| Best quality | Select the strongest eligible model regardless of location, including a network peer or cloud model |
 | Offline | In-process providers only; no loopback or remote model calls |
 
 The core policy type reserves Cost controlled for the usage-ledger milestone, but the

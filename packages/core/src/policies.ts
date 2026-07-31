@@ -42,7 +42,11 @@ export const POLICIES: Record<PolicyMode, PolicyDefinition> = {
   private: {
     id: "private",
     label: "Private",
-    description: "Keep inference and tools on this machine.",
+    // Not "keep tools on this machine" — `toolCeiling: "none"` means no tool
+    // runs at all, and no tool can be `location: "local"` today anyway (see the
+    // note above). Other shipped copy already said "Private and Offline
+    // policies never search", which the old wording contradicted.
+    description: "Keep inference on this machine and run no tools.",
     inferenceCeiling: "local",
     toolCeiling: "none",
     preferLocal: true,
@@ -70,8 +74,21 @@ export const POLICIES: Record<PolicyMode, PolicyDefinition> = {
     // endpoints as well as remote endpoints" — used to be enforced by the
     // planner testing `request.policy === "offline"` by name and then checking
     // transport. Declaring the ceiling makes the exception a value.
+    //
+    // What this mode means, because the previous description got it wrong and
+    // that wording then misled a reader into treating the mode as a privacy
+    // guarantee: **every computation runs on this machine**. It is a statement
+    // about where work happens, not a promise that no byte ever leaves.
+    //
+    // The ceilings scope *request execution* — which model answers, which tools
+    // a request may reach. They say nothing about application maintenance such
+    // as fetching a model catalogue, because that is not computation the user
+    // asked for and is not performed by a model. Read this before concluding
+    // that some background fetch "violates offline"; it does not, and the
+    // question to ask instead is whether the app still starts with no network
+    // at all, which it must.
     label: "Offline",
-    description: "Disable every network operation, including local network endpoints.",
+    description: "Run every computation on this machine, including the local network.",
     inferenceCeiling: "device",
     toolCeiling: "none",
     preferLocal: true,

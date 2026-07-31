@@ -156,7 +156,7 @@ export function ExecutionPanel({
                 <ChevronRight size={14} />
                 <div className="route-node is-selected is-cloud">
                   <Cloud size={15} />
-                  Cloud
+                  {cloudUsage.routeLabel}
                 </div>
               </>
             )}
@@ -297,7 +297,7 @@ export function ExecutionPanel({
       >
         {cloudUsage.activity ? <Cloud size={15} /> : <ShieldCheck size={15} />}
         <div>
-          <strong>Cloud usage</strong>
+          <strong>Off-device activity</strong>
           <span>
             {cloudUsage.text}
           </span>

@@ -1,5 +1,24 @@
 # Quorum architecture
 
+## What Quorum is for
+
+Run a set of specialist models **you choose**, on hardware **you control**, and get
+what a single large generalist would give you — for less memory. The thing Quorum
+replaces is loading one 30B mixture-of-experts to cover coding, documents, and
+conversation at once.
+
+**That goal is capability ownership, not data privacy.** Privacy falls out of running
+locally; it is not the thing being bought. The distinction is load-bearing and is
+already encoded in the type system: the `remote` tier exists because a user who
+declines vendor APIs on principle may still rent a GPU and run their own weights on
+it under their own configuration.
+
+Read that paragraph before concluding that some behaviour "violates" a mode on privacy
+grounds. Policy ceilings constrain **where computation happens** and **how far a tool
+may reach within a request**. They are not a promise that no byte ever leaves — see
+*Execution location tiers* below, and note that `offline`'s description means every
+computation runs on this machine, not that the application never opens a socket.
+
 ## Product boundary
 
 Quorum is not primarily a model client. The durable product is the layer that owns:
@@ -90,10 +109,17 @@ Selection is constrained before ranking:
 
 1. remove unavailable models;
 2. remove models lacking required capabilities;
-3. remove cloud models forbidden by policy;
-4. in Offline mode, remove every provider not running in-process;
-5. for sensitive requests, remove every cloud model;
-6. rank remaining models according to policy, including a bounded, deduplicated bonus
+3. remove every model whose reach exceeds the policy's `inferenceCeiling`
+   (`route-planner.ts` — one tier comparison, naming no policy). **Offline is not a
+   step of its own**; it is this step with a ceiling of `device`. An earlier version
+   of this list described it separately, which contradicted *Execution location
+   tiers* below;
+4. for sensitive requests, keep only models whose location is `local`. This is a
+   **floor on the data, not the policy's ceiling**, so it also excludes a LAN peer
+   and rented hardware — not merely vendor APIs. An earlier version said "remove
+   every cloud model", which would have let confidential content reach a `network`
+   peer;
+5. rank remaining models according to policy, including a bounded, deduplicated bonus
    for declared specialties that match the request. Best quality combines this bonus
    with quality rather than ignoring a specialist for a small static rating gap.
 
@@ -140,7 +166,9 @@ interface ModelProvider {
 
 The current adapters are:
 
-- `OpenAICompatibleProvider` for local loopback or remote cloud endpoints;
+- `OpenAICompatibleProvider` for every off-`device` tier — loopback, a LAN peer, a
+  rented box, or a vendor API. It selects a URL validator from the declared location
+  rather than assuming two cases;
 - `DemoProvider` for an offline, deterministic, in-process runnable experience.
 
 Local adapters accept only explicit loopback URLs and do not follow redirects. A shared
@@ -161,8 +189,13 @@ server that starts later can join without restarting Quorum.
 
 For model generation, Quorum discards structured private-thinking fields. Native
 Ollama requests use its JSON-schema `format` field and accept exactly one visible
-`answer` string. Compatibility JSON and SSE routes use a reserved final-answer
-envelope because that transport does not guarantee the same schema feature. Both
+`answer` string. Compatibility routes now send `response_format` **as well as** the
+reserved final-answer envelope, and parse the response with both — JSON first, then
+envelope extraction of the same body. One response, two parsers, no extra round trip.
+That degrades correctly against a server which accepted the schema and then ignored
+it, which is a documented llama.cpp failure mode that returns HTTP 200. Measured
+against a real model, the envelope alone produced a usable answer in 3 of 6 cases and
+`response_format` produced 6 of 6. Both
 paths buffer the bounded response and release it only after validating the complete
 answer and the transport's terminal marker. Non-whitespace text outside a compatibility
 envelope, nested or repeated reserved tags, empty or visually blank content, post-
@@ -238,6 +271,42 @@ Container support remains an optional integration: on Windows, a Linux container
 requires Docker Desktop, Podman, or another runtime backed by WSL 2 or Hyper-V.
 
 See [ADR 0001](./decisions/0001-desktop-shell-and-service-supervision.md).
+
+### Spend guardrail
+
+Token usage is now captured from both transports (`TokenUsage`, with a `measured` flag
+separating reported counts from estimates). Enforcement is not built, and the shape it
+should take is decided:
+
+**Exhausting a budget stops and asks.** It does not silently degrade to a local model, and
+it does not fail the request. The user is notified and chooses: answer locally, or
+authorise further spend. The model is a permission prompt rather than a policy tightening.
+
+That distinction has an architectural cost worth stating before anyone starts. The
+orchestrator is a one-way async event generator — it emits `plan`, `trace`, `delta`,
+`result`, `error` and never awaits a reply. A mid-request decision point needs either a
+bidirectional channel or a terminal "budget exhausted, choose and resend" state that
+carries enough context to resume. **This is an interaction design, not a planner change**,
+and the planner-level version (quietly excluding cloud models once a budget is spent) is
+explicitly *not* what was asked for.
+
+Unmeasured spend is charged as a conservative estimate and labelled as an estimate.
+Treating an unreporting provider as having spent nothing would put the hole in a spend cap
+at exactly the backend that stays quiet.
+
+### Saved-model staleness
+
+A saved slot assignment can outlive the artifact it names. The availability half of that
+question is **already answered**: `LocalRuntimeStatus.roles[]` carries `configuredModel`
+and `available` per role, so the runtime already knows which configured models are missing.
+A second staleness check over the settings store would be a rival mechanism for one fact.
+
+What the settings store uniquely knows is **provenance** — whether a value was saved
+through the interface or came from the environment (`slotSource`). That decides whether the
+interface can offer a fix at all: a slot pinned by an environment variable will not change
+when a setting is saved, and offering that edit would leave the operator looking at a value
+the application is not using. Any surfacing of a missing model should read availability
+from the runtime and provenance from the store, never availability from both.
 
 ### Attachment pipeline
 

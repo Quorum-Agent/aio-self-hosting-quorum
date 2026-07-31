@@ -152,7 +152,7 @@ describe("MessageExecutionActivity", () => {
       />,
     );
 
-    expect(markup).toContain("Cloud model used");
+    expect(markup).toContain("Leaves this device");
     expect(markup).toContain("left this device");
     expect(markup).toContain("<details class=\"execution-activity\" open=\"\"");
   });

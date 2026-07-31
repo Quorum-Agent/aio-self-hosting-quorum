@@ -1,5 +1,6 @@
 import {
   WebSearchExecutionError,
+  leavesDevice,
   type RuntimeToolDescriptor,
   type WebSearchAttempt,
   type WebSearchProvider,
@@ -240,7 +241,14 @@ const PROVIDER_DEFINITIONS: ProviderDefinition[] = [
   {
     id: "searxng",
     label: "SearXNG",
-    description: "A user-controlled metasearch instance on this device.",
+    // "on this device" described where the instance LISTENS, not where the
+    // query goes — the same conflation that produced the offline-mode bug.
+    // SearXNG forwards to upstream engines, which is why the descriptor below
+    // is `location: "web"` with `contextMayLeaveDevice: true`. This sentence is
+    // read by privacy-motivated users choosing a provider, so it must state the
+    // egress rather than the hosting.
+    description:
+      "A metasearch instance you control. It still forwards every query to upstream engines.",
     requires: "base_url",
   },
 ];
@@ -543,9 +551,15 @@ function providerTool(
     id: `web-search:${id}`,
     label,
     capabilities: ["web"],
+    // Derived, never written by hand. This field and `location` are one fact
+    // read by two surfaces — enforcement reads the tier, disclosure reads this
+    // flag — and hand-writing the second is how they drift. A tool that
+    // terminates on the device gets `false` here automatically, which is what
+    // makes the UI's "Search stayed on this device" branch reachable at all
+    // rather than a promise with no mechanism behind it.
+    contextMayLeaveDevice: leavesDevice(location),
     location,
     available: true,
-    contextMayLeaveDevice: true,
   };
 }
 
@@ -970,7 +984,8 @@ export class ConfigurableWebSearchProvider implements WebSearchProvider {
       location,
       available:
         settings.enabled && this.#candidateIds(settings).length > 0,
-      contextMayLeaveDevice: true,
+      // Derived, as at the other descriptor site above.
+      contextMayLeaveDevice: leavesDevice(location),
     };
   }
 

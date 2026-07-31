@@ -135,6 +135,33 @@ export interface ModelInferenceSettings {
   maxOutputTokens?: number;
 }
 
+/**
+ * Token counts for one model call.
+ *
+ * `measured` is the load-bearing field. A provider that reports nothing is not
+ * a provider that spent nothing, and treating it as zero is how a spend cap
+ * develops a silent hole: the one backend that stays quiet becomes the one
+ * with no limit. When counts are unavailable these are conservative estimates
+ * from character length, and any surface that shows cost must say which it is
+ * looking at rather than presenting both as fact.
+ */
+export interface TokenUsage {
+  promptTokens: number;
+  completionTokens: number;
+  measured: boolean;
+}
+
+/*
+ * No estimator lives here. `estimateInputTokens` in
+ * `apps/api/src/openai-compatible-provider.ts` already does this job, and does
+ * it better than a second implementation would: it charges the greater of
+ * character length and UTF-8 byte length, so multi-byte text is not
+ * under-counted, and it is already covered by a test asserting an emoji costs
+ * more than an ASCII character. A draft of this file added a rival estimator
+ * with a laxer divisor — exactly the "one fact, two implementations" shape
+ * this repository keeps finding. Reuse that one.
+ */
+
 export interface ModelDescriptor {
   id: Id;
   label: string;

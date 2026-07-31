@@ -30,6 +30,14 @@ export interface CloudUsageView {
   selected: boolean;
   contacted: boolean;
   text: string;
+  /**
+   * The plan's actual tier, title-cased for display — "Network", "Remote",
+   * "Cloud". The route diagram used to hard-code "Cloud" for anything that
+   * left the device, so a model on the operator's own second machine rendered
+   * identically to a vendor API. That collapses the distinction the tier model
+   * exists to draw: `remote` and `cloud` differ in who controls the stack.
+   */
+  routeLabel: string;
 }
 
 export interface ModelAttemptView {
@@ -169,6 +177,9 @@ export function describeCloudUsage(
   const cloudAttempts =
     plan?.attempts?.filter((attempt) => leavesDevice(attempt.route)) ?? [];
   const selected = plan ? leavesDevice(plan.route) : false;
+  const routeLabel = plan
+    ? plan.route.charAt(0).toUpperCase() + plan.route.slice(1)
+    : "Off-device";
   const modelContacted = cloudAttempts.some(
     (attempt) => attempt.contextMayHaveBeenTransmitted,
   );
@@ -190,7 +201,7 @@ export function describeCloudUsage(
   const selectedLabel =
     models.find(
       (model) => model.id === (plan?.spokeModelId ?? plan?.modelId),
-    )?.label ?? "cloud model";
+    )?.label ?? "an off-device model";
   const webText = webContacted
     ? `Web search via ${plan?.webSearch?.provider}`
     : undefined;
@@ -208,6 +219,7 @@ export function describeCloudUsage(
   return {
     selected,
     contacted,
+    routeLabel,
     activity: selected || contacted,
     text: activityText
       ? activityText

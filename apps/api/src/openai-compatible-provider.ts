@@ -67,6 +67,13 @@ interface CompletionChunk {
     };
     finish_reason?: string | null;
   }>;
+  // Present only when `stream_options.include_usage` was requested, and then
+  // only on a final chunk that carries no choices. Servers that ignore the
+  // option simply never send it, which is why `TokenUsage.measured` exists.
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+  };
 }
 
 interface CompletionResponse {
@@ -86,6 +93,10 @@ interface OllamaStreamChunk {
   done?: boolean;
   done_reason?: string;
   error?: string;
+  // Ollama reports token counts natively on the final message. Reported
+  // counts, never estimated — see `TokenUsage`.
+  prompt_eval_count?: number;
+  eval_count?: number;
 }
 
 const DEFAULT_TIMEOUTS: ProviderTimeouts = {
@@ -357,16 +368,18 @@ function fitConversationToContext(
     : selected;
 }
 
-function parseCompletionFrame(frame: string): {
+export function parseCompletionFrame(frame: string): {
   contents: string[];
   terminal: boolean;
   truncated: boolean;
   activity: boolean;
+  usage?: { promptTokens: number; completionTokens: number };
 } {
   const contents: string[] = [];
   let terminal = false;
   let truncated = false;
   let activity = false;
+  let usage: { promptTokens: number; completionTokens: number } | undefined;
   for (const line of frame.split(/\r?\n/)) {
     if (!line.startsWith("data:")) continue;
     const data = line.slice(5).trim();
@@ -386,11 +399,23 @@ function parseCompletionFrame(frame: string): {
     ) ?? false;
     const content = payload.choices?.[0]?.delta?.content;
     if (content) contents.push(content);
+    // Read usage from whatever frame carries it, but do NOT relax the
+    // break-on-terminal below to go looking for it. Servers commonly send
+    // usage in a trailing chunk after `finish_reason`, and this transport
+    // deliberately rejects post-terminal records — a security property worth
+    // more than an exact token count. Missing it is handled: the caller falls
+    // back to an estimate and marks the result unmeasured.
+    if (payload.usage) {
+      usage = {
+        promptTokens: payload.usage.prompt_tokens ?? 0,
+        completionTokens: payload.usage.completion_tokens ?? 0,
+      };
+    }
     truncated ||= recordTruncated;
     terminal ||= recordTerminal;
     if (recordTerminal) break;
   }
-  return { contents, terminal, truncated, activity };
+  return { contents, terminal, truncated, activity, ...(usage ? { usage } : {}) };
 }
 
 // Schema-constrained output is only well-formed JSON once generation finishes,
@@ -972,6 +997,10 @@ export class OpenAICompatibleProvider implements ModelProvider {
             model: this.#modelName,
             messages: compatibleMessages,
             stream: true,
+            // Ask for token counts on the final chunk. Servers that do not
+            // implement it simply never send one, which is indistinguishable
+            // from a server that spent nothing — hence `TokenUsage.measured`.
+            stream_options: { include_usage: true },
             max_tokens: maxOutputTokens,
             // Constrain the answer's shape rather than asking for it in prose.
             // The native Ollama branch has always done this via `format`; this

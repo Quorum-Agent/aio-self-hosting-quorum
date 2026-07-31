@@ -1630,3 +1630,229 @@ loosening.
 Recorded because the second correction arrived after the first was already acted on. A
 reviewer who revises their own consequence is more useful than one who is right first
 time.
+
+---
+
+## 19. Hermes Agent — what it already does, and what Quorum still uniquely does (2026-07-31)
+
+Prompted by a question about adopting an existing agent host rather than finishing
+Quorum's own surface. Read against a local clone at **`4b60979`, dated 2026-07-31** —
+the version discipline matters here more than usual, because a five-week-old clone of the
+same repo sat at `7cd5eaa` and the project moved roughly 23,000 pull requests in between.
+
+### The method finding, which is the reason this section exists
+
+**Three claims derived from documentation were wrong, in the same direction, in a row.**
+Each was corrected only by reading source:
+
+| Claim from docs | What the code says |
+| --- | --- |
+| "No task-type-specific model routing" | `agent/auxiliary_client.py` is *"Shared auxiliary client router for side tasks"* with per-task model config (`auxiliary.vision.model`, `auxiliary.compression.model`) |
+| "Assumes one primary model plus tools" | `agent/image_routing.py` routes per turn on the active model's **capability metadata** |
+| "Model settings centralized in config rather than request-level routing" | True for the *main* model, but only confirmed after reading three files; the earlier greps were too broad to support it |
+
+The pattern matches the entry in §17 about llama.cpp #20345 and the rule in `CLAUDE.md`
+about executing against the pinned version. Documentation describes intent; the repository
+describes behaviour. **Cloning cost minutes and settled what three rounds of searching had
+gotten wrong.**
+
+### Disproved: capability metadata must be curated by hand
+
+§17 concluded that GGUF carries no required-feature list, that no vendor automates
+compatibility, and that LM Studio, Jan, and GPT4All all curate manually — therefore Quorum
+would need a hand-maintained list mapping slot to artifact.
+
+**That conclusion conflated two different questions, and only one of them survives.**
+
+- *Does this artifact load on the pinned runtime build?* — still hand-verified, still
+  unautomatable, still exactly what `gguf-compatibility-evaluation.ts` exists for. The §17
+  conclusion holds here without modification.
+- *What can this model do?* — **solved by an existing registry.** `agent/models_dev.py`
+  consumes `https://models.dev/api.json`, a community-maintained database of 4000+ models
+  across 109+ providers carrying context window, max output, cost per million tokens,
+  **capabilities (reasoning, tools, vision, PDF, audio)**, modalities, knowledge cutoff,
+  open-weights flag, family grouping, and deprecation status.
+
+Quorum hardcodes `capabilities: ["chat", "reasoning", "coding", "documents"]` per model in
+`apps/api/src/config.ts`. ADR 0002's slot model needs precisely the second kind of data,
+and it was assumed to require manual curation on the strength of a conclusion about the
+first kind.
+
+Hermes also probes rather than trusting: `query_ollama_supports_vision(model, base_url,
+api_key)` asks the runtime. Same discipline as the load gate, applied to capability rather
+than compatibility.
+
+### Confirmed after three attempts: no prompt-based main-model selection
+
+`agent.model` is assigned in exactly three places in `agent/agent_init.py`:
+
+- **572** — `agent.model = model`, a function parameter, set once at init from config.
+- **687** — `normalize_model_for_provider(...)`, normalization only.
+- **1236** — a fallback chain walking configured backup providers until one resolves a
+  client, setting `_fallback_activated`. **Availability fallback, not routing.**
+
+`agent/conversation_loop.py` reads `agent.model` directly. `model_tools.py` is misleadingly
+named — it is the tool registry ("tools available to the model"), not model selection.
+
+The model changes when the user types `/model`, or when a provider is unreachable. It does
+not change because of what was asked.
+
+### The architectural distinction that survives
+
+Hermes's vision path: if the main model reports `supports_vision`, attach the pixels. If
+not, route the image to a configured auxiliary that **describes it in text** and feed the
+description to the main model.
+
+- **Hermes augments.** One capable main model stays in charge; missing capabilities are
+  filled by helpers that hand it text.
+- **Quorum substitutes.** The best-fit specialist answers directly.
+
+The consequence is the one that matters for this product: **augmentation still requires the
+large generalist.** Auxiliaries make the main model more capable; they do not let it be
+smaller. Substitution is what makes "chosen spokes instead of a 30B MoE, at lower VRAM"
+achievable, and that goal is the reason Quorum exists.
+
+This also relocates the differentiator. It had been described as privacy and enforced
+egress. It is not — the operator's own framing is **capability ownership**, and the `remote`
+tier already encodes that ("a user who refuses vendor APIs on principle may still accept
+rented GPU"). Privacy falls out of local execution; it is not the thing being bought.
+
+### A structural trap, found before it was built
+
+An integration was proposed in which Quorum becomes a routing service that a host agent
+calls per request. It does not work, for a reason that generalises:
+
+**A router must sit above everything it routes between.** Positioned as a provider backend,
+Quorum sees only local models, so the local-versus-cloud decision is made above it and
+outside its policy model. It stops being the router and becomes one of the routes — which
+is Ollama with better model selection. There is also no answer to "why would I put my API
+key in Quorum when the host already has it," because in that position there is no
+incremental value to justify moving the credential.
+
+Recorded because the proposal was plausible, was made in this session, and was killed by a
+single question rather than by testing. Any future "Quorum as a backend" design meets the
+same objection.
+
+### A third source, and a lesson about which fields to trust
+
+`local-ai-zone.github.io` publishes `gguf_models.json` (12 MB, ~16,500 rows, updated
+daily), indexed **per quantisation file** rather than per repo or per model — a granularity
+neither HF's API nor models.dev provides, and the one an operator actually downloads.
+
+It was evaluated field by field rather than adopted, and the split is stark.
+
+**Verified true:** every `directDownloadLink` in an 18-row deterministic sample resolved —
+**18/18** — as a Hugging Face `/resolve/` URL. As a download index it works.
+
+**Verified false: `fileSize` was wrong on 18 of 18.** Not marginally — Mxbai Embed Large
+V1 F16 is listed at 15.78 GB against an actual 0.67 GB (23x over; 0.67 GB is correct for a
+335M model at F16), while Xortron Xprt Q5_K_M is listed at 5.43 GB against an actual
+24.73 GB (4.5x under). The error runs in both directions, so it is not a fixable offset
+such as a repo total.
+
+That falsifies a verdict reached minutes earlier in the same session. `fileSize` had been
+classed as *observed and therefore reliable*, in contrast to the derived fields. It is
+neither. And `minRamGB` — already shown to be a pure power-of-two step function of
+`fileSize`, carrying no information beyond it — is therefore a step function of a **wrong**
+input. Ten rows also carry `fileSize` of exactly 0 and still receive `minRamGB = 8`, so the
+derived field launders missing data into a confident number.
+
+**Also unusable:** `modelCapability` has four values and cannot resolve the slots ADR 0002
+needs — of 81 rows whose names contain "embed", 61 are `text`, 12 `vision` and 8 `code`;
+of 77 containing "ocr", 42 are `vision` and 35 `text`. Embedding and reranking are
+indistinguishable from chat. `modelType` is `"Unknown"` for 8549 of 16519 rows (52%).
+
+**Use it as a URL index and take every number from your own `HEAD` request** — which is
+how the discrepancy was found, and which returns the true size for free.
+
+The pattern across all three sources is consistent enough to state as a rule: **what these
+registries observe is reliable; what they infer is noise wearing a number.** The failure
+here was applying that rule by guessing which fields were observed instead of checking.
+
+Which makes the authority split:
+
+| Fact | Authoritative source |
+| --- | --- |
+| What exists as GGUF | HF `?library=gguf` |
+| Which quantisations exist, and their URLs | local-ai-zone `gguf_models.json` |
+| **Artifact size** | **a `HEAD` on the resolve URL** — not any registry |
+| Capabilities | models.dev, via the `base_model` chain |
+| Context window | the GGUF file itself |
+| Loads on the pinned build | the load gate |
+| Attributes | nothing |
+
+### Not verified
+
+### The remaining fields, measured — and the like/download ratio is unsafe
+
+Checked against HF's API over a 15-row deterministic sample. Three distinct failure modes,
+which is more useful than a pass rate:
+
+| Field | Result | What it is |
+| --- | --- | --- |
+| `quantFormat` | **15/15** | Reliable, and the reason is instructive: it is read off the filename, so it is transcribed rather than inferred |
+| `license` | **0/15** | Every row `"Not specified"` while HF carries a real licence (apache-2.0, llama3.1). Not wrong — **missing, presented as a value**, the same shape as `minRamGB: 8` on a zero-byte file |
+| `downloadCount` | **0/15** | Always *lower* than HF's 30-day figure — 3.78M vs 5.11M, 3430 vs 9189, 1198 vs 5734. A stale snapshot |
+| `likeCount` | **12/15** | Mismatches off by 1 to 8. Near-current |
+
+**This invalidates the like-to-download ratio as computed from this source.** The numerator
+is near-current and the denominator is substantially stale, so the ratio is biased high —
+and not uniformly. The gap is widest on fast-growing models (0.21 and 0.37 of HF's figure)
+and narrowest on settled ones (0.85, 0.74), so the instrument **over-rates exactly the new,
+fast-moving artifacts it was built to discriminate against**. That is worse than noise; it
+is biased in the direction that defeats its purpose. HF's API returns `likes` and
+`downloads` on one call — source both there.
+
+A flaw in the measurement itself, recorded because it would otherwise read as a result: the
+comparison against `downloadsAllTime` was vacuous, because that endpoint returned
+`undefined` for the field. The staleness finding rests on the 30-day figures alone.
+
+### Not verified
+
+- Whether `downloadCount` matches HF's all-time downloads from an endpoint that actually
+  returns them. The direction of the 30-day gap is consistent, but "stale snapshot" remains
+  an inference rather than a measurement.
+- `agent/agent_init.py` (2743 lines) and `model_tools.py` (1448) were read at their model
+  assignment and public-surface level, not in full.
+### Measured: the HF-to-models.dev join (same day)
+
+The concern above was tested rather than left open. models.dev carries **5910 models across
+176 providers, 2277 flagged `open_weights`**, with per-model `modalities.input`/`output`,
+`reasoning`, `tool_call`, `attachment`, `limit.context` and `cost` — `modalities` being the
+same IO-signature axis ADR 0002 defines slots by.
+
+There is **no Hugging Face repo reference anywhere in the payload** (no `repo_id`, no
+`hf_repo`, no `/resolve/`), and its own `huggingface` provider holds only 55 models. So the
+join must be constructed.
+
+**Naive normalised join: 13 of the top 30 GGUF text-generation repos matched.** The 17
+misses are not a normalisation problem — they are community finetunes and small-lab models
+that models.dev structurally does not carry, because it tracks what providers *serve*.
+
+**HF's `base_model` closes it: 8 of 8 sampled misses declare one.** `prism-ml/Bonsai-27B`
+declares `Qwen/Qwen3.6-27B`, which nothing in its name suggests. But it is a **chain, not a
+pointer** — `MiniCPM5-1B-Claude-Opus-Fable5-Thinking-GGUF` declares the same org's
+unquantised copy, itself a finetune, so resolution must walk transitively with a depth
+limit and stop on a models.dev hit.
+
+Which splits authority four ways:
+
+| Fact | Authoritative source |
+| --- | --- |
+| What exists as GGUF | HF `?library=gguf` |
+| Capabilities | models.dev, via the `base_model` chain |
+| Context window | **the GGUF file** — a finetune can rope-scale, so the artifact is the truth, not the registry row |
+| Loads on the pinned build | the load gate — §17 stands unchanged |
+| **Attributes** (uncensored, prose style) | **nothing** |
+
+That last row is the standing limit. ADR 0002's attribute axis gets **zero** registry
+coverage, because attributes live almost entirely in finetunes and no registry tracks
+those. Anything built here must treat attributes as operator-supplied, not discoverable.
+
+### Not verified
+
+- `agent/agent_init.py` (2743 lines) and `model_tools.py` (1448) were read at their model
+  assignment and public-surface level, not in full.
+- The `base_model` chain was sampled at 8 repos, not measured across the corpus, and no
+  depth distribution was collected. The chain-walk is therefore known to be *necessary*
+  but its cost is unknown.

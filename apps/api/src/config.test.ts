@@ -1,8 +1,11 @@
-import { resolve } from "node:path";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
 import { loadConfig, PROJECT_ROOT } from "./config.js";
+import { settingsFilePath, writeSlotSettings } from "./slot-settings.js";
 
 const originalDataDirectory = process.env["QUORUM_DATA_DIR"];
 const originalHost = process.env["HOST"];
@@ -347,5 +350,93 @@ describe("loadConfig", () => {
     expect(() => loadConfig()).toThrow(
       "QUORUM_WEB_SEARCH_PROVIDER must be one of",
     );
+  });
+});
+
+describe("loadConfig with saved slot settings", () => {
+  const directories: string[] = [];
+
+  function dataDirectoryWithSettings(
+    slots: Parameters<typeof writeSlotSettings>[1]["slots"],
+  ): string {
+    const directory = mkdtempSync(join(tmpdir(), "quorum-config-slots-"));
+    directories.push(directory);
+    writeSlotSettings(directory, { version: 1, slots });
+    process.env["QUORUM_DATA_DIR"] = directory;
+    return directory;
+  }
+
+  afterEach(() => {
+    while (directories.length > 0) {
+      const directory = directories.pop();
+      if (directory) rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("uses a saved assignment when the environment is silent", () => {
+    delete process.env["QUORUM_LOCAL_MODEL"];
+    delete process.env["QUORUM_LOCAL_CODING_MODEL"];
+    dataDirectoryWithSettings({
+      general: { model: "saved-general:9b" },
+      coding: { model: "saved-coding:7b" },
+    });
+
+    const models = loadConfig().local.models;
+
+    expect(models.find((model) => model.role === "general")?.name).toBe(
+      "saved-general:9b",
+    );
+    // The coding role only exists when a model is configured for it, so this
+    // also proves a saved assignment can bring a role into existence rather
+    // than only rename one the environment already created.
+    expect(models.find((model) => model.role === "coding")?.name).toBe(
+      "saved-coding:7b",
+    );
+  });
+
+  it("lets the environment win over a saved assignment", () => {
+    // The invariant. Saved settings are a fallback, never an override:
+    // reversing the precedence would silently change the model in use for
+    // every deployment that configures one by environment.
+    const environmentModel = "environment-general:9b";
+    const savedModel = "saved-general:9b";
+    const builtInDefault = "qwen3.5:9b";
+    // The fixture must be able to reach the wrong answer. If precedence
+    // flipped, this test sees `savedModel`; if both were ignored, it sees the
+    // built-in default. All three are distinct, so each outcome is
+    // distinguishable rather than coincidentally equal.
+    expect(new Set([environmentModel, savedModel, builtInDefault]).size).toBe(3);
+
+    dataDirectoryWithSettings({ general: { model: savedModel } });
+    process.env["QUORUM_LOCAL_MODEL"] = environmentModel;
+
+    expect(loadConfig().local.models[0]?.name).toBe(environmentModel);
+  });
+
+  it("lets the environment win for a saved context window", () => {
+    dataDirectoryWithSettings({
+      general: { model: "saved-general:9b", contextWindow: 4_096 },
+    });
+    process.env["QUORUM_LOCAL_CONTEXT_WINDOW"] = "12288";
+
+    expect(loadConfig().local.models[0]?.contextWindow).toBe(12_288);
+  });
+
+  it("uses a saved context window when the environment is silent", () => {
+    delete process.env["QUORUM_LOCAL_CONTEXT_WINDOW"];
+    dataDirectoryWithSettings({
+      general: { model: "saved-general:9b", contextWindow: 4_096 },
+    });
+
+    expect(loadConfig().local.models[0]?.contextWindow).toBe(4_096);
+  });
+
+  it("starts normally when the settings file is malformed", () => {
+    delete process.env["QUORUM_LOCAL_MODEL"];
+    const directory = dataDirectoryWithSettings({});
+    writeFileSync(settingsFilePath(directory), "{ truncated");
+
+    expect(() => loadConfig()).not.toThrow();
+    expect(loadConfig().local.models[0]?.name).toBe("qwen3.5:9b");
   });
 });

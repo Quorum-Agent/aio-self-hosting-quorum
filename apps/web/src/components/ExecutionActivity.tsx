@@ -197,7 +197,11 @@ export function ExecutionActivity({
 
         {plan?.cloudDisclosure && (
           <div className="activity-disclosure" role="note">
-            <strong>Cloud model used</strong>
+            {/* Not "Cloud model used": this disclosure is attached at PLAN
+                time from `leavesDevice(route)`, so it fires for the network and
+                remote tiers too, and it can render beside "Model did not run".
+                Past tense and a vendor-specific noun were both wrong. */}
+            <strong>Leaves this device</strong>
             <span>{plan.cloudDisclosure}</span>
           </div>
         )}
@@ -216,7 +220,7 @@ export function ExecutionActivity({
           <div className="activity-disclosure" role="note">
             <strong>Web-grounded history kept local</strong>
             <span>
-              Prior retrieved material was not forwarded to a cloud model.
+              Prior retrieved material was not forwarded off this device.
             </span>
           </div>
         )}

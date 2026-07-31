@@ -271,6 +271,10 @@ describe("runtime view", () => {
       activity: true,
       selected: false,
       contacted: true,
+      // The plan's own tier, not "Cloud". A local fallback after failed cloud
+      // contact IS a local route; the diagram must say so while the attempt
+      // ledger still records that the earlier contact happened.
+      routeLabel: "Local",
       text: "Contacted Cloud test; final route local",
     });
   });
@@ -306,6 +310,7 @@ describe("runtime view", () => {
       activity: true,
       selected: false,
       contacted: true,
+      routeLabel: "Local",
       text: "Web search via SearXNG; planned model route local",
     });
   });
