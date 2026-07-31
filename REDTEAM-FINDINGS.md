@@ -623,9 +623,39 @@ table: *a mutation audit is only as complete as the inventory it starts from, an
 was written by the same people who wrote the code.* The next pass should derive the list from the
 controls that exist, not from the ones already documented.
 
-One consequence is immediate and cheap: I-13's phrasing should be reconciled with the `Origin`/
-`Host` guard, because as written the two claims contradict each other about whether the loopback
-API checks authorization.
+### Reconciling I-13 with the `Origin`/`Host` guard
+
+I-13 says the loopback API "is not an authorization boundary." `server.ts:120` performs an
+authorization-shaped check there. Both are correct, and the apparent contradiction dissolves once
+the two threat models are separated — which the current wording does not do.
+
+```ts
+app.addHook("onRequest", async (request, reply) => {
+  if (!request.url.startsWith("/api/")) return;
+  if (!isLoopbackHostname(request.hostname)) {         // anti-DNS-rebinding
+    return reply.code(403).send({ message: "Untrusted request host." });
+  }
+  const origin = request.headers.origin;
+  if (!origin) return;                                  // ← the whole answer
+  …                                                     // anti-cross-origin
+});
+```
+
+The guard defends against **browser-originated** attack: the hostname check blocks DNS rebinding,
+and the `Origin` check blocks a malicious page's cross-origin `fetch`. Browsers always attach
+`Origin` on cross-origin requests, so both apply.
+
+**`if (!origin) return;` is why I-13 still holds.** A local non-browser process sends no `Origin`
+header and passes straight through, and any local process can present `Host: 127.0.0.1`. So a
+script running on the box faces no check at all — which is exactly what the desktop sidecar's
+per-launch secret is for.
+
+The fix is to the sentence, not the code: scope the guard as an **anti-rebinding / anti-cross-origin
+control against browser requests**, and keep I-13's claim scoped as it already is — *not* an
+authentication boundary against other **local non-browser processes**. Stating the first alongside
+the second removes the contradiction without weakening either.
+
+Verified by reading the handler, not from the summary that proposed it.
 
 ---
 

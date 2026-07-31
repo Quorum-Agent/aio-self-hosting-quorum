@@ -49,6 +49,16 @@ const localModel: ModelDescriptor = {
 // for no specialties and no freshness — accidentally sufficient, which is the
 // same defect it was written to repair.
 //
+// Being unreachable in production is the point, not a weakness. `config.ts`
+// caps cloud `qualityRating` at `Math.min(100, …)` and rates the local general
+// model 75, so a real cloud model (≤100) can never outscore a real local one
+// (175) on the preferLocal sort — the arithmetic alone already blocks it. A
+// fixture drawn from production values would therefore pass whether or not the
+// policy filter existed, which is precisely how the original test failed. The
+// rating here is deliberately unreachable so that the wrong answer is
+// reachable *by score*, leaving the policy filter as the only thing that can
+// prevent it. That isolates the filter instead of leaning on the arithmetic.
+//
 // 300 clears this fixture's ceiling: 100 (local) + 60 (`localModel`'s rating)
 // + 108 (all six non-chat entries in the `Capability` union matched as
 // SPECIALTIES at 18 each — `matchedSpecialties` reads `model.specialties`, not
