@@ -1016,6 +1016,19 @@ the identical comparison under the harness's own rule:
 **Under the harness's actual scoring rule, with the prompt bug fixed, the two models are tied.**
 The reviewer's finding survives its own refutation.
 
+And the prompt is not the variable. Pooling both prompts under harness scoring gives a gap of
+**+0.019, CI [+0.001, +0.037]** across 478 paired cases — a small real difference sitting almost
+exactly on the resolution limit of a 240-case run. That is why the three independent n=240
+measurements taken during this review (the reviewer's at v0: +0.011; this one at v0: +0.026; this
+one at v8: +0.013) disagree about significance while agreeing about magnitude: every one of them is
+consistent with a true gap near 0.02, and they fall on either side of the line by sampling alone.
+
+**It is a statistical-power story, not a prompt story.** Attributing the disagreement to the prompt
+fix — as the withdrawn reversal did — assigns to a variable that does not move it. The practical
+consequence is that F1 cannot decide between these two models at this corpus size, and the choice
+therefore rests on the reliability gap (2 violations against 7) and the VRAM budget, both of which
+are measured without ambiguity.
+
 The error was not neutral. `qwen3:4b` commits 3.5× more violations than `gemma4:e4b` (7 against 2),
 so a rule that pays partial credit for violations transfers value to `qwen3:4b` in proportion to
 the thing it is worse at. The divergence flattered the incumbent, and the incumbent was the
@@ -1091,12 +1104,22 @@ examples, different subjects, rewritten instructions, JSON-formatted examples, a
 demonstration — `qwen3:4b` won every one, and its **worst** prompt beat every other model's
 **best** prompt on identical cases.
 
-The twist: **the committed prompt was the worst prompt for every model tested, including the
-winner.** A from-scratch rewrite scored 0.980 against 0.948. The iteration that produced it tuned
-toward exact-match style compliance, not F1. The file comment claiming instruction-only prompting
-made every model return the whole message did not survive the corpus — zero-shot beats the two
-examples for every model tested. That observation came from eleven hand-written cases and did not
-generalise, and the comment has been corrected in place.
+A stronger claim was made here and then withdrawn: that the committed prompt was the **worst**
+prompt for every model tested. That rested on a sweep in which every error, in every model, fell in
+the `v0` condition — because `v0` ran first for each model, inside a window when three agents were
+contending for the GPU. Errors were scored as zero, so the contamination read as a property of the
+prompt. Excluding them, the committed prompt is **mid-pack** for `qwen3:4b` (0.964; worst is 0.952,
+best 0.980) and second-worst for `gemma4:e2b`. It remains worst for `qwen3.5:2b`, where the quote
+bug dominates.
+
+What survives: `qwen3:4b` leads at all five variants, and outside zero-shot the gap over
+`gemma4:e4b` is **flat at 0.017–0.023** — consistent with the pooled 0.019 above, and further
+evidence that prompt choice is not what separates these two.
+
+The file comment claiming instruction-only prompting made every model return the whole message did
+not survive the corpus — zero-shot beats the two examples for every model tested. That observation
+came from eleven hand-written cases and did not generalise, and the comment has been corrected in
+place.
 
 ### A fix that was reverted
 
@@ -1108,6 +1131,32 @@ and the per-wrapper spread is identical to two decimal places under both schemes
 
 It is recorded rather than deleted quietly because it is the same error the harness was making: a
 plausible mechanism plus a real underlying phenomenon is not evidence that one causes the other.
+
+### The standing hazard this review kept reproducing
+
+Four claims in this section were made, published, and withdrawn during a single review pass, by
+both reviewers, on the same subject matter:
+
+| Claim | Withdrawn because |
+| --- | --- |
+| `gemma4:e4b` needs the JSON schema (0.941 → 0.702) | ablation never instructed bare output |
+| Wrapper assignment confounds position with query type | `index % 9` already stratifies |
+| The format fix asymmetrically benefits the mis-formatting model | neither model was mis-formatting |
+| The committed prompt is worst for every model | every error landed in that one condition |
+
+All four share a shape, and it is not carelessness. In each case a mechanism was proposed that
+*would* explain an observed effect, and that sufficiency was mistaken for evidence that it *did*.
+Two of the four were fitted to data that had a known defect the author had already identified
+elsewhere and simply not checked for locally. In one case the reviewer had flagged the exact bug to
+the other party and then failed to apply it to their own numbers.
+
+The discipline that would have caught all four: **before explaining an effect, confirm the effect
+is real in data audited for the defects you already know about.** Knowing a failure mode exists is
+not the same as having checked for it.
+
+This belongs in the permanent record because the review was, by construction, the careful pass —
+adversarial, externally staffed, explicitly hunting for this class of error. It produced four
+instances anyway. The rate on unreviewed work should be assumed higher.
 
 ### Deliberately unresolved
 
