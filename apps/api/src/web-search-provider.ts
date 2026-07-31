@@ -240,7 +240,14 @@ const PROVIDER_DEFINITIONS: ProviderDefinition[] = [
   {
     id: "searxng",
     label: "SearXNG",
-    description: "A user-controlled metasearch instance on this device.",
+    // "on this device" described where the instance LISTENS, not where the
+    // query goes — the same conflation that produced the offline-mode bug.
+    // SearXNG forwards to upstream engines, which is why the descriptor below
+    // is `location: "web"` with `contextMayLeaveDevice: true`. This sentence is
+    // read by privacy-motivated users choosing a provider, so it must state the
+    // egress rather than the hosting.
+    description:
+      "A metasearch instance you control. It still forwards every query to upstream engines.",
     requires: "base_url",
   },
 ];

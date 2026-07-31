@@ -288,7 +288,12 @@ export default function App() {
   const networkNotice = !activePolicy
     ? "Checking network policy"
     : activePolicy.toolCeiling === "none"
-      ? `${activePolicy.label} keeps network access disabled`
+      ? // This branch keys on `toolCeiling` alone, so it may say only what is
+        // true of TOOLS. It previously claimed the policy "keeps network access
+        // disabled", which overstated it in both directions: `private` still
+        // runs inference over loopback, and neither ceiling governs application
+        // maintenance. It also contradicted the policy's own description.
+        `${activePolicy.label} does not use web search`
       : runtime?.webSearch?.available
         ? `${activePolicy.label} may search the web automatically when current sources are needed`
         : "Web search is not configured";

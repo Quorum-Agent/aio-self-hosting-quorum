@@ -163,7 +163,10 @@ export class RoutePlanner {
     }
     if (candidates.length === 0) {
       throw new Error(
-        `No available model satisfies the ${request.policy} policy and required capabilities.`,
+        // `policy.label`, not `request.policy` — the id leaks "cost_controlled"
+        // into a user-facing sentence where every other message here uses the
+        // label ("Best quality").
+        `No available model satisfies the ${policy.label} policy and required capabilities.`,
       );
     }
 

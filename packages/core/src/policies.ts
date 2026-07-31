@@ -42,7 +42,11 @@ export const POLICIES: Record<PolicyMode, PolicyDefinition> = {
   private: {
     id: "private",
     label: "Private",
-    description: "Keep inference and tools on this machine.",
+    // Not "keep tools on this machine" — `toolCeiling: "none"` means no tool
+    // runs at all, and no tool can be `location: "local"` today anyway (see the
+    // note above). Other shipped copy already said "Private and Offline
+    // policies never search", which the old wording contradicted.
+    description: "Keep inference on this machine and run no tools.",
     inferenceCeiling: "local",
     toolCeiling: "none",
     preferLocal: true,
