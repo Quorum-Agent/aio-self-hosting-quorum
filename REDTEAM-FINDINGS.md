@@ -1737,7 +1737,45 @@ same objection.
 
 - `agent/agent_init.py` (2743 lines) and `model_tools.py` (1448) were read at their model
   assignment and public-surface level, not in full.
-- Whether models.dev's capability flags are accurate for **local GGUF quantisations**
-  specifically is untested. The registry is organised around hosted providers, and a
-  quantised local artifact may not inherit its parent model's row. This must be measured
-  before Quorum depends on it, and it is exactly the shape of claim §17 was written about.
+### Measured: the HF-to-models.dev join (same day)
+
+The concern above was tested rather than left open. models.dev carries **5910 models across
+176 providers, 2277 flagged `open_weights`**, with per-model `modalities.input`/`output`,
+`reasoning`, `tool_call`, `attachment`, `limit.context` and `cost` — `modalities` being the
+same IO-signature axis ADR 0002 defines slots by.
+
+There is **no Hugging Face repo reference anywhere in the payload** (no `repo_id`, no
+`hf_repo`, no `/resolve/`), and its own `huggingface` provider holds only 55 models. So the
+join must be constructed.
+
+**Naive normalised join: 13 of the top 30 GGUF text-generation repos matched.** The 17
+misses are not a normalisation problem — they are community finetunes and small-lab models
+that models.dev structurally does not carry, because it tracks what providers *serve*.
+
+**HF's `base_model` closes it: 8 of 8 sampled misses declare one.** `prism-ml/Bonsai-27B`
+declares `Qwen/Qwen3.6-27B`, which nothing in its name suggests. But it is a **chain, not a
+pointer** — `MiniCPM5-1B-Claude-Opus-Fable5-Thinking-GGUF` declares the same org's
+unquantised copy, itself a finetune, so resolution must walk transitively with a depth
+limit and stop on a models.dev hit.
+
+Which splits authority four ways:
+
+| Fact | Authoritative source |
+| --- | --- |
+| What exists as GGUF | HF `?library=gguf` |
+| Capabilities | models.dev, via the `base_model` chain |
+| Context window | **the GGUF file** — a finetune can rope-scale, so the artifact is the truth, not the registry row |
+| Loads on the pinned build | the load gate — §17 stands unchanged |
+| **Attributes** (uncensored, prose style) | **nothing** |
+
+That last row is the standing limit. ADR 0002's attribute axis gets **zero** registry
+coverage, because attributes live almost entirely in finetunes and no registry tracks
+those. Anything built here must treat attributes as operator-supplied, not discoverable.
+
+### Not verified
+
+- `agent/agent_init.py` (2743 lines) and `model_tools.py` (1448) were read at their model
+  assignment and public-surface level, not in full.
+- The `base_model` chain was sampled at 8 repos, not measured across the corpus, and no
+  depth distribution was collected. The chain-walk is therefore known to be *necessary*
+  but its cost is unknown.
