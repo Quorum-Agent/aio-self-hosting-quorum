@@ -20,7 +20,85 @@ export type PolicyMode =
 
 export type ResponseVerbosity = "concise" | "standard" | "detailed";
 
-export type ExecutionLocation = "device" | "local" | "cloud";
+/**
+ * Where execution happens, ordered by how far the conversation travels.
+ *
+ * `local` means "does not leave your device" — loopback only. The union was
+ * previously `device | local | cloud`, which could not express a peer on your
+ * own network or a server you rent, yet every privacy guarantee keys off it.
+ * The gap was masked because loopback is enforced elsewhere, so the
+ * enforcement was doing work the type should do.
+ *
+ * `remote` and `cloud` differ in *who controls the stack*, not in network
+ * exposure: a self-hosted llama.cpp on rented hardware runs your weights with
+ * no retention policy, while a vendor API does not. Someone who refuses vendor
+ * APIs on principle may still accept rented GPU, and the old union forced
+ * those into one bucket.
+ *
+ * The order is meaningful. `EXECUTION_LOCATIONS` below is the ordering, and
+ * policies express what they permit as a ceiling within it.
+ */
+export type ExecutionLocation =
+  | "device"
+  | "local"
+  | "network"
+  | "remote"
+  | "cloud";
+
+/** Ordered nearest-to-furthest. Index is the tier; compare, do not equate. */
+export const EXECUTION_LOCATIONS = [
+  "device",
+  "local",
+  "network",
+  "remote",
+  "cloud",
+] as const satisfies readonly ExecutionLocation[];
+
+/** How far a location is from the device. Higher travels further. */
+export function locationTier(location: ExecutionLocation): number {
+  return EXECUTION_LOCATIONS.indexOf(location);
+}
+
+/**
+ * Whether execution at this location puts conversation content off the device.
+ *
+ * The single source of truth for that question. It was previously written
+ * inline as `location === "cloud"` at five independent sites — four in the
+ * orchestrator and one in the web view — each a separate chance to be wrong,
+ * and each silently answering "no" for any tier added later.
+ */
+export function leavesDevice(location: ExecutionLocation): boolean {
+  return locationTier(location) > locationTier("local");
+}
+
+/**
+ * How far a model actually reaches, which is not always what it declares.
+ *
+ * `ModelDescriptor.location` excludes `"device"`, so an in-process model calls
+ * itself `local` even though it never opens a socket — it runs inside this
+ * process. Treating transport as authoritative here is what lets `offline`
+ * express itself as a ceiling of `device` and admit exactly the in-process
+ * scaffold, rather than needing the planner to special-case the policy by name
+ * and then check transport separately.
+ */
+export function modelReach(model: {
+  location: Exclude<ExecutionLocation, "device">;
+  transport: "in_process" | "loopback" | "remote";
+}): ExecutionLocation {
+  // `in_process` only downgrades a model that ALSO declares itself local.
+  //
+  // The two fields can disagree, and the first version of this trusted
+  // transport unconditionally. A descriptor claiming `location: "cloud"` with
+  // `transport: "in_process"` then reported tier `device` and passed every
+  // ceiling — verified: it was selected under both `private` and `offline`,
+  // which the previous boolean check refused. Where the fields contradict each
+  // other the safe reading is the further of the two, so this can only ever
+  // return the declared location or something nearer, and only when the
+  // declaration agrees with it.
+  return model.transport === "in_process" && model.location === "local"
+    ? "device"
+    : model.location;
+}
 
 export type Capability =
   | "chat"
@@ -82,8 +160,25 @@ export interface PolicyDefinition {
   id: PolicyMode;
   label: string;
   description: string;
-  allowNetwork: boolean;
-  allowCloudModels: boolean;
+  /**
+   * The furthest tier inference may travel.
+   *
+   * Replaces `allowCloudModels`. A ceiling rather than a flag because the
+   * question is "how far", and a boolean could only answer it while there were
+   * exactly two answers. It also turns `offline` from a policy special-cased
+   * **by name** in the planner into a policy that simply declares `device`.
+   */
+  inferenceCeiling: ExecutionLocation;
+  /**
+   * The furthest tier a tool (today: web search) may travel, or `"none"`.
+   *
+   * Replaces `allowNetwork`. This is a *separate* axis from inference — the
+   * old booleans happened to agree in all five policies, but they answer
+   * different questions, and collapsing them into one ceiling would tie a
+   * search engine's reachability to a model's.
+   */
+  toolCeiling: ExecutionLocation | "none";
+  /** A sort preference, not a permission. Unchanged. */
   preferLocal: boolean;
   cloudBudgetUsd?: number;
 }
@@ -180,7 +275,8 @@ export interface ExecutionAttempt {
   // Which pipeline stage ran, when more than one model answers. Absent under
   // route, where a model change can only mean a fallback.
   stage?: "draft" | "synthesis";
-  route: "local" | "cloud";
+  /** Where this attempt actually ran. */
+  route: Exclude<ExecutionLocation, "device">;
   status: "completed" | "failed";
   contextMayHaveBeenTransmitted: boolean;
   detail?: string;
@@ -192,7 +288,16 @@ export interface TaskPlan {
   policy: PolicyMode;
   verbosity: ResponseVerbosity;
   analysis: RequestAnalysis;
-  route: "local" | "cloud";
+  /**
+   * The furthest tier any step of this plan reaches — a maximum, not the
+   * selected model's location.
+   *
+   * It was the spoke's location, which is why a cloud hub behind a local spoke
+   * would have reported `local` and emitted no disclosure. Deriving it from
+   * every step means hub, spoke and tool are all covered by one rule instead
+   * of each needing its own guard.
+   */
+  route: Exclude<ExecutionLocation, "device">;
   // The model whose words reach the user. Under relay that is the hub, and
   // spokeModelId names the model that drafted for it.
   modelId: Id;

@@ -195,3 +195,111 @@ describe("offline refuses every endpoint that is not in-process", () => {
     );
   });
 });
+
+// The location model grew from `device | local | cloud` to five ordered tiers.
+// Every assertion above tests the two endpoints of that range; these test the
+// middle, which is where a binary `=== "cloud"` check silently answers "no".
+describe("the tiers between local and cloud are not treated as local", () => {
+  const lanPeer: ModelDescriptor = {
+    id: "network:peer",
+    label: "LAN peer",
+    provider: "test",
+    location: "network",
+    transport: "remote",
+    capabilities: ["chat", "reasoning", "coding", "documents"],
+    contextWindow: 128_000,
+    qualityRating: 300,
+    available: true,
+  };
+  const rentedBox: ModelDescriptor = {
+    ...lanPeer,
+    id: "remote:rented",
+    label: "Rented GPU",
+    location: "remote",
+  };
+
+  it.each<[string, ModelDescriptor]>([
+    ["network", lanPeer],
+    ["remote", rentedBox],
+  ])("private refuses a %s model however strong it is", (_tier, model) => {
+    // Rated 300 so it wins every sort. Only the ceiling can refuse it, which
+    // is the same trap the original private-mode test fell into by using a
+    // model that lost on arithmetic.
+    const plan = planFor("private", [localModel, model, scaffold]);
+
+    expect(plan.modelId).not.toBe(model.id);
+    expect(plan.steps.every((step) => step.location === "device" || step.location === "local")).toBe(true);
+  });
+
+  it.each<[string, ModelDescriptor]>([
+    ["network", lanPeer],
+    ["remote", rentedBox],
+  ])("discloses that context left the device for a %s model", (_tier, model) => {
+    // The failure this pins: disclosure used to be attached only when
+    // `route === "cloud"`, so a peer on your own LAN — which is emphatically
+    // not your device — produced no disclosure at all.
+    const plan = planFor("quality", [localModel, model]);
+
+    expect(plan.modelId).toBe(model.id);
+    expect(plan.route).toBe(model.location);
+    expect(plan.cloudDisclosure).toBeDefined();
+  });
+
+  it("refuses both tiers in offline mode", () => {
+    expect(() => planFor("offline", [lanPeer, rentedBox])).toThrow(
+      /No available model satisfies/u,
+    );
+  });
+
+  it("keeps sensitive content on the device rather than sending it to a peer", () => {
+    // A data-sensitivity floor, not a policy ceiling: quality permits egress
+    // to cloud, and sensitive content still must not reach even the nearest
+    // off-device tier.
+    const sensitive = new RoutePlanner().plan(
+      new RequestCompiler().compile(
+        request("quality", "Summarize this confidential document"),
+      ),
+      [localModel, lanPeer],
+    );
+
+    expect(sensitive.modelId).toBe(localModel.id);
+    expect(sensitive.cloudDisclosure).toBeUndefined();
+  });
+});
+
+describe("a model cannot claim a nearer tier than its location", () => {
+  // Found by probing, not by review. `modelReach` treats an in-process model
+  // as tier `device` — that is how `offline` stopped being special-cased by
+  // name. The first version trusted `transport` unconditionally, so a
+  // descriptor claiming cloud while claiming in_process reported `device`,
+  // passed every ceiling, and was selected under BOTH private and offline.
+  // The previous boolean check refused it, so that was a widening.
+  const contradictory: ModelDescriptor = {
+    id: "cloud:contradictory",
+    label: "Contradictory",
+    provider: "test",
+    location: "cloud",
+    transport: "in_process",
+    capabilities: ["chat", "reasoning", "coding", "documents"],
+    contextWindow: 8_192,
+    // High enough that only a refusal can keep it out.
+    qualityRating: 999,
+    available: true,
+  };
+
+  it.each<PolicyMode>(["private", "offline"])(
+    "%s refuses a cloud model that declares an in-process transport",
+    (policy) => {
+      expect(() => planFor(policy, [contradictory])).toThrow(
+        /No available model satisfies/u,
+      );
+    },
+  );
+
+  it("still lets a genuinely in-process local model serve offline mode", () => {
+    // The downgrade has to keep working, or offline has no route at all.
+    const plan = planFor("offline", [contradictory, scaffold]);
+
+    expect(plan.modelId).toBe(scaffold.id);
+  });
+});

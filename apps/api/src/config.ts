@@ -9,6 +9,7 @@ import type {
 
 import {
   normalizeCloudBaseUrl,
+  normalizeNetworkBaseUrl,
   normalizeLoopbackBaseUrl,
 } from "./loopback-url.js";
 import {
@@ -104,6 +105,20 @@ export interface AppConfig {
     contextWindow: number;
     qualityRating: number;
   };
+  /**
+   * A model hosted on the operator's own network — another machine they run.
+   *
+   * Distinct from `cloud` because the tiers are distinct: this leaves the
+   * device but not the network, and the operator controls the stack at both
+   * ends. Configured by hand; discovery and pairing are deliberately not built.
+   */
+  network?: {
+    baseUrl: string;
+    model: string;
+    apiKey: string;
+    contextWindow: number;
+    qualityRating: number;
+  };
   webSearch?: WebSearchConfig;
   // Optional so partial fixtures stay focused, matching webSearch above.
   // loadConfig always sets it; consumers default to "route".
@@ -118,6 +133,7 @@ export function loadConfig(): AppConfig {
     );
   }
   const cloudApiKey = process.env["QUORUM_CLOUD_API_KEY"]?.trim();
+  const networkApiKey = process.env["QUORUM_NETWORK_API_KEY"]?.trim();
   const configuredLocalTransport =
     process.env["QUORUM_LOCAL_TRANSPORT"]?.trim().toLowerCase() ?? "ollama";
   if (
@@ -302,6 +318,28 @@ export function loadConfig(): AppConfig {
             startupTimeoutMs: positiveInteger(
               process.env["QUORUM_MANAGED_LLAMA_STARTUP_TIMEOUT_MS"],
               180_000,
+            ),
+          },
+        }
+      : {}),
+    // Absent without credentials, exactly as cloud is. A peer that answers
+    // unauthenticated is a peer anyone on the network can impersonate, so
+    // there is no anonymous mode: no key, no provider.
+    ...(networkApiKey && process.env["QUORUM_NETWORK_BASE_URL"]?.trim()
+      ? {
+          network: {
+            baseUrl: normalizeNetworkBaseUrl(
+              process.env["QUORUM_NETWORK_BASE_URL"]!.trim(),
+            ),
+            model: process.env["QUORUM_NETWORK_MODEL"]?.trim() ?? "",
+            apiKey: networkApiKey,
+            contextWindow: positiveInteger(
+              process.env["QUORUM_NETWORK_CONTEXT_WINDOW"],
+              16_384,
+            ),
+            qualityRating: Math.min(
+              100,
+              positiveInteger(process.env["QUORUM_NETWORK_QUALITY_RATING"], 70),
             ),
           },
         }

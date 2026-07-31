@@ -15,8 +15,14 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { loadConfig } from "./config.js";
 import { isLoopbackHostname } from "./outbound-url.js";
+import {
+  normalizeCloudBaseUrl,
+  normalizeNetworkBaseUrl,
+} from "./loopback-url.js";
 
 const TOUCHED = [
+  "QUORUM_NETWORK_API_KEY",
+  "QUORUM_NETWORK_BASE_URL",
   "QUORUM_CLOUD_API_KEY",
   "QUORUM_CLOUD_BASE_URL",
   "QUORUM_CLOUD_MODEL",
@@ -125,5 +131,84 @@ describe("isLoopbackHostname is the shared basis for five separate controls", ()
     "",
   ])("rejects %s", (hostname) => {
     expect(isLoopbackHostname(hostname)).toBe(false);
+  });
+});
+
+describe("the network tier permits a LAN peer without permitting the internet", () => {
+  // Plain HTTP is allowed here and refused by the cloud validator, matching
+  // the project's existing stance that unencrypted traffic is acceptable
+  // inside a trusted LAN and a tunnel is required outside it. That only holds
+  // while the address genuinely is private — otherwise `network` would be a
+  // tier with the weakest transport and the widest reach, strictly worse than
+  // `cloud`.
+  it.each([
+    "http://192.168.1.10:8080/v1",
+    "http://10.0.0.5:8080/v1",
+    "http://172.16.3.9:8080/v1",
+    "http://quorum-box.local:8080/v1",
+    "https://192.168.1.10:8080/v1",
+  ])("accepts the private address %s", (url) => {
+    expect(() => normalizeNetworkBaseUrl(url)).not.toThrow();
+  });
+
+  it.each([
+    "http://8.8.8.8:8080/v1",
+    "https://api.openai.com/v1",
+    "http://evil.example/v1",
+    "http://192.168.1.10@evil.example/v1",
+    "http://2130706433/v1",
+  ])("refuses the non-private address %s", (url) => {
+    expect(() => normalizeNetworkBaseUrl(url)).toThrow();
+  });
+
+  it("refuses embedded credentials and fragments", () => {
+    expect(() => normalizeNetworkBaseUrl("http://user:pw@192.168.1.10/v1")).toThrow(
+      /credentials/u,
+    );
+    expect(() => normalizeNetworkBaseUrl("http://192.168.1.10/v1#x")).toThrow(
+      /fragment/u,
+    );
+  });
+
+  it("still refuses plain HTTP for anything off the network", () => {
+    // remote and cloud share the HTTPS-only validator: a rented box on the
+    // public internet needs the same transport guarantee a vendor does.
+    expect(() => normalizeCloudBaseUrl("http://rented.example/v1")).toThrow(
+      /HTTPS/u,
+    );
+  });
+});
+
+describe("a network peer is absent unless credentials are present", () => {
+  // Same rule as cloud, for the same reason and then one more. A peer that
+  // answers unauthenticated is a peer anyone on the LAN can impersonate —
+  // stand up a listener on the expected port and receive the conversation.
+  // There is deliberately no anonymous mode.
+  it("omits the peer when no key is set", () => {
+    delete process.env["QUORUM_NETWORK_API_KEY"];
+    process.env["QUORUM_NETWORK_BASE_URL"] = "http://192.168.1.10:8080/v1";
+
+    expect(loadConfig().network).toBeUndefined();
+  });
+
+  it("omits the peer when a key is set but no address is", () => {
+    process.env["QUORUM_NETWORK_API_KEY"] = "peer-key";
+    delete process.env["QUORUM_NETWORK_BASE_URL"];
+
+    expect(loadConfig().network).toBeUndefined();
+  });
+
+  it("refuses a peer address that is not on a private network", () => {
+    process.env["QUORUM_NETWORK_API_KEY"] = "peer-key";
+    process.env["QUORUM_NETWORK_BASE_URL"] = "https://api.openai.com/v1";
+
+    expect(() => loadConfig()).toThrow(/private network host/u);
+  });
+
+  it("registers a peer when both are genuinely present", () => {
+    process.env["QUORUM_NETWORK_API_KEY"] = "peer-key";
+    process.env["QUORUM_NETWORK_BASE_URL"] = "http://192.168.1.10:8080/v1";
+
+    expect(loadConfig().network?.apiKey).toBe("peer-key");
   });
 });

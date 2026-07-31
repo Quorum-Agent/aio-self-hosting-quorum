@@ -43,8 +43,8 @@ const offlinePolicy = {
   id: "offline" as const,
   label: "Offline",
   description: "No network",
-  allowNetwork: false,
-  allowCloudModels: false,
+  inferenceCeiling: "device" as const,
+  toolCeiling: "none" as const,
   preferLocal: true,
 };
 
@@ -190,8 +190,8 @@ describe("runtime view", () => {
         {
           ...offlinePolicy,
           id: "balanced",
-          allowNetwork: true,
-          allowCloudModels: true,
+          inferenceCeiling: "cloud" as const,
+          toolCeiling: "cloud" as const,
         },
         "local",
       ),

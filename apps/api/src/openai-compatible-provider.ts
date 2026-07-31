@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { getPolicy, ModelExecutionError } from "@quorum/core";
+import { getPolicy, locationTier, ModelExecutionError } from "@quorum/core";
 import type {
   Capability,
   ChatMessage,
@@ -16,6 +16,7 @@ import type { InferenceScheduler } from "./inference-scheduler.js";
 import {
   normalizeCloudBaseUrl,
   normalizeLoopbackBaseUrl,
+  normalizeNetworkBaseUrl,
 } from "./loopback-url.js";
 
 interface ProviderTimeouts {
@@ -195,8 +196,8 @@ function systemContext(
     .filter(
       (candidate) =>
         candidate.available &&
-        (candidate.location !== "cloud" ||
-          policyDefinition.allowCloudModels),
+        locationTier(candidate.location) <=
+          locationTier(policyDefinition.inferenceCeiling),
     )
     .map(runtimeModelSummary);
   const unavailableRoutes = routedModels
@@ -206,15 +207,17 @@ function systemContext(
     .filter(
       (candidate) =>
         candidate.available &&
-        candidate.location === "cloud" &&
-        !policyDefinition.allowCloudModels,
+        locationTier(candidate.location) >
+          locationTier(policyDefinition.inferenceCeiling),
     )
     .map(runtimeModelSummary);
   const availableTools = runtimeTools.filter(
     (tool) =>
       tool.available &&
-      (policyDefinition.allowNetwork ||
-        !tool.capabilities.includes("web")),
+      (!tool.capabilities.includes("web") ||
+        (policyDefinition.toolCeiling !== "none" &&
+          locationTier(tool.location) <=
+            locationTier(policyDefinition.toolCeiling))),
   );
   const availableCapabilities = [
     ...new Set([
@@ -758,10 +761,17 @@ export class OpenAICompatibleProvider implements ModelProvider {
       },
       available: true,
     };
+    // One branch per tier, rather than "local or not". A `network` peer needs
+    // a validator that permits plain HTTP but insists the address really is
+    // private; `remote` and `cloud` share the HTTPS-only validator because a
+    // rented box on the public internet needs the same transport guarantee a
+    // vendor does.
     this.#baseUrl =
       options.location === "local"
         ? normalizeLoopbackBaseUrl(options.baseUrl)
-        : normalizeCloudBaseUrl(options.baseUrl);
+        : options.location === "network"
+          ? normalizeNetworkBaseUrl(options.baseUrl)
+          : normalizeCloudBaseUrl(options.baseUrl);
     this.#apiKey = options.apiKey;
     this.#modelName = options.model;
     this.#nativeOllamaUrl = options.nativeOllama

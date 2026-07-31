@@ -213,6 +213,30 @@ export async function createRuntime(config: AppConfig): Promise<QuorumRuntime> {
       })
     : undefined;
 
+  if (config.network) {
+    providers.push(
+      new OpenAICompatibleProvider({
+        id: `network:${config.network.model}`,
+        label: config.network.model,
+        provider: "openai-compatible",
+        location: "network",
+        baseUrl: config.network.baseUrl,
+        apiKey: config.network.apiKey,
+        model: config.network.model,
+        contextWindow: config.network.contextWindow,
+        qualityRating: config.network.qualityRating,
+        capabilities: ["chat", "reasoning", "coding", "documents"],
+        // A peer speaks the OpenAI-compatible protocol, never Ollama's native
+        // one — this is another Quorum or a llama-server, addressed remotely.
+        nativeOllama: false,
+        // Deliberately no scheduler. The local InferenceScheduler serialises
+        // access to THIS machine's GPU; a peer has its own. Passing it would
+        // make a remote model queue behind local inference for no reason. The
+        // cloud provider omits it for the same reason.
+      }),
+    );
+  }
+
   if (config.cloud) {
     providers.push(
       new OpenAICompatibleProvider({

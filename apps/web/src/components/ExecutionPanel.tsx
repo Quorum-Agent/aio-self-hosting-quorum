@@ -1,3 +1,4 @@
+import { leavesDevice } from "@quorum/core";
 import {
   Check,
   ChevronRight,
@@ -226,7 +227,7 @@ export function ExecutionPanel({
         {draftingModel && (
           <span className="model-draft-stage">
             Drafted by {draftingModel.label} · {draftingModel.location}
-            {draftingModel.location === "cloud"
+            {leavesDevice(draftingModel.location)
               ? " · context left this device"
               : ""}
           </span>

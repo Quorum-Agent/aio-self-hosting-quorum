@@ -15,4 +15,10 @@ export {
   isNamedSoftwareFollowUp,
   SOFTWARE_TERMS,
 } from "./software-taxonomy.js";
+export {
+  EXECUTION_LOCATIONS,
+  leavesDevice,
+  locationTier,
+  modelReach,
+} from "./types.js";
 export type * from "./types.js";

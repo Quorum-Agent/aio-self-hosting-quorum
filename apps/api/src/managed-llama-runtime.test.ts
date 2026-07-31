@@ -283,7 +283,7 @@ describe("managed llama.cpp runtime", () => {
       const configured: AppConfig = {
         ...appConfig,
         managedLlama: {
-          executable: join(tmpdir(), "definitely-not-a-real-llama-server.exe"),
+          executablePath: join(tmpdir(), "definitely-not-a-real-llama-server.exe"),
           manifestPath: join(tmpdir(), "definitely-not-a-real-manifest.json"),
           startupTimeoutMs: 1_000,
         },

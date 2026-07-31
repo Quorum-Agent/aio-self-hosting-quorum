@@ -115,9 +115,9 @@ That event contract allows the API transport to change without coupling the core
 HTTP or WebSockets. A model failure can trigger another policy-safe plan only before
 any response content is emitted. Repeated failures temporarily open a per-provider
 circuit. Caller cancellation and request-specific validation failures do not affect
-provider health. Automatic fallback never crosses from a local attempt into cloud, and
-the final plan retains an append-only attempt ledger so failed cloud contact cannot be
-erased by a later local result.
+provider health. Automatic fallback never selects a tier further
+out than the attempt that just failed, and the final plan retains an append-only attempt
+ledger so failed off-device contact cannot be erased by a later local result.
 
 Detailed UI mode renders these authoritative events as an expandable in-conversation
 activity rail with elapsed time, request classification, task steps, and model swaps.
@@ -288,15 +288,61 @@ Before the first cloud transmission in a request, the execution plan should expo
 
 The resulting decision belongs in a local usage ledger.
 
+## Execution location tiers
+
+Execution locations are **ordered**, not a local/cloud binary:
+
+```
+device  →  local  →  network  →  remote  →  cloud
+in-proc    loopback   your LAN    a box you    a vendor's
+                                  rent         API
+```
+
+`local` means *does not leave your device*. `remote` and `cloud` differ in who
+controls the stack rather than in network exposure — self-hosted inference on
+rented hardware runs your weights under your configuration; a vendor API does
+not — so a user who declines vendor APIs on principle can still permit rented
+GPU.
+
+Policies express what they permit as a **ceiling** within that order, on two
+independent axes: `inferenceCeiling` for where a model may run, `toolCeiling`
+for where retrieval may reach. They are separate because a search engine's
+reachability is not a model's. `preferLocal` remains a sort preference and
+grants nothing.
+
+Two consequences worth stating, because both used to be special cases:
+
+- **Offline is not special-cased.** It declares `inferenceCeiling: "device"`,
+  and an in-process model is treated as `device` because it opens no socket.
+  The invariant below falls out of the same comparison every other policy uses.
+- **Disclosure is derived from the plan's reach**, the maximum tier across all
+  steps, not from the selected model's location. A stage running further out
+  than the model that was chosen — a cloud hub behind a local spoke — cannot go
+  unreported.
+
+Whether execution leaves the device is answered in exactly one place,
+`leavesDevice()`. It was previously written inline as `location === "cloud"` at
+five independent sites, each of which would silently answer "no" for any tier
+added later.
+
 ## Security invariants
 
 - A policy may be tightened automatically, never weakened silently.
-- Sensitive classification excludes cloud routes even in Best quality mode.
-- Web-grounded assistant history excludes cloud routes on later turns.
+- Sensitive classification stays on the device even in Best quality mode. This
+  is a floor on data sensitivity, not a policy ceiling: confidential content
+  does not reach a LAN peer merely because the policy would permit one.
+- Web-grounded assistant history excludes off-device routes on later turns, and
+  may not egress at all on the turn that retrieved it.
 - Offline mode excludes loopback endpoints as well as remote endpoints.
+- A model may not claim a nearer tier than its location. Where `transport` and
+  `location` disagree, the further of the two governs.
+- Automatic fallback never selects a tier further out than the attempt that
+  just failed.
 - A provider is registered only when its configured model is discoverable.
 - A local provider URL must be explicit loopback and redirects are forbidden.
-- A cloud provider URL must use HTTPS and redirects are forbidden.
+- A network provider URL must address a genuinely private host; plain HTTP is
+  permitted there and nowhere further out.
+- A remote or cloud provider URL must use HTTPS and redirects are forbidden.
 - Cloud providers are absent when credentials are absent.
 - Conversation storage is local by default.
 - Stored history and server-generated message identities, not client-submitted roles,
