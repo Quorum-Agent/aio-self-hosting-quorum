@@ -37,12 +37,21 @@ const localModel: ModelDescriptor = {
   available: true,
 };
 
-// Deliberately rated far above the local model. The pre-existing private-mode
-// test used a cloud model rated 90, which loses to local on sorting alone
-// because preferLocal adds 100 — so that test passed whether or not the policy
-// filter existed. Removing the filter routed private requests to cloud with the
-// entire suite still green. This rating is above that sorting bonus, so these
-// tests fail if the filter is ever removed.
+// Deliberately rated above ANY score the local model can reach. The
+// pre-existing private-mode test used a cloud model rated 90, which loses to
+// local on sorting alone because preferLocal adds 100 — so that test passed
+// whether or not the policy filter existed. Removing the filter routed private
+// requests to cloud with the entire suite still green.
+//
+// 195 was the first attempt and it was not enough: local's worst case is
+// 100 + 60 + 18 + 20 = 198 once a matched specialty and a freshness bonus are
+// in play. That fixture passed only because this file's request happens to ask
+// for no specialties and no freshness — accidentally sufficient, which is the
+// same defect it was written to repair.
+//
+// 300 clears local's true ceiling: 100 (local) + 60 (quality) + 108 (all six
+// non-chat capabilities matched at 18 each) + 20 (freshness) = 288. The margin
+// no longer depends on what this file's request asks for.
 const overwhelmingCloudModel: ModelDescriptor = {
   id: "cloud:strong",
   label: "Cloud strong",
@@ -51,7 +60,7 @@ const overwhelmingCloudModel: ModelDescriptor = {
   transport: "remote",
   capabilities: ["chat", "reasoning", "coding", "documents"],
   contextWindow: 200_000,
-  qualityRating: 195,
+  qualityRating: 300,
   available: true,
 };
 
@@ -88,6 +97,38 @@ function planFor(policy: PolicyMode, models: ModelDescriptor[]) {
     models,
   );
 }
+
+// The fixture above only tests anything while the cloud model would actually
+// WIN the sort if the policy filter were removed. That is arithmetic, not an
+// assumption, and it is the exact thing the original test got wrong — so it is
+// asserted rather than trusted.
+//
+// `localScore` is `(location === "local" ? 100 : 0) + qualityRating +
+// 18 per matched specialty + 20 if the request needs freshness and the model
+// does web`. This pins the cloud model above every score local can reach, for
+// any request, rather than above the score it reaches for this file's request.
+//
+// Writing it against the current request is what made the first attempt at
+// this fixture wrong. If this ever goes red, do not relax it — raise the cloud
+// rating, because every test below stops meaning anything the moment a local
+// model can win on arithmetic.
+describe("the fixture can actually detect the bug it was written for", () => {
+  const LOCAL_BONUS = 100;
+  const SPECIALTY_BONUS = 18;
+  const FRESHNESS_BONUS = 20;
+  // Every capability except "chat", which specialtyScore excludes.
+  const MAX_SPECIALTIES = 6;
+
+  it("outranks local on score alone, whatever the request asks for", () => {
+    const localCeiling =
+      LOCAL_BONUS +
+      localModel.qualityRating +
+      SPECIALTY_BONUS * MAX_SPECIALTIES +
+      FRESHNESS_BONUS;
+
+    expect(overwhelmingCloudModel.qualityRating).toBeGreaterThan(localCeiling);
+  });
+});
 
 describe("a policy that forbids cloud models is not merely a preference", () => {
   // docs/architecture.md: "A policy may be tightened automatically, never
