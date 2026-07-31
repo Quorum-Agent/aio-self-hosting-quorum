@@ -1,0 +1,224 @@
+# ADR 0002: Capability graph, model slots, and provider attributes
+
+- Status: Proposed
+- Date: 2026-07-31
+- Supersedes: the flat `LocalModelRole` model implied by `docs/architecture.md`
+
+## Context
+
+Quorum routes requests to local models by **role**: `general`, `coding`, `reasoning`.
+Three roles, one model each, all assumed to be the same kind of thing.
+
+That model cannot express what the product already needs, and the existing target
+capability graph in `docs/architecture.md` already says so without the code following.
+Three of its eight nodes are **compound** — "OCR / document parser", "retrieval +
+reranker", "speech pipeline" — each naming several distinct operations in one node. The
+graph has implied a two-level structure since it was written; only the type system is
+flat.
+
+Three concrete symptoms of the gap, all verified in source:
+
+- **`vision` is declared and served by nothing.** A capability the compiler can require
+  and no provider can satisfy, so an image request routes to the scaffold with no
+  explanation. The app cannot say "I can extract text from this but not describe it,"
+  because a capability is present or absent with nothing in between.
+- **`tools` occurs exactly once in the repository — its own type definition.** Nothing
+  declares it, nothing requires it. It was reserved for a level of the design that was
+  never built.
+- **The prompt analyzer and the entire validation layer are unmodelled.** Both are real,
+  load-bearing subsystems doing recognisable domain work, and neither appears in the
+  capability vocabulary, so neither can be routed to, substituted, or reasoned about the
+  way a spoke can.
+
+`Capability` is carrying three different levels of meaning at once: `chat` is a domain,
+`documents` is a domain, `vision` is closer to a domain, `web` is a *provider kind*, and
+`tools` is an operation that does not exist. That is why two of its seven values are
+inert.
+
+## Decision
+
+Model the capability graph as four distinct concepts.
+
+**Domain** — the work being done, from the user's point of view. Conversation, code,
+documents, speech, and so on. Domains are stable and few.
+
+**Slot** — a discrete operation within a domain. "Documents" is not one slot: OCR, layout
+analysis, text extraction, table extraction and chunking are siblings. A slot is the unit
+Quorum offers, configures, and routes to.
+
+**Provider** — what fills a slot. A model, a **deterministic library**, a remote peer, or
+nothing. This is the level the current design most lacks: a PDF text extractor is
+`pdfplumber`, not a model — zero VRAM, no load failure, no quality axis — and it belongs
+beside an OCR model in the same domain. Two provider shapes exist today
+(`ModelProvider`, `WebSearchProvider`); a deterministic-transform shape is the missing
+third.
+
+**Attribute** — how a provider behaves while filling a slot, as distinct from which slot
+it fills. Alignment, prose style, language bias, licence. Two models can fill the same
+slot and be chosen between on these grounds.
+
+### Which slots Quorum offers
+
+A slot is offered when **both** hold:
+
+1. a distinct model class genuinely exists for it, and
+2. it is a distinct *operation* rather than a disposition toward an existing one.
+
+Both halves are required. The first alone admits creative and uncensored finetunes, which
+are unambiguously a distinct model class — but they are post-training applied to a
+generalist to remove guardrails or bias prose, serving the **same** operation. They are an
+attribute, not a slot. (An earlier draft of this ADR used only the first test and reached
+the wrong answer; the second clause exists because of that.)
+
+Offered:
+
+| Slot | Distinct model class | Notes |
+| --- | --- | --- |
+| Code | Qwen-Coder, DeepSeek-Coder, Devstral | Served today |
+| Deep reasoning / math | R1 distills, QwQ, DeepSeekMath, Qwen-Math | **Not** the current `reasoning` role — see Consequences |
+| OCR | PaddleOCR-VL, Churro, dots.ocr | Sits beside text extraction, not instead of it |
+| Text extraction / parsing | *(library, not a model)* | The case that motivates the provider level |
+| Vision | Qwen-VL, InternVL, moondream | Official VLMs; no finetune scene |
+| Speech to text | Whisper, Parakeet | Small, co-resident |
+| Text to speech | Piper, Kokoro | Weakest quality-to-effort ratio of the set |
+| Embedding | nomic-embed, mxbai, bge | Service role, never a chat model |
+| Reranking | bge-reranker, Qwen3-Reranker | Distinct from embedding; commonly conflated |
+| Safety / verification | classifiers, tool-call validators | Already implemented, not yet modelled |
+
+Not offered, with reasons:
+
+- **Conversation and general reasoning** — the generalist *is* the state of the art. A
+  spoke would be worse than the model already in the general slot.
+- **Translation** — a generalist covers it outside narrow media niches; a dedicated slot
+  would underperform Gemma-class models.
+- **Creative / uncensored** — an attribute (above). Quorum should make it *possible* to
+  point the general slot at such a model and have routing, policy and disclosure work
+  normally; it should not build a domain around it, and it should not attempt to compete
+  with the dedicated front-ends that own that use case.
+- **Agents / computer interaction / video / generative media** — need plumbing before a
+  model choice means anything. No tool-calling loop exists (see the `tools` symptom
+  above).
+
+### Slots are not uniform in cost
+
+A flat role list assumes every spoke competes for the same budget. Slots do not:
+
+- a text parser costs nothing and never fails to load;
+- an embedding, reranking, OCR or STT model is sub-1 GB and co-resides freely;
+- a deep-reasoning or code model is 4–30 GB and contends for residency.
+
+Treating these as one class is why "how many spokes" felt unanswerable — it was one
+question about three cost classes.
+
+## Consequences
+
+**The existing `reasoning` role is replaced, not renamed.** Its current meaning is "a
+model that is good at reasoning", which a modern generalist with a thinking toggle
+already covers — the ecosystem has folded that capability into generalists as a setting.
+The new slot means extended deliberate computation: thousands of tokens, materially
+better at proofs and multi-step mathematics, a genuinely different model population.
+
+**This is a migration hazard and must be handled explicitly.**
+`QUORUM_LOCAL_REASONING_MODEL` is live configuration with test coverage. Silently
+redefining the role would route deep-reasoning traffic to whatever model an operator
+already configured, which will not be an R1-class model. The new slot therefore takes a
+**new setting name**; the old one is either honoured as a generalist alias or fails
+closed with a message naming the change. It must not be reinterpreted in place.
+
+**Deep reasoning needs its own inference profile, not just its own model.** Reasoning
+tokens are drawn from the same budget as the answer — measured on the pinned build, a 4B
+model spent 712 characters of thinking on a one-word request. The slot needs a much
+larger `maxOutputTokens` and longer timeouts than the general slot. Both are already
+per-model (`ModelInferenceSettings`, `ProviderTimeouts`), so this is expressible today.
+
+**Its routing cost is asymmetric.** Misrouting to a coding spoke wastes a second;
+misrouting to a deep reasoner wastes minutes. This is the slot most exposed to classifier
+error, and the classifier has a documented history of misroutes (Q-04, Q-05). Routing
+into an expensive slot should require stronger evidence than routing into a cheap one.
+
+**Partial service becomes expressible, and should be surfaced.** With slots, "I can OCR
+this but not describe the scene" is a statable answer. Today that request dead-ends into
+the scaffold, which reads as a model-quality failure rather than a missing capability.
+
+**Slot count is a product decision, not a hardware one.** With the `network` and `remote`
+tiers from ADR-adjacent work, a slot's provider may live on another machine. What one
+operator can run concurrently is a deployment question and does not bound what Quorum
+offers.
+
+## Alternatives considered
+
+**Keep the flat role list and add roles.** Rejected: it is what produced two inert
+`Capability` values and an unservable `vision`. Adding `ocr`, `stt`, `embedding` as peers
+of `general` would repeat the conflation at larger scale, and still could not express a
+library as a provider.
+
+**Model slots but not attributes.** Rejected: without an attribute level, "the uncensored
+one" has to be encoded as a capability or a specialty, and `specialties` is typed
+`Capability[]`. That is precisely the mistake found and fixed when a web-search tool was
+being described with a vocabulary meant for inference locations.
+
+**Treat retrieval as a model slot.** Rejected: RAG is a pipeline over the generalist
+(embed → retrieve → rerank → generate), not a chat specialist. The slots it needs —
+embedding and reranking — are offered individually; "a RAG model" is not a thing to
+select.
+
+---
+
+## Pressure-test record
+
+Per the working rules in `CLAUDE.md`, this artifact was tested before and after drafting.
+Findings applied inline are marked; limitations that remain are registered here rather
+than resolved.
+
+### Before drafting — assumptions tested
+
+- **"The existing capability graph is flat."** *Falsified.* Three of its eight nodes are
+  already compound. **Applied:** the ADR now presents this as making an existing implication
+  explicit rather than as a new design.
+- **"A distinct model class exists" is a sufficient criterion.** *Falsified.* It admits
+  creative and uncensored finetunes, which are excluded on other grounds. **Applied:** the
+  criterion gained a second, required clause.
+- **Redefining `reasoning` is safe.** *False.* It is live configuration with tests.
+  **Applied:** promoted to an explicit migration consequence requiring a new setting name.
+- **"Distributed spokes make slot count unbounded."** *Overstated.* Peer discovery is not
+  built; only manual configuration exists, and each peer is hardware someone must own.
+  **Applied:** softened to "slot count is a product rather than hardware decision", which
+  is the defensible form.
+
+### After drafting — red-team lens
+
+- **The 14-domain taxonomy this derives from is one source, unvalidated.** It is used as a
+  checklist for completeness, not as authority. The slot list is defended individually,
+  so a flaw in the taxonomy costs a missing slot rather than a wrong architecture.
+- **The slot list will read as a roadmap and is not one.** Nothing here commits to
+  building any slot, and several require plumbing that does not exist. Sequencing is
+  deliberately absent.
+- **"Distinct model class" is a judgement, not a measurement.** It has no threshold. It
+  was applied by inspection of the GGUF ecosystem and will drift as that ecosystem does;
+  a slot justified today may not be in a year.
+- **Safety/verification as a slot is the weakest entry.** Unlike the others it is mostly
+  *already built* and not model-shaped — the envelope validator and sensitive-data gate
+  are code. It is included because modelling it is nearly free and it proves the shape on
+  something already working, but it stretches the definition of "model slot".
+
+### After drafting — legitimate-use lens
+
+- **Four concepts is more than a small deployment needs.** Someone running one general
+  model gains nothing from domain/slot/provider/attribute and pays for it in
+  configuration surface. The design must degrade to "set one model and it works", or it
+  will be worse than what it replaces for the majority case.
+- **Ten slots is a large configuration surface.** Every slot is a decision an operator did
+  not previously have to make. Defaults, and honest "not configured" states, matter more
+  than the slots themselves.
+- **Nothing here says how slots are discovered or advertised.** An operator cannot fill a
+  slot they do not know exists, and the ADR is silent on the interface. Deliberate — it is
+  a modelling decision, not a UI one — but it is the obvious next question and is not
+  answered.
+
+### Inherent limitations
+
+- This describes a target. Nothing in the current codebase implements slots, and the ADR
+  does not schedule the work.
+- The boundary between "distinct operation" and "disposition" is judgement. Creative
+  versus code is clear; a domain-specialised medical or legal finetune is genuinely
+  ambiguous under this test, and the ADR does not resolve it.
