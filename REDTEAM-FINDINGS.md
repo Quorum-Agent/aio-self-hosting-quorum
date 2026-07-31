@@ -544,8 +544,31 @@ output — yet it holds today partly because no model in this codebase can reque
 When model-driven tool calls arrive, these tests will not be sufficient, because they never
 exercise the path the invariant is really about.
 
-Also still open from the original pass: `inference-scheduler.test.ts` never passes `maximumWaitMs`,
-so Q-06's cap is untested.
+### Two claims this section originally made were themselves wrong
+
+The first version of this section closed by repeating two coverage gaps inherited from the
+discarded original pass. Both were later put through the same mutation discipline as everything
+else. **Both are false.**
+
+| Claim as originally written | Mutation applied | Actual result |
+| --- | --- | --- |
+| "`inference-scheduler.test.ts` never passes `maximumWaitMs`, so Q-06's cap is untested" | make `acquire` ignore `maximumWaitMs` | caught (2) |
+| "no test asserts the cross-turn behaviour in Q-01" | force `containsWebGroundedData` to `false` | caught (2) |
+
+The scheduler cap is covered by *"honors an explicit caller wait budget instead of clamping it to
+the default"* and *"reports the wait duration that it actually enforces"*. They pass the budget
+**positionally** — `scheduler.acquire(undefined, 50)` — so the identifier `maximumWaitMs` never
+appears in the test file and a grep for the parameter name returns nothing. The claim was
+manufactured by searching for a name against a positional call.
+
+This is left in rather than quietly deleted, because it is this section's own thesis turning on its
+author. §8 exists to argue that **reading tests cannot establish what they enforce** — and then
+closed with two gaps established by reading. The mutation discipline was applied to thirteen
+invariants and skipped for the two claims that arrived pre-written. An inherited finding needs the
+same treatment as a new one; carrying it forward is a citation, not a verification.
+
+Corrected position: **no invariant in `docs/architecture.md` is currently known to be unenforced.**
+The two that are not falsifiable (I-9, I-13) are recorded above as such, and I-11's caveat stands.
 
 ---
 
