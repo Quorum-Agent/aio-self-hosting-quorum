@@ -623,6 +623,32 @@ table: *a mutation audit is only as complete as the inventory it starts from, an
 was written by the same people who wrote the code.* The next pass should derive the list from the
 controls that exist, not from the ones already documented.
 
+**Audited afterwards, and the gap was not hypothetical.** Rather than leave the point as an
+observation, the three were put through the same mutation discipline:
+
+| # | Unlisted control | Mutation | Result |
+| --- | --- | --- | --- |
+| U-1a | `onRequest` rejects a non-loopback `Host` | disable the check | caught (3) |
+| U-1b | `onRequest` rejects a non-loopback `Origin` | disable the check | caught (3) |
+| U-2a | Search results must be HTTPS | drop the protocol test | caught (3) |
+| U-2b | Result URLs may not carry credentials | drop `username`/`password` test | **SURVIVED** → fixed |
+| U-2c | Results may not point at private hosts | force `isPrivateHostname` false | caught (3) |
+
+Four of five were enforced. **U-2b was not**: deleting the `url.username || url.password` guard from
+the result filter left the entire suite green. The existing unsafe-URL list already covered
+`javascript:`, private addresses, plain HTTP, trailing-dot hostnames, IPv6 multicast and
+documentation ranges — credentials were simply the form nobody thought of, so the guard had been
+correct and untested since it was written.
+
+It matters for the reason Q-03 matters: the rendered source list uses the URL as its own anchor
+text, so a result pointing at `https://accounts.google.com@evil.example/` reads as Google to a user
+the product explicitly instructs to "inspect links before opening." Same deception, different
+field. Now pinned, verified red against the mutation.
+
+That is a **third unenforced control** found in this pass, and the only one found by deliberately
+auditing outside the documented list — which is the argument for doing that first next time rather
+than last.
+
 ### Reconciling I-13 with the `Origin`/`Host` guard
 
 I-13 says the loopback API "is not an authorization boundary." `server.ts:120` performs an
