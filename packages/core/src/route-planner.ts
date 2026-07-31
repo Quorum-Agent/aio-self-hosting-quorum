@@ -212,6 +212,10 @@ export class RoutePlanner {
         : this.#mode === "relay"
           ? `${rationale} No second general model could serve this request, so one model answered directly.`
           : rationale,
+      // Relay configured but not engaged, for the same reason the orchestrator
+      // sets this when a planned hub fails: the operator asked for two stages
+      // and got one, and that should be detectable rather than only readable.
+      ...(this.#mode === "relay" && !hub ? { synthesisDegraded: true } : {}),
       steps,
       ...(degraded ? { degraded: true } : {}),
       safety: {

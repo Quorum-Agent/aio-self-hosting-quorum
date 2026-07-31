@@ -36,6 +36,8 @@ function safeDisplayText(value: string, maximumLength = 240): string {
     .slice(0, maximumLength);
 }
 
+const MAXIMUM_FAILED_DRAFTS = 2;
+
 // Drops the planner's forward-looking synthesis clause so a failure notice can
 // take its place. Matches the sentence built in route-planner.ts.
 function stripSynthesisPromise(rationale: string): string {
@@ -608,6 +610,11 @@ export class Orchestrator {
     // the user reads or what `partialContent` reports.
     let draftContent = "";
     let synthesized = false;
+    // Route mode stops falling back at the first emitted token, so a failing
+    // model costs one partial generation. A withheld draft costs a whole one,
+    // and the loop would otherwise pay that for every distinct local model.
+    // After this many wasted drafts, answer directly instead.
+    let failedDrafts = 0;
     const excludedModelIds = new Set<string>();
     const attempts: ExecutionAttempt[] = [];
 
@@ -621,7 +628,9 @@ export class Orchestrator {
       // actually run: a synthesis step naming an unregistered model would
       // otherwise swallow the draft and deliver an empty answer with no error.
       const drafting =
-        hubStep?.modelId !== undefined && this.#providers.has(hubStep.modelId);
+        hubStep?.modelId !== undefined &&
+        this.#providers.has(hubStep.modelId) &&
+        failedDrafts < MAXIMUM_FAILED_DRAFTS;
       // plan.modelId is the hub under relay, so it is the wrong fallback for
       // the drafting stage — it would run the hub twice, once on the raw
       // request and once on its own draft.
@@ -663,7 +672,12 @@ export class Orchestrator {
           }
         }
         if (!attemptContent) {
-          throw new Error(`${provider.model.label} returned no response content.`);
+          // An empty answer is the model's behaviour, not the endpoint's
+          // health, so it must not open the circuit against this provider.
+          throw new ModelExecutionError(
+            `${provider.model.label} returned no response content.`,
+            "unsafe_output",
+          );
         }
       } catch (error) {
         executionError = error;
@@ -750,6 +764,7 @@ export class Orchestrator {
 
       // Discard whatever the failed attempt drafted before retrying, so a
       // partial draft cannot be concatenated onto its replacement.
+      if (drafting) failedDrafts += 1;
       draftContent = "";
       this.#excludePhysicalProvider(provider, excludedModelIds);
       let fallbackPlan: TaskPlan;
@@ -850,8 +865,9 @@ export class Orchestrator {
           yield { type: "delta", content: delta };
         }
         if (!hubEmitted) {
-          throw new Error(
+          throw new ModelExecutionError(
             `${hubProvider.model.label} returned no response content.`,
+            "unsafe_output",
           );
         }
         synthesized = true;
@@ -905,6 +921,7 @@ export class Orchestrator {
           plan = {
             ...planWithoutSpoke,
             ...(draftedBy ? { modelId: draftedBy } : {}),
+            synthesisDegraded: true,
             // Replace the promise rather than appending a correction to it.
             // This string is disclosure copy, and "X will synthesize the final
             // answer. X failed before writing." contradicts itself in sequence.
@@ -941,6 +958,21 @@ export class Orchestrator {
         yield { type: "delta", content: draftContent };
       }
       plan = { ...plan, attempts: [...attempts] };
+      yield { type: "plan", plan };
+    } else if (hubStep) {
+      // Synthesis was planned but never attempted: the hub has no registered
+      // provider, or repeated failed drafts spent the budget and the model
+      // answered directly. Advertising the step while it silently does nothing
+      // is the decorative disclosure this design set out to remove.
+      plan = { ...plan, synthesisDegraded: true };
+      yield {
+        type: "trace",
+        trace: executionTrace(
+          hubStep,
+          "failed",
+          "Synthesis was not attempted.",
+        ),
+      };
       yield { type: "plan", plan };
     }
 

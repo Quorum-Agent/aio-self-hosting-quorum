@@ -40,6 +40,7 @@ import {
   type RuntimeInfo,
 } from "./lib/api";
 import { createRandomId } from "./lib/random-id";
+import { useModalSurface } from "./lib/use-modal-surface";
 import {
   describeRuntimeStatus,
   selectablePolicies,
@@ -137,6 +138,14 @@ export default function App() {
     window.matchMedia("(min-width: 841px)").matches,
   );
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const sidebarRef = useRef<HTMLElement>(null);
+  const executionRef = useRef<HTMLElement>(null);
+  // Below this width both drawers cover the conversation instead of sitting
+  // beside it, which is what makes them modal and what makes trapping focus
+  // correct rather than obstructive.
+  const [overlayLayout, setOverlayLayout] = useState(
+    () => !window.matchMedia("(min-width: 841px)").matches,
+  );
   const [settingsOpen, setSettingsOpen] = useState(false);
   const abortController = useRef<AbortController | undefined>(undefined);
   const streamingContentRef = useRef("");
@@ -189,6 +198,29 @@ export default function App() {
   useEffect(() => {
     window.localStorage.setItem(VERBOSITY_STORAGE_KEY, verbosity);
   }, [verbosity]);
+
+  useEffect(() => {
+    const query = window.matchMedia("(min-width: 841px)");
+    const sync = () => setOverlayLayout(!query.matches);
+    query.addEventListener("change", sync);
+    return () => query.removeEventListener("change", sync);
+  }, []);
+
+  const closeSidebar = useCallback(() => setSidebarOpen(false), []);
+  const closeExecution = useCallback(() => setExecutionOpen(false), []);
+  useModalSurface({
+    open: sidebarOpen,
+    surface: sidebarRef,
+    onClose: closeSidebar,
+    enabled: overlayLayout,
+  });
+  useModalSurface({
+    // The sidebar wins when both are open: it is the one on top.
+    open: executionOpen && !sidebarOpen,
+    surface: executionRef,
+    onClose: closeExecution,
+    enabled: overlayLayout,
+  });
 
   useEffect(() => {
     window.localStorage.setItem(POLICY_STORAGE_KEY, policy);
@@ -499,6 +531,7 @@ export default function App() {
       }`}
     >
       <Sidebar
+        ref={sidebarRef}
         conversations={conversations}
         activeId={conversationId}
         disabled={busy}
@@ -755,6 +788,7 @@ export default function App() {
         plan={plan}
         traces={traces}
         verbosity={verbosity}
+        ref={executionRef}
         onClose={() => setExecutionOpen(false)}
       />
 

@@ -1467,4 +1467,95 @@ describe("Orchestrator relay mode", () => {
 
     expect(result?.result.message.content).toBe(DRAFT);
   });
+
+  it("stops drafting after repeated wasted drafts and answers directly", async () => {
+    // A withheld draft costs a full generation. Without a cap the loop pays
+    // that for every distinct local model before the request settles.
+    const spokes = ["a", "b", "c", "d"].map((suffix) => ({
+      ...spokeModel,
+      id: `local:coding:${suffix}`,
+      label: `Spoke ${suffix}`,
+    }));
+    const orchestrator = new Orchestrator(
+      [
+        ...spokes.map((model) =>
+          provider(model, () =>
+            (async function* () {
+              yield `TEXT-FROM-${model.id}`;
+              throw new Error("died after producing output");
+            })(),
+          ),
+        ),
+        provider(hubModel, async function* () {
+          yield FINAL;
+        }),
+      ],
+      new RequestCompiler(),
+      new RoutePlanner("relay"),
+    );
+
+    const events = await collect(orchestrator, codingRequest());
+    const streamed = events
+      .filter((event) => event.type === "delta")
+      .map((event) => (event as { content: string }).content)
+      .join("");
+    const plans = events.filter((event) => event.type === "plan") as Array<{
+      plan: TaskPlan;
+    }>;
+    const draftAttempts = (plans.at(-1)?.plan.attempts ?? []).filter(
+      (attempt) => attempt.stage === "draft",
+    );
+
+    expect(draftAttempts.length).toBeLessThanOrEqual(2);
+    // Everything drafted under the cap stays withheld...
+    for (const attempt of draftAttempts) {
+      expect(streamed).not.toContain(`TEXT-FROM-${attempt.modelId}`);
+    }
+    // ...and once it is spent the next model answers directly, so its output
+    // reaching the user is the point rather than a leak.
+    expect(events.some((event) => event.type === "error")).toBe(true);
+  });
+
+  it("marks the plan degraded when synthesis is planned but never runs", async () => {
+    // Skipping the step silently would advertise work that did not happen.
+    const orchestrator = new Orchestrator(
+      [provider(spokeModel, async function* () {
+        yield DRAFT;
+      })],
+      new RequestCompiler(),
+      new RoutePlanner("relay"),
+    );
+
+    const events = await collect(orchestrator, codingRequest());
+    const result = events.find((event) => event.type === "result") as {
+      result: { plan: TaskPlan };
+    };
+
+    expect(result.result.plan.synthesisDegraded).toBe(true);
+  });
+
+  it("does not blame the provider when a model simply returns nothing", async () => {
+    // An empty answer is model behaviour, not endpoint health, so it must not
+    // take the model out of service for unrelated requests.
+    const orchestrator = new Orchestrator(
+      [
+        provider(spokeModel, async function* () {
+          yield DRAFT;
+        }),
+        provider(hubModel, async function* () {
+          // yields nothing
+        }),
+      ],
+      new RequestCompiler(),
+      new RoutePlanner("relay"),
+    );
+
+    for (let index = 0; index < 3; index += 1) {
+      await collect(orchestrator, codingRequest());
+    }
+
+    expect(
+      orchestrator.models.find((model) => model.id === hubModel.id)?.available,
+    ).toBe(true);
+  });
 });

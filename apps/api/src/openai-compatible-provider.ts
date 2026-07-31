@@ -968,9 +968,12 @@ export class OpenAICompatibleProvider implements ModelProvider {
         ) as CompletionResponse;
         const content = payload.choices?.[0]?.message?.content;
         if (!content) {
+          // The endpoint answered; the model simply produced nothing. That is
+          // output behaviour, not endpoint health, so it must not count toward
+          // the circuit that takes this model out of service.
           throw new ModelExecutionError(
             `${this.model.label} returned no response content.`,
-            "provider",
+            "unsafe_output",
           );
         }
         if (

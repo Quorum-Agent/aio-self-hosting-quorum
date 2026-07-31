@@ -813,3 +813,54 @@ cloud spoke's work to the local hub, one of them writing that claim into the app
 Relay degrading with no signal in the rationale. The hub chosen by declaration order rather than
 rank. The drafting stage falling back to `plan.modelId`, which is the hub. A synthesis step naming
 an unregistered model swallowing the draft and delivering an empty answer.
+
+---
+
+## 14. Closures — 2026-07-30, later session
+
+**Q-50 · Topbar clipped and unclickable at 841–1122px** — fixed. `.main` now declares an explicit
+`minmax(0, 1fr)` column so content cannot size the track, and the control compaction moved from a
+viewport media query to a container query on `.main` itself. The inspector takes 326px at any
+window width, so a 900px window with it open has the same room a 560px window does and needs the
+same compaction; keying that to the viewport is what opened the gap. The settings dialog stays on
+the viewport query, being a fixed overlay and a sibling of `.main`. Verified in Chrome at nine
+widths with the panel open and closed: no clipping, the Inspect button hit-tests to itself
+everywhere, and compaction still engages exactly where it did before.
+
+**Q-51 · No drawer focus management or Escape** — fixed. Extracted the settings dialog's existing
+behaviour into `apps/web/src/lib/use-modal-surface.ts` rather than writing it twice. Applies only
+below 841px, where the drawers overlay the conversation; above that they are columns and trapping
+focus would obstruct rather than help.
+
+Two failure modes here were only visible in a browser, and are worth remembering because they will
+recur in any focus-management code in this app:
+
+- `offsetParent` is `null` for every descendant of a `position: fixed` element. Using it to decide
+  what is focusable silently matches nothing once a drawer starts overlaying. `getClientRects()`
+  does not have this problem.
+- `focus()` is ignored while an element is still transitioning into visibility, so a single attempt
+  on the next animation frame lands nowhere. The hook retries after the transition would have
+  finished.
+
+**Q-56 · Relay degradation was only readable** — fixed. `TaskPlan.synthesisDegraded` is set
+whenever relay was configured and one model answered anyway, whether decided at plan time (no hub
+could serve the request) or at run time (the hub failed, had no registered provider, or lost its
+scheduler slot). A planned synthesis step that is never attempted now also gets a failed trace
+rather than passing unmentioned.
+
+**Q-57 · Fallback cost a full draft per failing spoke** — fixed. After two wasted drafts the next
+model answers directly, which streams, so the cost stops growing. The cap is on withheld drafts
+rather than on attempts.
+
+**Q-58 · Empty response counted against provider health** — fixed. `"returned no response
+content"` is now `unsafe_output` rather than a plain `Error`, in the drafting stage, the hub, and
+the non-streaming provider path. A model answering with nothing is behaving badly, not failing to
+answer, and should not take an endpoint out of service for unrelated requests.
+
+**Q-55 · Relay time to first byte** — remains open and is inherent rather than defective. The SSE
+keep-alive committed with the relay branch stops proxies dropping an idle connection; it does not
+make anything appear sooner. Note that the structured provider already buffers a whole answer
+before its single yield, so route mode has one generation of silence and relay has two. Making
+this genuinely better means yielding the draft as a distinct event the client renders as progress
+rather than as answer text, which is a feature rather than a fix.
+

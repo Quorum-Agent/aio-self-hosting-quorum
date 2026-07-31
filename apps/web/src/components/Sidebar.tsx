@@ -8,6 +8,8 @@ import {
   Trash2,
 } from "lucide-react";
 
+import type { Ref } from "react";
+
 import type { ConversationRecord } from "../lib/api";
 
 interface SidebarProps {
@@ -20,6 +22,7 @@ interface SidebarProps {
   onRename: (conversation: ConversationRecord) => void;
   onDelete: (conversation: ConversationRecord) => void;
   onExport: (conversation: ConversationRecord) => void;
+  ref?: Ref<HTMLElement>;
 }
 
 function relativeTime(value: string): string {
@@ -40,9 +43,10 @@ export function Sidebar({
   onRename,
   onDelete,
   onExport,
+  ref,
 }: SidebarProps) {
   return (
-    <aside className="sidebar">
+    <aside className="sidebar" ref={ref}>
       <div className="brand">
         <div className="brand-mark" aria-hidden="true">
           <Sparkles size={17} strokeWidth={1.8} />

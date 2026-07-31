@@ -197,6 +197,11 @@ export interface TaskPlan {
   // spokeModelId names the model that drafted for it.
   modelId: Id;
   spokeModelId?: Id;
+  // Relay was planned and did not happen: the hub failed, was unreachable, or
+  // lost its scheduler slot, and the draft was delivered instead. A flag
+  // rather than a rationale suffix, so a busy instance quietly serving route
+  // traffic is detectable rather than only readable.
+  synthesisDegraded?: boolean;
   rationale: string;
   steps: PlanStep[];
   degraded?: boolean;
