@@ -11,6 +11,10 @@ function analyzer() {
     apiKey: "ollama",
     model: "qwen3:0.6b",
     contextWindow: 4_096,
+    // Was implicit: the analyzer treated an omitted flag as native Ollama
+    // (`?? true`), so this shared fixture has always exercised the native
+    // path. The managed llama.cpp cases below pass `false` explicitly.
+    nativeOllama: true,
     scheduler: new InferenceScheduler(),
   });
 }

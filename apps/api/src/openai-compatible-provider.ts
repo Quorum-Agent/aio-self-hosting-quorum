@@ -39,7 +39,14 @@ interface OpenAICompatibleOptions {
   specialties?: Capability[];
   reasoningEffort?: "none" | "low" | "medium" | "high";
   maxOutputTokens?: number;
-  nativeOllama?: boolean;
+  /**
+   * Required, not optional. When this was optional the three call sites
+   * disagreed about the default — this one fell back to the compatible
+   * transport while the prompt analyzer and warmup fell back to native Ollama.
+   * A harness that omitted it therefore measured a different code path from
+   * production. Make the caller say which transport it means.
+   */
+  nativeOllama: boolean;
   scheduler?: InferenceScheduler;
   timeouts?: Partial<ProviderTimeouts>;
   capabilities: Capability[];

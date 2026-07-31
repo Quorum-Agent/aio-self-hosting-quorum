@@ -209,6 +209,10 @@ export async function createRuntime(config: AppConfig): Promise<QuorumRuntime> {
         contextWindow: config.cloud.contextWindow,
         qualityRating: config.cloud.qualityRating,
         capabilities: ["chat", "reasoning", "coding", "documents"],
+        // A cloud vendor is never Ollama. This was previously implicit — the
+        // option defaulted falsy here and to native at two other call sites,
+        // which is the inconsistency that made the option required.
+        nativeOllama: false,
       }),
     );
   }

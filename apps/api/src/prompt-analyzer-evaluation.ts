@@ -515,6 +515,12 @@ async function main(): Promise<void> {
     apiKey: config.local.apiKey,
     model,
     contextWindow: config.local.promptAnalyzer.contextWindow,
+    // Derived from config, exactly as production does at runtime.ts:194.
+    // Omitting it made the analyzer default to native Ollama regardless of the
+    // configured transport, so this harness scored classifier models on a
+    // different code path from the one that ships — including a wasted 404
+    // round-trip inside its own latency measurements.
+    nativeOllama: config.local.transport === "ollama",
     scheduler: new InferenceScheduler(),
   });
   const compiler = new RequestCompiler();

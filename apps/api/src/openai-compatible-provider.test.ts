@@ -88,6 +88,7 @@ describe("OpenAICompatibleProvider", () => {
       qualityRating: 60,
       capabilities: ["chat", "reasoning", "coding", "documents"],
       reasoningEffort: "none",
+      nativeOllama: false,
     });
 
     const chunks: string[] = [];
@@ -218,6 +219,7 @@ describe("OpenAICompatibleProvider", () => {
         qualityRating: 40,
         capabilities: ["chat"],
         reasoningEffort: "none",
+        nativeOllama: false,
       });
 
       for await (const _ of provider.stream(
@@ -265,6 +267,7 @@ describe("OpenAICompatibleProvider", () => {
       contextWindow: 16_384,
       qualityRating: 50,
       capabilities: ["chat"],
+      nativeOllama: false,
     });
 
     const input = modelInput([], "balanced", "standard", [
@@ -788,6 +791,7 @@ describe("OpenAICompatibleProvider", () => {
       maxOutputTokens: 64,
       qualityRating: 10,
       capabilities: ["chat"],
+      nativeOllama: false,
     });
     const input = modelInput();
     input.messages[0] = {
@@ -827,6 +831,7 @@ describe("OpenAICompatibleProvider", () => {
       maxOutputTokens: 64,
       qualityRating: 10,
       capabilities: ["chat"],
+      nativeOllama: false,
     });
     const input = modelInput();
     input.messages = [
@@ -884,6 +889,7 @@ describe("OpenAICompatibleProvider", () => {
       contextWindow: 8_192,
       qualityRating: 10,
       capabilities: ["chat"],
+      nativeOllama: false,
     });
 
     const chunks: string[] = [];
@@ -919,6 +925,7 @@ describe("OpenAICompatibleProvider", () => {
       contextWindow: 8_192,
       qualityRating: 10,
       capabilities: ["chat"],
+      nativeOllama: false,
     });
     const chunks: string[] = [];
     const consume = async () => {
@@ -953,6 +960,7 @@ describe("OpenAICompatibleProvider", () => {
       contextWindow: 8_192,
       qualityRating: 10,
       capabilities: ["chat"],
+      nativeOllama: false,
     });
     const chunks: string[] = [];
     const consume = async () => {
@@ -987,6 +995,7 @@ describe("OpenAICompatibleProvider", () => {
       contextWindow: 8_192,
       qualityRating: 10,
       capabilities: ["chat"],
+      nativeOllama: false,
     });
 
     const chunks: string[] = [];
@@ -1107,6 +1116,7 @@ describe("OpenAICompatibleProvider", () => {
       contextWindow: 8_192,
       qualityRating: 10,
       capabilities: ["chat"],
+      nativeOllama: false,
     });
     const chunks: string[] = [];
     const consume = async () => {
@@ -1140,6 +1150,7 @@ describe("OpenAICompatibleProvider", () => {
       contextWindow: 8_192,
       qualityRating: 10,
       capabilities: ["chat"],
+      nativeOllama: false,
     });
     const chunks: string[] = [];
     const consume = async () => {
@@ -1179,6 +1190,7 @@ describe("OpenAICompatibleProvider", () => {
       qualityRating: 10,
       capabilities: ["chat"],
       timeouts: { firstTokenMs: 10, idleMs: 20, totalMs: 30 },
+      nativeOllama: false,
     });
     const consume = async () => {
       for await (const _chunk of provider.stream(modelInput())) {
@@ -1283,6 +1295,7 @@ describe("OpenAICompatibleProvider", () => {
       qualityRating: 10,
       capabilities: ["chat"],
       timeouts: { firstTokenMs: 10, idleMs: 20, totalMs: 30 },
+      nativeOllama: false,
     });
     const consume = async () => {
       for await (const _chunk of provider.stream(modelInput())) {
@@ -1431,6 +1444,7 @@ describe("OpenAICompatibleProvider", () => {
         validatedOutputMs: 40,
         totalMs: 50,
       },
+      nativeOllama: false,
     });
     const consume = async () => {
       const chunks: string[] = [];
@@ -1534,6 +1548,7 @@ describe("OpenAICompatibleProvider", () => {
       qualityRating: 10,
       capabilities: ["chat", "reasoning"],
       reasoningEffort: "none",
+      nativeOllama: false,
     });
 
     const chunks: string[] = [];
@@ -1570,6 +1585,7 @@ describe("OpenAICompatibleProvider", () => {
       qualityRating: 10,
       capabilities: ["chat", "reasoning"],
       reasoningEffort: "none",
+      nativeOllama: false,
     });
     const consume = async () => {
       for await (const _chunk of provider.stream(modelInput())) {
@@ -1598,6 +1614,7 @@ describe("OpenAICompatibleProvider", () => {
       contextWindow: 8_192,
       qualityRating: 10,
       capabilities: ["chat"],
+      nativeOllama: false,
     });
     const consume = async () => {
       for await (const _chunk of provider.stream(modelInput())) {
@@ -1634,6 +1651,7 @@ describe("OpenAICompatibleProvider", () => {
       maxOutputTokens: 1,
       qualityRating: 10,
       capabilities: ["chat"],
+      nativeOllama: false,
     });
     const consume = async () => {
       for await (const _chunk of provider.stream(modelInput())) {
@@ -1658,6 +1676,7 @@ describe("OpenAICompatibleProvider", () => {
           contextWindow: 8_192,
           qualityRating: 10,
           capabilities: ["chat"],
+          nativeOllama: false,
         }),
     ).toThrow("QUORUM_CLOUD_BASE_URL must use HTTPS");
   });
