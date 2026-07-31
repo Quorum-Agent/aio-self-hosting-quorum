@@ -29,7 +29,62 @@ interface ExtractionCase {
 
 interface Strategy {
   readonly name: string;
-  extract(prompt: string): string;
+  extract(prompt: string): string | Promise<string>;
+}
+
+const OLLAMA_URL = process.env["QUORUM_LOCAL_BASE_URL"]
+  ? `${process.env["QUORUM_LOCAL_BASE_URL"].replace(/\/v1\/?$/u, "")}/api/chat`
+  : "http://127.0.0.1:11434/api/chat";
+
+const SPAN_SCHEMA = {
+  type: "object",
+  properties: { span: { type: "string" } },
+  required: ["span"],
+  additionalProperties: false,
+} as const;
+
+// The model selects; it never authors. Whatever comes back is checked against
+// the prompt before it is allowed anywhere near a search provider, so a model
+// that paraphrases fails the case rather than quietly changing what egresses.
+// Two examples do the heavy lifting. Instruction-only prompting made every
+// model return the entire message: "if it is already a good query, return it
+// whole" is the easiest branch to take, and small models take it every time.
+const SPAN_SYSTEM = [
+  "You extract the search query hidden inside a chat message.",
+  "Return the SHORTEST span of the message that a search engine needs, copied character-for-character from the message.",
+  "Never reword, reorder, fix spelling, or add words. The span must appear verbatim in the message.",
+  "Remove greetings, pleasantries, thanks, requests for help, and framing about who is asking or why.",
+  "Keep facts the question depends on.",
+  "",
+  'Message: "Hi there, my colleague and I disagree about the fastest sorting algorithm for nearly sorted data. Any thoughts?"',
+  'span: "fastest sorting algorithm for nearly sorted data"',
+  "",
+  'Message: "Could you please tell me when the next total solar eclipse is? Thanks so much!"',
+  'span: "when the next total solar eclipse is"',
+].join("\n");
+
+async function modelSpan(model: string, prompt: string): Promise<string> {
+  const response = await fetch(OLLAMA_URL, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      model,
+      stream: false,
+      format: SPAN_SCHEMA,
+      think: false,
+      keep_alive: "5m",
+      options: { temperature: 0, num_predict: 300 },
+      messages: [
+        { role: "system", content: SPAN_SYSTEM },
+        { role: "user", content: prompt },
+      ],
+    }),
+  });
+  if (!response.ok) throw new Error(`${model}: HTTP ${response.status}`);
+  const payload = (await response.json()) as { message?: { content?: string } };
+  const raw = payload.message?.content ?? "";
+  const parsed = JSON.parse(raw) as { span?: unknown };
+  return typeof parsed.span === "string" ? parsed.span.trim() : "";
 }
 
 const CASES: readonly ExtractionCase[] = [
@@ -160,9 +215,21 @@ function trimFraming(prompt: string): string {
   return text.replace(/^[\s,—-]+|[\s,—-]+$/gu, "").replace(/[.?!]+$/u, "");
 }
 
+const MODELS = (
+  process.env["QUORUM_EXTRACTION_MODELS"] ??
+  "qwen3.5:2b,qwen3:4b,phi4-mini:latest,gemma4:e2b,gemma4:e4b,qwen3.5:9b"
+)
+  .split(",")
+  .map((value) => value.trim())
+  .filter(Boolean);
+
 const STRATEGIES: readonly Strategy[] = [
   { name: "verbatim (today)", extract: (prompt) => prompt },
   { name: "deterministic trim", extract: trimFraming },
+  ...MODELS.map((model) => ({
+    name: `model ${model}`,
+    extract: (prompt: string) => modelSpan(model, prompt),
+  })),
 ];
 
 function tokens(value: string): string[] {
@@ -192,7 +259,7 @@ function f1(actual: string, ideal: string): number {
   return (2 * precision * recall) / (precision + recall);
 }
 
-function main(): void {
+async function main(): Promise<void> {
   for (const testCase of CASES) {
     if (!testCase.prompt.includes(testCase.ideal)) {
       console.error(
@@ -208,10 +275,20 @@ function main(): void {
     let totalF1 = 0;
     let noiseLeaks = 0;
     let notSubstring = 0;
+    let errors = 0;
     const started = performance.now();
 
     for (const testCase of CASES) {
-      const actual = strategy.extract(testCase.prompt);
+      let actual: string;
+      try {
+        actual = await strategy.extract(testCase.prompt);
+      } catch (error) {
+        errors += 1;
+        console.log(
+          `  ERROR ${strategy.name} :: ${testCase.name} :: ${(error as Error).message}`,
+        );
+        continue;
+      }
       // The invariant, enforced rather than assumed.
       if (!testCase.prompt.includes(actual)) {
         notSubstring += 1;
@@ -240,9 +317,10 @@ function main(): void {
         `mean F1 ${(totalF1 / CASES.length).toFixed(3)}, ` +
         `noise leaked in ${noiseLeaks}/${CASES.length}, ` +
         `substring violations ${notSubstring}, ` +
+        `errors ${errors}, ` +
         `${(elapsed / CASES.length).toFixed(2)}ms per prompt\n`,
     );
   }
 }
 
-main();
+await main();
