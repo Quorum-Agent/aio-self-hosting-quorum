@@ -600,6 +600,33 @@ same treatment as a new one; carrying it forward is a citation, not a verificati
 Corrected position: **no invariant in `docs/architecture.md` is currently known to be unenforced.**
 The two that are not falsifiable (I-9, I-13) are recorded above as such, and I-11's caveat stands.
 
+### The audit's real blind spot: controls that were never on the list
+
+Auditing "the documented invariants" answers only whether the documentation is enforced. It says
+nothing about controls the code actually relies on that were never written down — and those were
+never in scope for any part of this pass. An external reviewer found at least three:
+
+- **The request-time loopback `Origin`/`Host` guard** (`server.ts:122-128`). This is a real
+  request-time boundary, and it is tested — but it is absent from the list. It also sits in
+  tension with I-13's wording that the loopback API "is not an authorization boundary," since
+  this is precisely an authorization check performed there.
+- **SSRF prevention on web-search result URLs** — rejects non-HTTPS, embedded credentials, and
+  private hostnames before fetching.
+- **The SearXNG base URL must be loopback.**
+
+Plus the prompt-injection framing applied to untrusted draft and web data, and `safeDisplayText`'s
+control-character stripping.
+
+**None of these were audited by §8**, because §8 audited a list rather than the code. That is the
+structural limitation of this whole section, and it is worth more than any individual row in the
+table: *a mutation audit is only as complete as the inventory it starts from, and this inventory
+was written by the same people who wrote the code.* The next pass should derive the list from the
+controls that exist, not from the ones already documented.
+
+One consequence is immediate and cheap: I-13's phrasing should be reconciled with the `Origin`/
+`Host` guard, because as written the two claims contradict each other about whether the loopback
+API checks authorization.
+
 ---
 
 ## 9. Network development gateway — review of `fix/network-dev-password-ux` (2026-07-30)
