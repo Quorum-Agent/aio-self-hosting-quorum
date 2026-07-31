@@ -281,6 +281,25 @@ export class Orchestrator {
         };
         return;
       }
+      // The comparison the ceiling actually names. Previously only `"none"`
+      // was tested, so `toolCeiling` was a boolean wearing an ordered type —
+      // setting it to `"local"` would have permitted a cloud search provider,
+      // while `systemContext` already compared tiers and would have hidden
+      // that same tool from the model. The field promised enforcement that
+      // did not happen, in the one direction where it matters.
+      if (
+        locationTier(this.#webSearch.tool.location) >
+        locationTier(policy.toolCeiling)
+      ) {
+        yield {
+          type: "error",
+          message:
+            `${policy.label} mode allows retrieval no further than ${policy.toolCeiling}, ` +
+            `but the configured web-search provider runs at ${this.#webSearch.tool.location}.`,
+          recoverable: true,
+        };
+        return;
+      }
 
       const searchQuery = request.prompt
         .replace(/[\u0000-\u001f\u007f]+/gu, " ")

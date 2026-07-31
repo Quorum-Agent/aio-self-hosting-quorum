@@ -1,6 +1,11 @@
 import { randomUUID } from "node:crypto";
 
-import { getPolicy, locationTier, ModelExecutionError } from "@quorum/core";
+import {
+  getPolicy,
+  locationTier,
+  ModelExecutionError,
+  modelReach,
+} from "@quorum/core";
 import type {
   Capability,
   ChatMessage,
@@ -196,7 +201,7 @@ function systemContext(
     .filter(
       (candidate) =>
         candidate.available &&
-        locationTier(candidate.location) <=
+        locationTier(modelReach(candidate)) <=
           locationTier(policyDefinition.inferenceCeiling),
     )
     .map(runtimeModelSummary);
@@ -207,7 +212,7 @@ function systemContext(
     .filter(
       (candidate) =>
         candidate.available &&
-        locationTier(candidate.location) >
+        locationTier(modelReach(candidate)) >
           locationTier(policyDefinition.inferenceCeiling),
     )
     .map(runtimeModelSummary);

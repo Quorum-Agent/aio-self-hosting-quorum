@@ -23,6 +23,7 @@ import {
 const TOUCHED = [
   "QUORUM_NETWORK_API_KEY",
   "QUORUM_NETWORK_BASE_URL",
+  "QUORUM_NETWORK_MODEL",
   "QUORUM_CLOUD_API_KEY",
   "QUORUM_CLOUD_BASE_URL",
   "QUORUM_CLOUD_MODEL",
@@ -155,10 +156,30 @@ describe("the network tier permits a LAN peer without permitting the internet", 
     "http://8.8.8.8:8080/v1",
     "https://api.openai.com/v1",
     "http://evil.example/v1",
+    // Userinfo trick: the host is evil.example, not 192.168.1.10.
     "http://192.168.1.10@evil.example/v1",
-    "http://2130706433/v1",
   ])("refuses the non-private address %s", (url) => {
     expect(() => normalizeNetworkBaseUrl(url)).toThrow();
+  });
+
+  // Integer encodings are NOT rejected, and should not be: `new URL()`
+  // resolves them to a dotted quad before the predicate runs, so the check
+  // sees — and the request goes to — the address they denote. Pinned because
+  // the obvious reading of "decimal-encoded addresses were why isPrivateHostname
+  // was too broad" is that they are refused here. They are not; they are
+  // normalised, and then judged on where they actually point.
+  it.each([
+    ["http://3232235777/v1", "192.168.1.1, accepted"],
+    ["http://0xC0A80101/v1", "192.168.1.1, accepted"],
+  ])("normalises %s before judging it (%s)", (url) => {
+    expect(() => normalizeNetworkBaseUrl(url)).not.toThrow();
+  });
+
+  it("refuses loopback, which has its own tier rather than being unsafe", () => {
+    // Includes the decimal form, which normalises to 127.0.0.1.
+    for (const url of ["http://127.0.0.1/v1", "http://2130706433/v1"]) {
+      expect(() => normalizeNetworkBaseUrl(url)).toThrow(/private network host/u);
+    }
   });
 
   it("refuses embedded credentials and fragments", () => {
@@ -200,15 +221,32 @@ describe("a network peer is absent unless credentials are present", () => {
 
   it("refuses a peer address that is not on a private network", () => {
     process.env["QUORUM_NETWORK_API_KEY"] = "peer-key";
+    process.env["QUORUM_NETWORK_MODEL"] = "peer-model";
     process.env["QUORUM_NETWORK_BASE_URL"] = "https://api.openai.com/v1";
 
     expect(() => loadConfig()).toThrow(/private network host/u);
   });
 
-  it("registers a peer when both are genuinely present", () => {
+  // A model name is required rather than defaulted. Cloud can default to a
+  // vendor's catalogue name; a peer serves whatever that machine serves, so
+  // guessing is meaningless. Without this the provider registered with an
+  // empty id and a blank label, was planner-selectable, and failed only at
+  // request time.
+  it("omits the peer when no model name is given", () => {
     process.env["QUORUM_NETWORK_API_KEY"] = "peer-key";
     process.env["QUORUM_NETWORK_BASE_URL"] = "http://192.168.1.10:8080/v1";
+    delete process.env["QUORUM_NETWORK_MODEL"];
 
-    expect(loadConfig().network?.apiKey).toBe("peer-key");
+    expect(loadConfig().network).toBeUndefined();
+  });
+
+  it("registers a peer when all three are genuinely present", () => {
+    process.env["QUORUM_NETWORK_API_KEY"] = "peer-key";
+    process.env["QUORUM_NETWORK_MODEL"] = "peer-model";
+    process.env["QUORUM_NETWORK_BASE_URL"] = "http://192.168.1.10:8080/v1";
+
+    const network = loadConfig().network;
+    expect(network?.apiKey).toBe("peer-key");
+    expect(network?.model).toBe("peer-model");
   });
 });
