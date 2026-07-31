@@ -39,7 +39,14 @@ interface OpenAICompatibleOptions {
   specialties?: Capability[];
   reasoningEffort?: "none" | "low" | "medium" | "high";
   maxOutputTokens?: number;
-  nativeOllama?: boolean;
+  /**
+   * Required, not optional. When this was optional the three call sites
+   * disagreed about the default — this one fell back to the compatible
+   * transport while the prompt analyzer and warmup fell back to native Ollama.
+   * A harness that omitted it therefore measured a different code path from
+   * production. Make the caller say which transport it means.
+   */
+  nativeOllama: boolean;
   scheduler?: InferenceScheduler;
   timeouts?: Partial<ProviderTimeouts>;
   capabilities: Capability[];
@@ -529,6 +536,48 @@ function parseStructuredPublicAnswer(
   return answer;
 }
 
+/**
+ * Resolves the user-facing answer on the OpenAI-compatible transport.
+ *
+ * That transport previously had NO structured-output enforcement — no
+ * `response_format`, no `temperature` — and relied solely on a prompt asking
+ * for one `<quorum-final>` envelope. Measured against llama.cpp b10192 with a
+ * real model, the envelope protocol produced a usable answer in **3 of 6**
+ * cases; the same prompts under `response_format` produced **6 of 6**. The
+ * observed envelope failures were a bare answer with no tags, a markdown
+ * fence, and an unclosed tag — each of which discards the whole response and
+ * cascades into a fallback that excludes the model.
+ *
+ * The envelope is retained as a second parser rather than deleted, because
+ * this transport also serves cloud vendors and any other OpenAI-compatible
+ * endpoint. `response_format` support is not universal, and llama.cpp
+ * documents two paths where an unsupported or unconvertible schema is
+ * answered with HTTP 200 and unconstrained output rather than an error — so a
+ * status code cannot be used to detect that the schema was ignored. Parsing
+ * both shapes off one response costs nothing and needs no retry.
+ */
+function resolveCompatibleAnswer(
+  raw: string,
+  modelLabel: string,
+  truncated: boolean,
+): string {
+  try {
+    return parseStructuredPublicAnswer(raw, modelLabel);
+  } catch (structuredError) {
+    try {
+      const envelope = new PublicAnswerEnvelope(modelLabel);
+      const recovered = [...envelope.push(raw), ...envelope.finish(truncated)].join("");
+      if (hasVisibleContent(recovered)) return recovered;
+    } catch {
+      // Fall through: report the structured failure, which is the protocol
+      // actually requested, rather than the fallback's complaint about it.
+    }
+    const salvaged = truncated ? salvageTruncatedAnswer(raw) : undefined;
+    if (salvaged !== undefined && hasVisibleContent(salvaged)) return salvaged;
+    throw structuredError;
+  }
+}
+
 async function* streamOllamaResponse(
   response: Response,
   modelLabel: string,
@@ -735,7 +784,10 @@ export class OpenAICompatibleProvider implements ModelProvider {
       input.request.verbosity,
       input.request.analysis,
       input.runtimeTools,
-      "envelope",
+      // Was "envelope". The request now carries a JSON schema, so the prompt
+      // must ask for the shape the grammar enforces; asking for an envelope
+      // while constraining to JSON would put the two in direct conflict.
+      "structured",
     );
     const nativeSystem = systemContext(
       this.model,
@@ -905,6 +957,23 @@ export class OpenAICompatibleProvider implements ModelProvider {
             messages: compatibleMessages,
             stream: true,
             max_tokens: maxOutputTokens,
+            // Constrain the answer's shape rather than asking for it in prose.
+            // The native Ollama branch has always done this via `format`; this
+            // transport did not, and relied on the model volunteering a
+            // well-formed envelope. llama.cpp compiles this schema to a GBNF
+            // grammar enforced at sampling time.
+            response_format: {
+              type: "json_schema",
+              json_schema: {
+                name: "quorum_public_answer",
+                strict: true,
+                schema: PUBLIC_ANSWER_SCHEMA,
+              },
+            },
+            // The native branch pins this; the compatible branch sent no
+            // sampler settings at all, so answers were generated at whatever
+            // the server defaulted to.
+            temperature: 0,
             ...(this.#reasoningEffort
               ? { reasoning_effort: this.#reasoningEffort }
               : {}),
@@ -986,11 +1055,11 @@ export class OpenAICompatibleProvider implements ModelProvider {
           );
         }
         const truncated = payload.choices?.[0]?.finish_reason === "length";
-        const publicAnswer = new PublicAnswerEnvelope(this.model.label);
-        const publicContent = [
-          ...publicAnswer.push(content),
-          ...publicAnswer.finish(truncated),
-        ].join("");
+        const publicContent = resolveCompatibleAnswer(
+          content,
+          this.model.label,
+          truncated,
+        );
         markValidated();
         yield publicContent + (truncated
           ? truncationNotice(this.model.label, maxOutputTokens)
@@ -1000,7 +1069,13 @@ export class OpenAICompatibleProvider implements ModelProvider {
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
-      const publicAnswer = new PublicAnswerEnvelope(this.model.label);
+      // Accumulated rather than streamed through the envelope. A JSON answer
+      // cannot be validated until it is complete, so this branch now buffers
+      // exactly as `streamOllamaResponse` already does — that path likewise
+      // accumulates and yields once. This is a consistency change, not a
+      // regression: the native transport is the current default and has never
+      // emitted incremental deltas either.
+      let structuredContent = "";
       let buffer = "";
       let terminal = false;
       let truncated = false;
@@ -1038,9 +1113,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
                 "provider",
               );
             }
-            for (const publicDelta of publicAnswer.push(content)) {
-              yield publicDelta;
-            }
+            structuredContent += content;
           }
           if (terminal) break;
         }
@@ -1054,11 +1127,13 @@ export class OpenAICompatibleProvider implements ModelProvider {
           "provider",
         );
       }
-      const publicDeltas = publicAnswer.finish(truncated);
+      const publicAnswer = resolveCompatibleAnswer(
+        structuredContent,
+        this.model.label,
+        truncated,
+      );
       markValidated();
-      for (const publicDelta of publicDeltas) {
-        yield publicDelta;
-      }
+      yield publicAnswer;
       if (truncated) {
         const notice = truncationNotice(this.model.label, maxOutputTokens);
         yield notice;

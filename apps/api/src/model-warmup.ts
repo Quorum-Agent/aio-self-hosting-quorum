@@ -4,7 +4,8 @@ interface WarmupOptions {
   baseUrl: string;
   apiKey: string;
   model: string;
-  nativeOllama?: boolean;
+  /** Required — see the note on OpenAICompatibleProviderOptions.nativeOllama. */
+  nativeOllama: boolean;
   scheduler: InferenceScheduler;
 }
 
@@ -45,10 +46,9 @@ export async function warmLocalModel(options: WarmupOptions): Promise<void> {
   const timer = setTimeout(() => controller.abort(), WARMUP_TIMEOUT_MS);
 
   try {
-    const ollamaUrl =
-      options.nativeOllama === false
-        ? undefined
-        : nativeOllamaUrl(options.baseUrl);
+    const ollamaUrl = options.nativeOllama
+      ? nativeOllamaUrl(options.baseUrl)
+      : undefined;
     if (ollamaUrl) {
       const response = await fetch(ollamaUrl, {
         method: "POST",

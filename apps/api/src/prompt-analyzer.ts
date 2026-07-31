@@ -14,7 +14,8 @@ interface PromptAnalyzerOptions {
   apiKey: string;
   model: string;
   contextWindow: number;
-  nativeOllama?: boolean;
+  /** Required — see the note on OpenAICompatibleProviderOptions.nativeOllama. */
+  nativeOllama: boolean;
   scheduler: InferenceScheduler;
 }
 
@@ -181,7 +182,7 @@ export class LocalPromptAnalyzer implements PromptAnalyzer {
     this.#apiKey = options.apiKey;
     this.#model = options.model;
     this.#contextWindow = options.contextWindow;
-    this.#nativeOllama = options.nativeOllama ?? true;
+    this.#nativeOllama = options.nativeOllama;
     this.#scheduler = options.scheduler;
   }
 

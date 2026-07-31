@@ -88,6 +88,7 @@ describe("OpenAICompatibleProvider", () => {
       qualityRating: 60,
       capabilities: ["chat", "reasoning", "coding", "documents"],
       reasoningEffort: "none",
+      nativeOllama: false,
     });
 
     const chunks: string[] = [];
@@ -173,7 +174,7 @@ describe("OpenAICompatibleProvider", () => {
     expect(systemMessage).toContain("Reasoning summary");
     expect(systemMessage).toContain("Never reveal hidden chain-of-thought");
     expect(systemMessage).toContain(
-      "exactly one <quorum-final>...</quorum-final> envelope",
+      'put the complete user-facing answer only in the required JSON "answer" field',
     );
     expect(systemMessage).toContain(
       "request compiler classified this as conversation",
@@ -218,6 +219,7 @@ describe("OpenAICompatibleProvider", () => {
         qualityRating: 40,
         capabilities: ["chat"],
         reasoningEffort: "none",
+        nativeOllama: false,
       });
 
       for await (const _ of provider.stream(
@@ -265,6 +267,7 @@ describe("OpenAICompatibleProvider", () => {
       contextWindow: 16_384,
       qualityRating: 50,
       capabilities: ["chat"],
+      nativeOllama: false,
     });
 
     const input = modelInput([], "balanced", "standard", [
@@ -679,7 +682,7 @@ describe("OpenAICompatibleProvider", () => {
 
     await expect(consume()).rejects.toMatchObject({
       kind: "unsafe_output",
-      message: "Compatible model returned no Quorum final-answer envelope.",
+      message: "Compatible model returned no valid structured public answer.",
     });
     expect(chunks).toEqual([]);
   });
@@ -694,7 +697,7 @@ describe("OpenAICompatibleProvider", () => {
           new Response(
             JSON.stringify({
               choices: [
-                { message: { content: finalAnswer(" \n\t\u200B ") } },
+                { message: { content: structuredAnswer(" \n\t\u200B ") } },
               ],
             }),
             { headers: { "content-type": "application/json" } },
@@ -721,7 +724,7 @@ describe("OpenAICompatibleProvider", () => {
 
     await expect(consume()).rejects.toMatchObject({
       kind: "unsafe_output",
-      message: "Compatible model returned an empty Quorum final-answer envelope.",
+      message: "Compatible model returned an empty structured public answer.",
     });
     expect(chunks).toEqual([]);
   });
@@ -788,6 +791,7 @@ describe("OpenAICompatibleProvider", () => {
       maxOutputTokens: 64,
       qualityRating: 10,
       capabilities: ["chat"],
+      nativeOllama: false,
     });
     const input = modelInput();
     input.messages[0] = {
@@ -827,6 +831,7 @@ describe("OpenAICompatibleProvider", () => {
       maxOutputTokens: 64,
       qualityRating: 10,
       capabilities: ["chat"],
+      nativeOllama: false,
     });
     const input = modelInput();
     input.messages = [
@@ -884,6 +889,7 @@ describe("OpenAICompatibleProvider", () => {
       contextWindow: 8_192,
       qualityRating: 10,
       capabilities: ["chat"],
+      nativeOllama: false,
     });
 
     const chunks: string[] = [];
@@ -892,15 +898,22 @@ describe("OpenAICompatibleProvider", () => {
     expect(chunks).toEqual(["complete"]);
   });
 
-  it("does not let a post-terminal SSE frame complete an envelope", async () => {
+  // The property: content arriving AFTER the terminal marker must never be
+  // used to complete the answer, or a server could append to a finished
+  // response. Ported from the envelope protocol to JSON so it exercises the
+  // path that actually runs on this transport now. The two fragments
+  // concatenate to exactly `{"answer":"SAFE + POST_TERMINAL"}` — valid JSON
+  // that would yield if the post-terminal frame were ever consumed, so this
+  // fails loudly rather than vacuously if the guard regresses.
+  it("does not let a post-terminal SSE frame complete the answer", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue(
         new Response(
           [
-            'data: {"choices":[{"delta":{"content":"<quorum-final>SAFE"},"finish_reason":"stop"}]}',
+            'data: {"choices":[{"delta":{"content":"{\\"answer\\":\\"SAFE"},"finish_reason":"stop"}]}',
             "",
-            'data: {"choices":[{"delta":{"content":" + POST_TERMINAL</quorum-final>"},"finish_reason":null}]}',
+            'data: {"choices":[{"delta":{"content":" + POST_TERMINAL\\"}"},"finish_reason":null}]}',
             "",
             "",
           ].join("\n"),
@@ -919,6 +932,7 @@ describe("OpenAICompatibleProvider", () => {
       contextWindow: 8_192,
       qualityRating: 10,
       capabilities: ["chat"],
+      nativeOllama: false,
     });
     const chunks: string[] = [];
     const consume = async () => {
@@ -927,7 +941,7 @@ describe("OpenAICompatibleProvider", () => {
 
     await expect(consume()).rejects.toMatchObject({
       kind: "unsafe_output",
-      message: "stream returned an incomplete Quorum final-answer envelope.",
+      message: "stream returned no valid structured public answer.",
     });
     expect(chunks).toEqual([]);
   });
@@ -953,6 +967,7 @@ describe("OpenAICompatibleProvider", () => {
       contextWindow: 8_192,
       qualityRating: 10,
       capabilities: ["chat"],
+      nativeOllama: false,
     });
     const chunks: string[] = [];
     const consume = async () => {
@@ -961,7 +976,7 @@ describe("OpenAICompatibleProvider", () => {
 
     await expect(consume()).rejects.toMatchObject({
       kind: "unsafe_output",
-      message: "stream returned no Quorum final-answer envelope.",
+      message: "stream returned no valid structured public answer.",
     });
     expect(chunks).toEqual([]);
   });
@@ -987,6 +1002,7 @@ describe("OpenAICompatibleProvider", () => {
       contextWindow: 8_192,
       qualityRating: 10,
       capabilities: ["chat"],
+      nativeOllama: false,
     });
 
     const chunks: string[] = [];
@@ -1107,6 +1123,7 @@ describe("OpenAICompatibleProvider", () => {
       contextWindow: 8_192,
       qualityRating: 10,
       capabilities: ["chat"],
+      nativeOllama: false,
     });
     const chunks: string[] = [];
     const consume = async () => {
@@ -1140,6 +1157,7 @@ describe("OpenAICompatibleProvider", () => {
       contextWindow: 8_192,
       qualityRating: 10,
       capabilities: ["chat"],
+      nativeOllama: false,
     });
     const chunks: string[] = [];
     const consume = async () => {
@@ -1148,7 +1166,7 @@ describe("OpenAICompatibleProvider", () => {
 
     await expect(consume()).rejects.toMatchObject({
       kind: "unsafe_output",
-      message: "limited returned an incomplete Quorum final-answer envelope.",
+      message: "limited returned no valid structured public answer.",
     });
     expect(chunks).toEqual([]);
   });
@@ -1179,6 +1197,7 @@ describe("OpenAICompatibleProvider", () => {
       qualityRating: 10,
       capabilities: ["chat"],
       timeouts: { firstTokenMs: 10, idleMs: 20, totalMs: 30 },
+      nativeOllama: false,
     });
     const consume = async () => {
       for await (const _chunk of provider.stream(modelInput())) {
@@ -1283,6 +1302,7 @@ describe("OpenAICompatibleProvider", () => {
       qualityRating: 10,
       capabilities: ["chat"],
       timeouts: { firstTokenMs: 10, idleMs: 20, totalMs: 30 },
+      nativeOllama: false,
     });
     const consume = async () => {
       for await (const _chunk of provider.stream(modelInput())) {
@@ -1431,6 +1451,7 @@ describe("OpenAICompatibleProvider", () => {
         validatedOutputMs: 40,
         totalMs: 50,
       },
+      nativeOllama: false,
     });
     const consume = async () => {
       const chunks: string[] = [];
@@ -1534,6 +1555,7 @@ describe("OpenAICompatibleProvider", () => {
       qualityRating: 10,
       capabilities: ["chat", "reasoning"],
       reasoningEffort: "none",
+      nativeOllama: false,
     });
 
     const chunks: string[] = [];
@@ -1570,6 +1592,7 @@ describe("OpenAICompatibleProvider", () => {
       qualityRating: 10,
       capabilities: ["chat", "reasoning"],
       reasoningEffort: "none",
+      nativeOllama: false,
     });
     const consume = async () => {
       for await (const _chunk of provider.stream(modelInput())) {
@@ -1598,6 +1621,7 @@ describe("OpenAICompatibleProvider", () => {
       contextWindow: 8_192,
       qualityRating: 10,
       capabilities: ["chat"],
+      nativeOllama: false,
     });
     const consume = async () => {
       for await (const _chunk of provider.stream(modelInput())) {
@@ -1634,6 +1658,7 @@ describe("OpenAICompatibleProvider", () => {
       maxOutputTokens: 1,
       qualityRating: 10,
       capabilities: ["chat"],
+      nativeOllama: false,
     });
     const consume = async () => {
       for await (const _chunk of provider.stream(modelInput())) {
@@ -1658,6 +1683,7 @@ describe("OpenAICompatibleProvider", () => {
           contextWindow: 8_192,
           qualityRating: 10,
           capabilities: ["chat"],
+          nativeOllama: false,
         }),
     ).toThrow("QUORUM_CLOUD_BASE_URL must use HTTPS");
   });

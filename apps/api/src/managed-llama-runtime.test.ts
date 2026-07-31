@@ -14,6 +14,7 @@ import {
   buildManagedLlamaArguments,
   loadManagedLlamaManifest,
   renderManagedLlamaPreset,
+  startManagedLlamaOrDegrade,
   withManagedLlamaEndpoint,
   type ManagedLlamaManifest,
 } from "./managed-llama-runtime.js";
@@ -211,6 +212,7 @@ describe("managed llama.cpp runtime", () => {
         baseUrl: "http://127.0.0.1:43123/v1",
         apiKey: "ephemeral",
         modelIds: ["quorum-prompt", "quorum-main"],
+        contextWindows: new Map(),
       }).local,
     ).toMatchObject({
       baseUrl: "http://127.0.0.1:43123/v1",
@@ -223,7 +225,99 @@ describe("managed llama.cpp runtime", () => {
         baseUrl: "http://127.0.0.1:43123/v1",
         apiKey: "ephemeral",
         modelIds: ["quorum-main"],
+        contextWindows: new Map(),
       }),
     ).toThrow("missing configured model IDs: quorum-prompt");
+  });
+
+  // The manifest renders contextWindow into the preset as `ctx-size`, so it
+  // describes the server that is actually running. Before this, only the
+  // endpoint was swapped and the declared window survived, which let
+  // fitConversationToContext budget input against a window the server did not
+  // have — surfacing as a provider fault rather than a misconfiguration.
+  it("takes each model's context window from the manifest, not the environment", () => {
+    const reconciled = withManagedLlamaEndpoint(appConfig, {
+      baseUrl: "http://127.0.0.1:43123/v1",
+      apiKey: "ephemeral",
+      modelIds: ["quorum-prompt", "quorum-main"],
+      contextWindows: new Map([
+        ["quorum-main", 8_192],
+        ["quorum-prompt", 2_048],
+      ]),
+    }).local;
+
+    expect(appConfig.local.models[0]?.contextWindow).toBe(16_384);
+    expect(reconciled.models[0]?.contextWindow).toBe(8_192);
+    expect(reconciled.promptAnalyzer.contextWindow).toBe(2_048);
+  });
+
+  it("keeps the declared window when the manifest does not name the model", () => {
+    const reconciled = withManagedLlamaEndpoint(appConfig, {
+      baseUrl: "http://127.0.0.1:43123/v1",
+      apiKey: "ephemeral",
+      modelIds: ["quorum-prompt", "quorum-main"],
+      contextWindows: new Map([["quorum-main", 8_192]]),
+    }).local;
+
+    expect(reconciled.models[0]?.contextWindow).toBe(8_192);
+    expect(reconciled.promptAnalyzer.contextWindow).toBe(4_096);
+  });
+
+  // An absent Ollama leaves the app usable on the scaffold responder. Any
+  // managed-runtime problem used to throw out of index.ts into
+  // process.exit(1) — a misconfigured OPTIONAL runtime taking down the whole
+  // API. These pin the asymmetry closed.
+  describe("degrading instead of exiting", () => {
+    it("is a no-op when no managed runtime is configured", async () => {
+      let degraded = false;
+      const result = await startManagedLlamaOrDegrade(appConfig, () => {
+        degraded = true;
+      });
+
+      expect(result.runtime).toBeUndefined();
+      expect(result.config).toBe(appConfig);
+      expect(degraded).toBe(false);
+    });
+
+    it("returns the untouched config and reports why, instead of throwing", async () => {
+      const configured: AppConfig = {
+        ...appConfig,
+        managedLlama: {
+          executable: join(tmpdir(), "definitely-not-a-real-llama-server.exe"),
+          manifestPath: join(tmpdir(), "definitely-not-a-real-manifest.json"),
+          startupTimeoutMs: 1_000,
+        },
+      };
+      const reported: string[] = [];
+
+      const result = await startManagedLlamaOrDegrade(
+        configured,
+        (message) => reported.push(message),
+      );
+
+      expect(result.runtime).toBeUndefined();
+      // Unchanged, so discovery finds no `quorum-main`/`quorum-prompt` and the
+      // runtime reports unavailable — it cannot silently answer from some
+      // other model that happens to be listening.
+      expect(result.config.local.baseUrl).toBe(appConfig.local.baseUrl);
+      expect(result.config.local.transport).toBe("ollama");
+      expect(reported).toHaveLength(1);
+      // The message has to name what to check; "failed to start" sends the
+      // operator to the source.
+      expect(reported[0]).toContain("QUORUM_MANAGED_LLAMA_SERVER");
+      expect(reported[0]).toContain("QUORUM_MANAGED_LLAMA_MODELS");
+      expect(reported[0]).toContain("QUORUM_LOCAL_MODEL");
+    });
+  });
+
+  it("does not mutate the configuration it was given", () => {
+    const before = JSON.stringify(appConfig);
+    withManagedLlamaEndpoint(appConfig, {
+      baseUrl: "http://127.0.0.1:43123/v1",
+      apiKey: "ephemeral",
+      modelIds: ["quorum-prompt", "quorum-main"],
+      contextWindows: new Map([["quorum-main", 8_192]]),
+    });
+    expect(JSON.stringify(appConfig)).toBe(before);
   });
 });

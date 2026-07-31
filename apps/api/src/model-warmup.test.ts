@@ -16,6 +16,10 @@ describe("warmLocalModel", () => {
       baseUrl: "http://127.0.0.1:11434/v1",
       apiKey: "ollama",
       model: "qwen3:4b",
+      // Was implicit: warmup treated an omitted flag as native Ollama, so
+      // these two cases have always exercised the native path. Stated, not
+      // changed.
+      nativeOllama: true,
       scheduler: new InferenceScheduler(),
     });
 
@@ -45,6 +49,10 @@ describe("warmLocalModel", () => {
       baseUrl: "http://127.0.0.1:11434/v1",
       apiKey: "ollama",
       model: "qwen3:4b",
+      // Was implicit: warmup treated an omitted flag as native Ollama, so
+      // these two cases have always exercised the native path. Stated, not
+      // changed.
+      nativeOllama: true,
       scheduler: new InferenceScheduler(),
     });
 

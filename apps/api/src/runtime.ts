@@ -40,14 +40,31 @@ export interface QuorumRuntime {
   refreshLocalModels(force?: boolean): Promise<void>;
 }
 
+/**
+ * Whether a configured model name is present in the runtime's catalogue.
+ *
+ * Compared case-insensitively, because the two gates a managed model must pass
+ * disagreed otherwise. `waitUntilReady` lowercases both sides before comparing
+ * catalogue IDs, and `withManagedLlamaEndpoint` checks the configured name
+ * against the *manifest*; this checks it against the *catalogue*. An uppercase
+ * manifest ID therefore passed startup and passed the manifest check, then
+ * failed here once discovery returned the catalogue's spelling — leaving the
+ * runtime `degraded` with the UI reporting "Configured models are not
+ * installed" and nothing naming case as the cause.
+ *
+ * The `:latest` fallback stays: Ollama reports an explicit `latest` tag for a
+ * name configured without one (Q-09). It is inert against llama.cpp preset
+ * IDs, which is harmless.
+ */
 function modelIsInstalled(
   configuredName: string,
   installedModelIds: readonly string[],
 ): boolean {
+  const configured = configuredName.toLowerCase();
+  const installed = installedModelIds.map((id) => id.toLowerCase());
   return (
-    installedModelIds.includes(configuredName) ||
-    (!configuredName.includes(":") &&
-      installedModelIds.includes(`${configuredName}:latest`))
+    installed.includes(configured) ||
+    (!configured.includes(":") && installed.includes(`${configured}:latest`))
   );
 }
 
@@ -209,6 +226,10 @@ export async function createRuntime(config: AppConfig): Promise<QuorumRuntime> {
         contextWindow: config.cloud.contextWindow,
         qualityRating: config.cloud.qualityRating,
         capabilities: ["chat", "reasoning", "coding", "documents"],
+        // A cloud vendor is never Ollama. This was previously implicit — the
+        // option defaulted falsy here and to native at two other call sites,
+        // which is the inconsistency that made the option required.
+        nativeOllama: false,
       }),
     );
   }

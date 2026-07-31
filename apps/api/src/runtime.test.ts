@@ -91,6 +91,20 @@ describe("createLocalProviders", () => {
     ]);
   });
 
+  // The managed llama.cpp path has two gates that disagreed about case:
+  // waitUntilReady lowercases both sides before comparing catalogue IDs, while
+  // this check compared exactly. An uppercase manifest ID passed startup and
+  // then failed discovery, leaving the runtime degraded with the UI blaming a
+  // missing model.
+  it("matches a configured model whose catalogue spelling differs in case", () => {
+    const providers = createLocalProviders(config, ["General", "CODE"]);
+
+    expect(providers.map((provider) => provider.model.role)).toEqual([
+      "general",
+      "coding",
+    ]);
+  });
+
   it("is ready only when every configured role is available", () => {
     const providers = createLocalProviders(config, ["general", "code", "reasoning"]);
 
