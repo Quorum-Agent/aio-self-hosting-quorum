@@ -1,3 +1,4 @@
+import { leavesDevice, locationTier } from "@quorum/core";
 import type {
   Capability,
   ExecutionAttempt,
@@ -140,8 +141,9 @@ export function supportsCapability(
       model.capabilities.includes(capability) &&
       (route === "any" || model.location === "local") &&
       (!policy ||
-        (model.location !== "cloud" || policy.allowCloudModels) &&
-          (policy.id !== "offline" || model.transport === "in_process")),
+        (locationTier(model.location) <= locationTier(policy.inferenceCeiling) &&
+          (policy.inferenceCeiling !== "device" ||
+            model.transport === "in_process"))),
   );
 }
 
@@ -155,9 +157,13 @@ export function describeCloudUsage(
   plan: TaskPlan | undefined,
   models: ModelDescriptor[],
 ): CloudUsageView {
+  // "Cloud" in this view has always meant "off this device" rather than one
+  // tier's name — the badge it drives says the context left the machine. With
+  // tiers between local and cloud, an equality test would have quietly
+  // answered "no" for a LAN peer.
   const cloudAttempts =
-    plan?.attempts?.filter((attempt) => attempt.route === "cloud") ?? [];
-  const selected = plan?.route === "cloud";
+    plan?.attempts?.filter((attempt) => leavesDevice(attempt.route)) ?? [];
+  const selected = plan ? leavesDevice(plan.route) : false;
   const modelContacted = cloudAttempts.some(
     (attempt) => attempt.contextMayHaveBeenTransmitted,
   );
@@ -240,7 +246,7 @@ export function describeModelAttempts(
       label: selected?.label ?? plan.modelId,
       route,
       status: "selected",
-      contextMayHaveBeenTransmitted: route === "cloud",
+      contextMayHaveBeenTransmitted: leavesDevice(route),
     });
   }
 

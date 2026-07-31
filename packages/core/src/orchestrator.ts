@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { getPolicy } from "./policies.js";
+import { leavesDevice, locationTier } from "./types.js";
 import {
   containsSensitiveContent,
   RequestCompiler,
@@ -250,7 +251,10 @@ export class Orchestrator {
     let preparationTracesEmitted = false;
     if (request.requirements.capabilities.includes("web")) {
       const policy = getPolicy(input.policy);
-      if (!policy.allowNetwork) {
+      // A tool ceiling of "none" blocks retrieval outright; otherwise the
+      // tool's own tier is compared against it, so a loopback search engine
+      // and a vendor API are no longer the same question.
+      if (policy.toolCeiling === "none") {
         yield {
           type: "error",
           message: `${policy.label} mode blocks web search. Choose Balanced or Best quality to use current web sources.`,
@@ -304,8 +308,14 @@ export class Orchestrator {
       try {
         plan = this.#planner.plan(
           postSearchRequest,
+          // Web-derived text must not egress on the turn that retrieved it.
+          // This is the in-turn half of Q-01: the planner's own filter keys on
+          // `containsWebGroundedData`, which only inspects PERSISTED assistant
+          // messages and is therefore false during this very turn. Widened
+          // from cloud to anything off-device, since a LAN peer is no more
+          // entitled to freshly retrieved web content than a vendor is.
           this.models.map((model) =>
-            model.location === "cloud" ? { ...model, available: false } : model,
+            leavesDevice(model.location) ? { ...model, available: false } : model,
           ),
         );
       } catch (error) {
@@ -690,7 +700,7 @@ export class Orchestrator {
           ...(drafting ? { stage: "draft" as const } : {}),
           route: provider.model.location,
           status: "completed",
-          contextMayHaveBeenTransmitted: provider.model.location === "cloud",
+          contextMayHaveBeenTransmitted: leavesDevice(provider.model.location),
         });
         plan = { ...plan, attempts: [...attempts] };
         yield {
@@ -709,7 +719,7 @@ export class Orchestrator {
         ...(drafting ? { stage: "draft" as const } : {}),
         route: provider.model.location,
         status: "failed",
-        contextMayHaveBeenTransmitted: provider.model.location === "cloud",
+        contextMayHaveBeenTransmitted: leavesDevice(provider.model.location),
         detail: failureMessage,
       });
       yield {
@@ -771,8 +781,13 @@ export class Orchestrator {
       try {
         fallbackPlan = this.#planner.plan(
           request,
+          // Never escalate egress because something failed. Falling back
+          // used to disable cloud only when the failed provider was local;
+          // stated as a comparison it is "no candidate may sit further out
+          // than the attempt that just failed", which keeps its meaning as
+          // tiers are added instead of leaving network and remote reachable.
           this.models.map((model) =>
-            provider.model.location === "local" && model.location === "cloud"
+            locationTier(model.location) > locationTier(provider.model.location)
               ? { ...model, available: false }
               : model,
           ),
@@ -878,7 +893,7 @@ export class Orchestrator {
           route: hubProvider.model.location,
           status: "completed",
           contextMayHaveBeenTransmitted:
-            hubProvider.model.location === "cloud",
+            leavesDevice(hubProvider.model.location),
         });
         yield { type: "trace", trace: executionTrace(hubStep, "completed") };
       } catch (error) {
@@ -890,7 +905,7 @@ export class Orchestrator {
           route: hubProvider.model.location,
           status: "failed",
           contextMayHaveBeenTransmitted:
-            hubProvider.model.location === "cloud",
+            leavesDevice(hubProvider.model.location),
           detail: failure,
         });
         yield { type: "trace", trace: executionTrace(hubStep, "failed", failure) };

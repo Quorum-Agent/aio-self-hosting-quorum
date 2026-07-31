@@ -287,7 +287,7 @@ export default function App() {
   const runtimePreparing = !runtime || runtimeWarming;
   const networkNotice = !activePolicy
     ? "Checking network policy"
-    : !activePolicy.allowNetwork
+    : activePolicy.toolCeiling === "none"
       ? `${activePolicy.label} keeps network access disabled`
       : runtime?.webSearch?.available
         ? `${activePolicy.label} may search the web automatically when current sources are needed`
@@ -636,7 +636,8 @@ export default function App() {
                 {selectablePolicies(runtime?.policies ?? []).map((definition) => (
                   <option key={definition.id} value={definition.id}>
                     {definition.label}
-                    {definition.allowNetwork && runtime?.webSearch?.available
+                    {definition.toolCeiling !== "none" &&
+                    runtime?.webSearch?.available
                       ? " · web when needed"
                       : ""}
                   </option>

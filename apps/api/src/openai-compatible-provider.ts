@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { getPolicy, ModelExecutionError } from "@quorum/core";
+import { getPolicy, locationTier, ModelExecutionError } from "@quorum/core";
 import type {
   Capability,
   ChatMessage,
@@ -195,8 +195,8 @@ function systemContext(
     .filter(
       (candidate) =>
         candidate.available &&
-        (candidate.location !== "cloud" ||
-          policyDefinition.allowCloudModels),
+        locationTier(candidate.location) <=
+          locationTier(policyDefinition.inferenceCeiling),
     )
     .map(runtimeModelSummary);
   const unavailableRoutes = routedModels
@@ -206,15 +206,17 @@ function systemContext(
     .filter(
       (candidate) =>
         candidate.available &&
-        candidate.location === "cloud" &&
-        !policyDefinition.allowCloudModels,
+        locationTier(candidate.location) >
+          locationTier(policyDefinition.inferenceCeiling),
     )
     .map(runtimeModelSummary);
   const availableTools = runtimeTools.filter(
     (tool) =>
       tool.available &&
-      (policyDefinition.allowNetwork ||
-        !tool.capabilities.includes("web")),
+      (!tool.capabilities.includes("web") ||
+        (policyDefinition.toolCeiling !== "none" &&
+          locationTier(tool.location) <=
+            locationTier(policyDefinition.toolCeiling))),
   );
   const availableCapabilities = [
     ...new Set([

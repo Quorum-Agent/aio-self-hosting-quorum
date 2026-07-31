@@ -1,14 +1,33 @@
 import { randomUUID } from "node:crypto";
 
 import { getPolicy } from "./policies.js";
+import { leavesDevice, locationTier, modelReach } from "./types.js";
 import type {
   Capability,
   CompiledRequest,
+  ExecutionLocation,
   ModelDescriptor,
   OrchestrationMode,
   PlanStep,
   TaskPlan,
 } from "./types.js";
+
+/**
+ * How far this plan actually reaches: the furthest tier of any step.
+ *
+ * Previously `route` was the *spoke's* location, so a stage running further
+ * out than the spoke — a cloud hub behind a local spoke — was invisible to
+ * every consumer that keyed off it, including the disclosure. Taking a maximum
+ * means hub, spoke and retrieval are covered by one rule.
+ */
+function planReach(steps: readonly PlanStep[]): Exclude<ExecutionLocation, "device"> {
+  let reach: Exclude<ExecutionLocation, "device"> = "local";
+  for (const step of steps) {
+    if (step.location === "device") continue;
+    if (locationTier(step.location) > locationTier(reach)) reach = step.location;
+  }
+  return reach;
+}
 
 const SPECIALTY_BONUS = 18;
 
@@ -89,14 +108,25 @@ export class RoutePlanner {
     const eligible = models.filter((model) => {
       if (excludedModelIds.has(model.id)) return false;
       if (!model.available || !supports(model, request)) return false;
-      if (model.location === "cloud" && !policy.allowCloudModels) return false;
-      if (request.policy === "offline" && model.transport !== "in_process") return false;
+      // One comparison replaces two rules. The old pair was a cloud-only flag
+      // plus a policy special-cased BY NAME — `request.policy === "offline"` —
+      // which meant invariant I-4 ("offline excludes loopback as well as
+      // remote") lived in the planner rather than in the policy. `offline`
+      // now simply declares a ceiling of `device`, and any tier added later is
+      // covered without touching this line.
+      if (locationTier(modelReach(model)) > locationTier(policy.inferenceCeiling)) {
+        return false;
+      }
       return true;
     });
 
     const requiresLocalProcessing =
       request.requirements.containsSensitiveData ||
       request.requirements.containsWebGroundedData;
+    // Deliberately an equality test, not a ceiling comparison. This is a
+    // floor on data sensitivity, independent of what the policy permits:
+    // sensitive or web-grounded content must stay on the device even under a
+    // policy whose ceiling would allow a LAN peer.
     const safeEligible = requiresLocalProcessing
       ? eligible.filter((model) => model.location === "local")
       : eligible;
@@ -143,18 +173,14 @@ export class RoutePlanner {
     // several general models it should be the best one rather than whichever
     // was declared first.
     const hub = this.#selectHub(sorted, selected);
-    // #selectHub only ever returns a local model, so the spoke is the only
-    // stage that can carry context off the device. If a cloud hub is ever
-    // allowed, this must become "cloud if either stage is remote".
-    const route = selected.location;
     const selectedSpecialties = matchedSpecialties(selected, request);
     const rationale = degraded
       ? `${policy.label} mode found no model with every required capability; the local scaffold will explain the limitation.`
-      : route === "local"
+      : !leavesDevice(selected.location)
         ? selectedSpecialties.length > 0
           ? `${policy.label} mode selected a local ${selectedSpecialties.join(" and ")} specialist.`
           : `${policy.label} mode selected an available local model with the required capabilities.`
-        : `${policy.label} mode selected a cloud model because it best matches the request requirements.`;
+        : `${policy.label} mode selected a ${selected.location} model because it best matches the request requirements.`;
     const steps: PlanStep[] = [
       {
         id: randomUUID(),
@@ -193,6 +219,10 @@ export class RoutePlanner {
         : []),
     ];
 
+    // Computed from the finished step list, so a stage that reaches further
+    // than the selected model cannot go unreported.
+    const route = planReach(steps);
+
     return {
       id: randomUUID(),
       requestId: request.id,
@@ -224,7 +254,10 @@ export class RoutePlanner {
         containsWebGroundedData:
           request.requirements.containsWebGroundedData,
       },
-      ...(route === "cloud"
+      // Keyed on whether anything left the device, not on one tier's name. A
+      // `network` or `remote` step used to produce no disclosure at all,
+      // because only `"cloud"` was tested.
+      ...(leavesDevice(route)
         ? {
             cloudDisclosure:
               "The conversation context required by the selected model will leave this device.",
