@@ -85,7 +85,19 @@ export function modelReach(model: {
   location: Exclude<ExecutionLocation, "device">;
   transport: "in_process" | "loopback" | "remote";
 }): ExecutionLocation {
-  return model.transport === "in_process" ? "device" : model.location;
+  // `in_process` only downgrades a model that ALSO declares itself local.
+  //
+  // The two fields can disagree, and the first version of this trusted
+  // transport unconditionally. A descriptor claiming `location: "cloud"` with
+  // `transport: "in_process"` then reported tier `device` and passed every
+  // ceiling — verified: it was selected under both `private` and `offline`,
+  // which the previous boolean check refused. Where the fields contradict each
+  // other the safe reading is the further of the two, so this can only ever
+  // return the declared location or something nearer, and only when the
+  // declaration agrees with it.
+  return model.transport === "in_process" && model.location === "local"
+    ? "device"
+    : model.location;
 }
 
 export type Capability =

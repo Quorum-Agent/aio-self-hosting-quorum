@@ -266,3 +266,40 @@ describe("the tiers between local and cloud are not treated as local", () => {
     expect(sensitive.cloudDisclosure).toBeUndefined();
   });
 });
+
+describe("a model cannot claim a nearer tier than its location", () => {
+  // Found by probing, not by review. `modelReach` treats an in-process model
+  // as tier `device` — that is how `offline` stopped being special-cased by
+  // name. The first version trusted `transport` unconditionally, so a
+  // descriptor claiming cloud while claiming in_process reported `device`,
+  // passed every ceiling, and was selected under BOTH private and offline.
+  // The previous boolean check refused it, so that was a widening.
+  const contradictory: ModelDescriptor = {
+    id: "cloud:contradictory",
+    label: "Contradictory",
+    provider: "test",
+    location: "cloud",
+    transport: "in_process",
+    capabilities: ["chat", "reasoning", "coding", "documents"],
+    contextWindow: 8_192,
+    // High enough that only a refusal can keep it out.
+    qualityRating: 999,
+    available: true,
+  };
+
+  it.each<PolicyMode>(["private", "offline"])(
+    "%s refuses a cloud model that declares an in-process transport",
+    (policy) => {
+      expect(() => planFor(policy, [contradictory])).toThrow(
+        /No available model satisfies/u,
+      );
+    },
+  );
+
+  it("still lets a genuinely in-process local model serve offline mode", () => {
+    // The downgrade has to keep working, or offline has no route at all.
+    const plan = planFor("offline", [contradictory, scaffold]);
+
+    expect(plan.modelId).toBe(scaffold.id);
+  });
+});
