@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   discoverModels,
   estimateInputTokens,
+  parseCompletionFrame,
   OpenAICompatibleProvider,
 } from "./openai-compatible-provider.js";
 import type { ModelDescriptor, ModelStreamInput } from "@quorum/core";
@@ -1720,5 +1721,59 @@ describe("OpenAICompatibleProvider", () => {
     await expect(
       discoverModels("http://127.0.0.1:11434/v1", "ollama"),
     ).resolves.toEqual({ connected: false, modelIds: [] });
+  });
+});
+
+describe("token usage capture", () => {
+  // Reported counts, never estimated. A provider that says nothing has not
+  // spent nothing, and the distinction is what stops a future spend cap from
+  // developing a hole at whichever backend happens to stay quiet.
+  it("captures usage from a chunk that carries it", () => {
+    const frame = [
+      'data: {"choices":[{"delta":{"content":"hi"}}]}',
+      'data: {"choices":[],"usage":{"prompt_tokens":128,"completion_tokens":7}}',
+    ].join("\n");
+
+    expect(parseCompletionFrame(frame).usage).toEqual({
+      promptTokens: 128,
+      completionTokens: 7,
+    });
+  });
+
+  it("reports no usage when the server never sends any", () => {
+    // The fixture can reach the wrong answer: this frame is a complete,
+    // well-formed exchange, so anything that fabricated a zeroed usage object
+    // rather than omitting it would be visible here.
+    const frame = [
+      'data: {"choices":[{"delta":{"content":"hi"}}]}',
+      'data: {"choices":[{"finish_reason":"stop"}]}',
+    ].join("\n");
+    const parsed = parseCompletionFrame(frame);
+
+    expect(parsed.terminal).toBe(true);
+    expect(parsed.usage).toBeUndefined();
+  });
+
+  it("treats a missing count as zero rather than dropping the report", () => {
+    const frame =
+      'data: {"choices":[],"usage":{"prompt_tokens":40}}';
+
+    expect(parseCompletionFrame(frame).usage).toEqual({
+      promptTokens: 40,
+      completionTokens: 0,
+    });
+  });
+
+  it("does not read a usage record that arrives after the terminal chunk", () => {
+    // Deliberate. This transport rejects post-terminal records, and that
+    // property is worth more than an exact token count — so usage arriving in
+    // a trailing chunk is missed on purpose and the caller estimates instead.
+    // If this ever starts passing, someone relaxed the terminal break.
+    const frame = [
+      'data: {"choices":[{"finish_reason":"stop"}]}',
+      'data: {"choices":[],"usage":{"prompt_tokens":999,"completion_tokens":999}}',
+    ].join("\n");
+
+    expect(parseCompletionFrame(frame).usage).toBeUndefined();
   });
 });
