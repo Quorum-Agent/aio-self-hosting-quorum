@@ -316,6 +316,21 @@ describe("RequestCompiler", () => {
     expect(compiled.requirements.capabilities).not.toContain("web");
   });
 
+  it("lets the most recent standing authorization re-grant web after an earlier denial", () => {
+    // Q-14: directives are resolved newest-first, not any-denial-wins. A user
+    // who lifts their own offline restriction expects the network back.
+    const compiled = compiler.compile(
+      conversationRequest([
+        "Do not use the internet for this.",
+        "Actually, search the web for the latest Quorum release.",
+        "Also tell me more.",
+      ]),
+    );
+
+    expect(compiled.requirements.intent).toBe("research");
+    expect(compiled.requirements.capabilities).toContain("web");
+  });
+
   it.each([
     "What is my current medication schedule?",
     "Give me the sources for my HIV medication.",
@@ -833,6 +848,11 @@ describe("RequestCompiler", () => {
       "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDgL7SFnKcY3Q8u",
       "private_key",
     ],
+    // Q-02: "social" alone is common shorthand for a social security number;
+    // the dashed form is not the only shape a bare nine-digit SSN takes.
+    ["My social is 123456789", "government_id"],
+    ["social: 123456789", "government_id"],
+    ["social security number 123456789", "government_id"],
   ])("detects normalized sensitive %s data", (value, category) => {
     const compiled = compiler.compile(request(value));
 
@@ -845,6 +865,8 @@ describe("RequestCompiler", () => {
     "Explain what an API key is.",
     "What does 'confidential' mean in a legal contract?",
     "Order number 4532015112830366 shipped today",
+    "Her social media following is 1234567890 strong",
+    "The social had 12345 attendees",
   ])("does not poison a conversation for non-secret language: %s", (value) => {
     expect(containsSensitiveContent(value)).toBe(false);
   });
@@ -869,6 +891,33 @@ describe("RequestCompiler", () => {
     });
 
     expect(compiled.requirements.containsSensitiveData).toBe(false);
+  });
+
+  it("does not let an assistant message containing a live-looking key poison the next turn", () => {
+    // Q-18: the detector scans user-authored content only. An assistant reply
+    // that quotes a secret-shaped token (e.g. explaining redaction) must not
+    // mark the conversation sensitive and strip cloud/web routing forever.
+    const compiled = compiler.compile({
+      ...request("Tell me more about that."),
+      messages: [
+        {
+          id: "assistant-1",
+          role: "assistant",
+          content:
+            "Keys such as sk-ant-api03-XXXXYYYYZZZZ1234567890abcdef should be rotated immediately.",
+          createdAt: new Date(0).toISOString(),
+        },
+        {
+          id: "user-2",
+          role: "user",
+          content: "Tell me more about that.",
+          createdAt: new Date(1).toISOString(),
+        },
+      ],
+    });
+
+    expect(compiled.requirements.containsSensitiveData).toBe(false);
+    expect(compiled.requirements.sensitiveDataCategories).toEqual([]);
   });
 
   it("marks prior web-grounded assistant output as local-only context", () => {

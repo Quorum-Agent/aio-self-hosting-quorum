@@ -233,7 +233,7 @@ export function detectSensitiveContent(
 
   if (
     /\b\d{3}-\d{2}-\d{4}\b/.test(normalized) ||
-    /\b(?:ssn|social security(?: number)?)\s*(?::|=|is)?\s*\d{9}\b/i.test(
+    /\b(?:ssn|social security(?: number)?|social)\s*(?:number|no\.?)?\s*(?::|=|is)?\s*\d{9}\b/i.test(
       normalized,
     )
   ) {
