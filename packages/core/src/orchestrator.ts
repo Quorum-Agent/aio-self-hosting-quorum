@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomUUID } from "./uuid.js";
 
 import { getPolicy } from "./policies.js";
 import { safeDisplayText } from "./safe-text.js";
