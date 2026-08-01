@@ -173,6 +173,37 @@ async function readModelPricing() {
   }
 }
 
+/**
+ * Per-host prices, keyed `model|host`.
+ *
+ * An aggregator routes one model id across several upstreams at different
+ * rates, and the response names the host it used (`body.provider`). Without
+ * this, a computed total is priced from a headline figure that may be no
+ * host's actual rate.
+ */
+async function readHostPricing(models) {
+  const table = new Map();
+  for (const id of models) {
+    try {
+      const res = await fetch(`https://openrouter.ai/api/v1/models/${id}/endpoints`);
+      if (!res.ok) continue;
+      const data = (await res.json()).data;
+      for (const endpoint of data?.endpoints ?? []) {
+        const host = endpoint.provider_name ?? endpoint.name;
+        if (!host) continue;
+        table.set(`${id}|${host}`, {
+          prompt: Number(endpoint.pricing?.prompt ?? 0),
+          completion: Number(endpoint.pricing?.completion ?? 0),
+        });
+      }
+    } catch {
+      // A missing endpoint table falls back to the listed price, which is
+      // wrong for multi-host models but better than dropping the call.
+    }
+  }
+  return table;
+}
+
 async function readAccountSpend(apiKey) {
   try {
     const res = await fetch("https://openrouter.ai/api/v1/auth/key", {
@@ -232,6 +263,8 @@ async function main() {
 
   const results = new Map(questions.map((q) => [q.key, []]));
   const pricing = await readModelPricing();
+  const hostPricing = await readHostPricing(MODELS);
+  const providersSeen = new Set();
   let spent = 0;
   let computed = 0;
   let promptTokens = 0;
@@ -285,7 +318,19 @@ async function main() {
         if (!inTokens && !outTokens) uncountedCalls++;
         promptTokens += inTokens;
         completionTokens += outTokens;
-        const rate = pricing.get(model);
+        // Price against the host that ACTUALLY served this call, not the
+        // model's headline rate. The two are frequently not the same number:
+        // `google/gemini-3.1-pro-preview` is served by six hosts ranging
+        // $1.00–$3.60 per million input tokens, a 3.6x band, with the listed
+        // price sitting mid-range — so pricing from the list is wrong in an
+        // unpredictable direction. `deepseek/deepseek-r1` spans $0.70 (Novita)
+        // to $1.48 (Azure). A single-host model like `mistral-large` has no
+        // spread and the distinction does not arise, which is exactly why a
+        // one-model test showed computed and self-reported agreeing perfectly
+        // and hid this.
+        const host = body.provider;
+        if (host) providersSeen.add(`${model} via ${host}`);
+        const rate = hostPricing.get(`${model}|${host}`) ?? pricing.get(model);
         if (rate) {
           computed += inTokens * rate.prompt + outTokens * rate.completion;
         }
@@ -324,56 +369,51 @@ async function main() {
       ? spendAfter - spendBefore
       : undefined;
 
-  // THREE measures of the same run, each wrong in a different direction, none
-  // trustworthy alone:
+  // `usage.cost` is authoritative. Verified: five calls to one model reported
+  // $0.005640, computed $0.005640, and the account ledger — once given five
+  // minutes to settle — moved by exactly $0.005640. Three-way agreement to the
+  // cent.
   //
-  //   self-reported  sum of `usage.cost` — misses responses the provider did
-  //                  not price, so it under-reports silently
-  //   ledger delta   the account's own figure — authoritative, but it LAGS,
-  //                  and read too soon it returns 0 for a paid run
-  //   computed       tokens x published list price — exact when token counts
-  //                  arrive, silently 0 when they do not, and priced from
-  //                  figures the aggregator itself calls estimates
+  // Everything else here is a check on that number, not a rival to it:
   //
-  // The first two fail toward "this was free". The third does not, and a
-  // measured run corrected an earlier version of this comment that claimed it
-  // did: computed came out 14% ABOVE what the aggregator charged ($0.0843 vs
-  // $0.0741), because a request is routed to whichever upstream is cheapest
-  // while the list price is the headline. So computed can land either side —
-  // short when token counts are missing, high when the actual route beat list.
+  //   ledger delta   the same figure, minutes late. Read too early it returns
+  //                  0, which reads as "free" and is why an earlier version of
+  //                  this script reported a paid run as costing nothing.
+  //   computed       tokens x a price table. UNRELIABLE, and kept only to flag
+  //                  disagreement. An aggregator routes one model id across
+  //                  hosts at different rates — deepseek-r1 came back via
+  //                  Novita ($0.70/M) on one run and Azure ($1.48/M) on the
+  //                  next — and several hosts share a display name, so
+  //                  `model|host` does not identify an endpoint. Measured 14%
+  //                  and then 44% above the true cost.
   //
-  // Taking the largest is still right for a budget, but for a different reason
-  // than "they all under-report": it is the conservative estimate, and a
-  // budget that stops early is recoverable while one that overshoots is not.
-  // Both earlier versions of this block reported a paid run as costing nothing
-  // — once by trusting the per-call sum, once by trusting the ledger.
-  const candidates = [
-    { label: "self-reported", value: spent },
-    { label: "computed from tokens", value: computed },
-  ];
-  if (delta !== undefined && delta >= 0) {
-    candidates.push({ label: "measured on the key", value: delta });
-  }
-  const best = candidates.reduce((a, b) => (b.value > a.value ? b : a));
-
+  // So report the billed figure, and treat a large computed gap as a reason to
+  // look rather than as a better number.
+  const primary = spent;
   console.log(
     `${promptTokens.toLocaleString()} in + ${completionTokens.toLocaleString()} out tokens`,
   );
-  console.log(`cost $${best.value.toFixed(4)} (${best.label} — the largest of:)`);
-  console.log(`   self-reported        $${spent.toFixed(4)}`);
-  console.log(`   computed from tokens $${computed.toFixed(4)}`);
-  console.log(
-    delta === undefined
-      ? "   ledger delta         unavailable"
-      : delta < 0
-        ? "   ledger delta         a counter reset mid-run; unusable"
-        : `   ledger delta         $${delta.toFixed(4)}${delta === 0 ? " (lagging, not a confirmation)" : ""}`,
-  );
-  if (unpricedCalls > 0) {
-    console.log(`   ${unpricedCalls} call(s) returned no cost — self-reported total is short`);
+  console.log(`cost $${primary.toFixed(4)} billed`);
+  if (delta !== undefined && delta > 0) {
+    const drift = Math.abs(delta - primary);
+    console.log(
+      `   ledger delta         $${delta.toFixed(4)}${drift < 0.0002 ? " (agrees)" : " — DISAGREES, investigate"}`,
+    );
+  } else if (delta === 0) {
+    console.log("   ledger delta         $0.0000 (lagging; needs ~5 minutes, not a confirmation)");
+  } else if (delta !== undefined) {
+    console.log("   ledger delta         a counter reset mid-run; unusable");
   }
-  if (uncountedCalls > 0) {
-    console.log(`   ${uncountedCalls} call(s) returned no token counts — computed total is short`);
+  if (computed > 0) {
+    const gap = ((computed / primary - 1) * 100).toFixed(0);
+    console.log(`   computed cross-check $${computed.toFixed(4)} (${gap}% — price-table noise, not a correction)`);
+  }
+  if (unpricedCalls > 0) {
+    // The one case where the billed figure really is short.
+    console.log(`   ${unpricedCalls} call(s) returned NO cost — billed total is genuinely incomplete`);
+  }
+  if (providersSeen.size > 0) {
+    console.log(`   routed via: ${[...providersSeen].join(", ")}`);
   }
   console.log("");
 
