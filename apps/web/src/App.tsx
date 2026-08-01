@@ -43,8 +43,10 @@ import {
 import { createRandomId } from "./lib/random-id";
 import { useModalSurface } from "./lib/use-modal-surface";
 import {
+  describeCapabilityProvenance,
   describeRuntimeStatus,
   selectablePolicies,
+  unverifiedCapabilityModels,
   supportsCapability,
 } from "./lib/runtime-view";
 
@@ -810,6 +812,9 @@ export default function App() {
         traces={traces}
         verbosity={verbosity}
         localRuntimeProblem={runtime?.localRuntime.problem}
+        capabilityAdjustments={runtime?.localRuntime.capabilityAdjustments}
+        unverifiedModels={unverifiedCapabilityModels(runtime?.localRuntime)}
+        capabilityProvenance={describeCapabilityProvenance(runtime?.localRuntime)}
         ref={executionRef}
         onClose={() => setExecutionOpen(false)}
       />

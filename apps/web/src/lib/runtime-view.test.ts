@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import type { LocalRuntimeStatus, ModelDescriptor } from "@quorum/core";
+import type {
+  Capability,
+  LocalModelRoleStatus,
+  LocalRuntimeStatus,
+  ModelDescriptor,
+} from "@quorum/core";
 
 import {
   describeModelAttempts,
@@ -8,6 +13,7 @@ import {
   describeCloudUsage,
   selectablePolicies,
   supportsCapability,
+  unverifiedCapabilityModels,
 } from "./runtime-view";
 
 function status(
@@ -23,6 +29,7 @@ function status(
       configuredModel: role,
       required: role === "general",
       available: availableRoles.includes(role),
+      capabilityProvenance: { confirmed: ["vision"], asserted: ["chat"] },
     })),
   };
 }
@@ -543,6 +550,7 @@ describe("a reported cause outranks the symptom on every unhealthy branch", () =
             configuredModel: "qwen3.5:9b",
             required: true,
             available: false,
+            capabilityProvenance: { confirmed: ["vision"], asserted: ["chat"] },
           },
         ],
         problem: {
@@ -571,12 +579,14 @@ describe("a reported cause outranks the symptom on every unhealthy branch", () =
           configuredModel: "a",
           required: true,
           available: true,
+          capabilityProvenance: { confirmed: ["vision"], asserted: ["chat"] },
         },
         {
           role: "coding",
           configuredModel: "b",
           required: false,
           available: false,
+          capabilityProvenance: { confirmed: ["vision"], asserted: ["chat"] },
         },
       ],
       problem: { summary: "A cause the runtime reported." },
@@ -595,6 +605,7 @@ describe("a reported cause outranks the symptom on every unhealthy branch", () =
             configuredModel: "qwen3.5:9b",
             required: true,
             available: false,
+            capabilityProvenance: { confirmed: ["vision"], asserted: ["chat"] },
           },
         ],
       }).detail,
@@ -612,10 +623,173 @@ describe("a reported cause outranks the symptom on every unhealthy branch", () =
             configuredModel: "a",
             required: true,
             available: true,
+            capabilityProvenance: { confirmed: ["vision"], asserted: ["chat"] },
           },
         ],
         problem: { summary: "stale cause from an earlier failure" },
       }).state,
     ).toBe("ready");
+  });
+});
+
+describe("telling the user the runtime overruled the configuration", () => {
+  function ready(
+    capabilityAdjustments?: Array<{
+      model: string;
+      added: Capability[];
+      removed: Capability[];
+    }>,
+  ): LocalRuntimeStatus {
+    return {
+      state: "ready",
+      endpointConnected: true,
+      roles: [
+        {
+          role: "general",
+          configuredModel: "qwen3.5:9b",
+          required: true,
+          available: true,
+          capabilityProvenance: { confirmed: ["vision"], asserted: ["chat"] },
+        },
+      ],
+      promptAnalyzer: {
+        configuredModel: "qwen3:0.6b",
+        available: true,
+      },
+      ...(capabilityAdjustments ? { capabilityAdjustments } : {}),
+    };
+  }
+
+  // A healthy runtime whose routing differs from the configuration file is
+  // still something the operator should be told without going looking, so the
+  // ready line carries it rather than staying silent until someone opens the
+  // inspector.
+  it("says so on an otherwise healthy status line", () => {
+    expect(
+      describeRuntimeStatus(
+        ready([{ model: "qwen3.5:9b", added: ["vision"], removed: [] }]),
+      ).detail,
+    ).toContain("runtime re-rated 1 model");
+  });
+
+  it("agrees in number", () => {
+    expect(
+      describeRuntimeStatus(
+        ready([
+          { model: "a", added: ["vision"], removed: [] },
+          { model: "b", added: [], removed: ["tools"] },
+        ]),
+      ).detail,
+    ).toContain("runtime re-rated 2 models");
+  });
+
+  // The common case, and the one that must add no noise: nothing was adjusted,
+  // so the line reads exactly as it did before this existed.
+  it("adds nothing when the runtime agreed with the configuration", () => {
+    const detail = describeRuntimeStatus(ready()).detail;
+    expect(detail).not.toContain("re-rated");
+    expect(detail).toBe("general, classifier configured");
+  });
+
+  it("adds nothing for an empty adjustment list", () => {
+    expect(describeRuntimeStatus(ready([])).detail).not.toContain("re-rated");
+  });
+});
+
+describe("capabilities nothing could confirm", () => {
+  function role(
+    configuredModel: string,
+    available: boolean,
+    capabilityProvenance: LocalModelRoleStatus["capabilityProvenance"],
+  ) {
+    return {
+      role: "general" as const,
+      configuredModel,
+      required: true,
+      available,
+      capabilityProvenance,
+    };
+  }
+
+  // The fixture can produce every wrong answer: it holds a verified model that
+  // must not be named, an unverified one that must be, and an unverified model
+  // that is not installed and so is nobody's concern.
+  it("names available models the runtime could not be asked about", () => {
+    expect(
+      unverifiedCapabilityModels({
+        state: "ready",
+        endpointConnected: true,
+        roles: [
+          role("confirmed", true, { confirmed: ["vision"], asserted: ["chat"] }),
+          role("asserted", true, { confirmed: [], asserted: ["chat", "vision"] }),
+          role("not-installed", false, { confirmed: [], asserted: ["chat", "vision"] }),
+        ],
+      }),
+    ).toEqual(["asserted"]);
+  });
+
+  it("says nothing when every available model was confirmed", () => {
+    expect(
+      unverifiedCapabilityModels({
+        state: "ready",
+        endpointConnected: true,
+        roles: [role("confirmed", true, { confirmed: ["vision"], asserted: ["chat"] })],
+      }),
+    ).toEqual([]);
+  });
+
+  it("claims nothing before the runtime has answered", () => {
+    expect(unverifiedCapabilityModels(undefined)).toEqual([]);
+  });
+});
+
+describe("the status line weighs an unconfirmed capability like an adjustment", () => {
+  function readyWith(
+    roles: LocalModelRoleStatus[],
+    capabilityAdjustments?: LocalRuntimeStatus["capabilityAdjustments"],
+  ): LocalRuntimeStatus {
+    return {
+      state: "ready",
+      endpointConnected: true,
+      roles,
+      promptAnalyzer: { configuredModel: "c", available: true },
+      ...(capabilityAdjustments ? { capabilityAdjustments } : {}),
+    };
+  }
+
+  function role(
+    configuredModel: string,
+    confirmed: Capability[],
+  ): LocalModelRoleStatus {
+    return {
+      role: "general",
+      configuredModel,
+      required: true,
+      available: true,
+      capabilityProvenance: { confirmed, asserted: ["chat"] },
+    };
+  }
+
+  // The asymmetry a reviewer caught: an adjustment reached the status line, the
+  // inspector and the log, while an unconfirmed capability reached only the
+  // inspector — despite being the one the planner acts on without evidence.
+  it("names unconfirmed capabilities even when nothing was adjusted", () => {
+    expect(describeRuntimeStatus(readyWith([role("m", [])])).detail).toContain(
+      "capabilities unconfirmed for 1 model",
+    );
+  });
+
+  it("names both when both are true", () => {
+    const detail = describeRuntimeStatus(
+      readyWith([role("m", [])], [{ model: "m", added: ["vision"], removed: [] }]),
+    ).detail;
+    expect(detail).toContain("runtime re-rated 1 model");
+    expect(detail).toContain("capabilities unconfirmed for 1 model");
+  });
+
+  it("stays quiet when every capability was confirmed and nothing changed", () => {
+    expect(describeRuntimeStatus(readyWith([role("m", ["vision"])])).detail).toBe(
+      "general, classifier configured",
+    );
   });
 });

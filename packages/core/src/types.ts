@@ -240,6 +240,28 @@ export interface LocalModelRoleStatus {
   modelId?: Id;
   required: boolean;
   available: boolean;
+  /**
+   * Which of this model's capabilities the runtime decided, and which are
+   * still what a configuration file asserts.
+   *
+   * A split rather than a flag, and the first version got that wrong. It
+   * carried `capabilitiesVerified: boolean`, which meant "the probe replied" —
+   * but a probe only ever decides `vision` and `tools`. A model could be marked
+   * verified while `reasoning` and `coding` remained unexamined assertions, so
+   * the flag read as a blessing over a list nobody had checked. An external
+   * reviewer named it as the same silence the field was added to remove.
+   *
+   * `asserted` is the operational warning: those capabilities are eligibility
+   * filters the planner trusts, and nothing has confirmed them. An asserted
+   * `vision` routes an image to a model that cannot see it, failing at
+   * generation rather than at planning.
+   */
+  capabilityProvenance: {
+    /** Decided by the runtime, which was asked and answered. */
+    confirmed: Capability[];
+    /** From configuration. Trusted by the planner, verified by nothing. */
+    asserted: Capability[];
+  };
 }
 
 /**
@@ -264,6 +286,28 @@ export interface LocalRuntimeProblem {
   detail?: string;
 }
 
+/**
+ * A model whose capabilities the runtime decided, against what config declared.
+ *
+ * Recorded rather than silently applied. Capabilities are hard eligibility
+ * filters, so an adjustment changes which requests a model can answer — a
+ * removal can make a request dead-end in the scaffold responder, and an
+ * addition can put a model on a route it has never served before. Either is a
+ * change to routing that the operator did not make, and finding out by
+ * observing different behaviour is the failure mode this repository keeps
+ * finding: the system holds the fact, the interface does not carry it.
+ *
+ * Both directions are kept separately because they mean opposite things. An
+ * addition is a capability the operator has and could not use. A removal is a
+ * claim config was making that the model cannot honour.
+ */
+export interface CapabilityAdjustment {
+  /** The model's label, as the operator configured it. */
+  model: string;
+  added: Capability[];
+  removed: Capability[];
+}
+
 export interface LocalRuntimeStatus {
   state: "ready" | "degraded" | "unavailable";
   endpointConnected: boolean;
@@ -274,6 +318,14 @@ export interface LocalRuntimeStatus {
     available: boolean;
   };
   problem?: LocalRuntimeProblem;
+  /**
+   * Models whose capabilities the runtime decided rather than config.
+   *
+   * Empty is the normal case and is not reported; entries here mean routing
+   * differs from what the configuration file says, and the operator is entitled
+   * to know that without reading logs.
+   */
+  capabilityAdjustments?: CapabilityAdjustment[];
 }
 
 export interface PolicyDefinition {

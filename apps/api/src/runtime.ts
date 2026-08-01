@@ -2,6 +2,8 @@ import {
   DemoProvider,
   Orchestrator,
   RoutePlanner,
+  type Capability,
+  type CapabilityAdjustment,
   type LocalRuntimeProblem,
   type LocalRuntimeStatus,
   type ModelProvider,
@@ -16,6 +18,11 @@ import {
   OpenAICompatibleProvider,
 } from "./openai-compatible-provider.js";
 import { LocalPromptAnalyzer } from "./prompt-analyzer.js";
+import {
+  fetchOllamaCapabilities,
+  reconcileCapabilities,
+  splitCapabilityProvenance,
+} from "./runtime-capabilities.js";
 import {
   ConfigurableWebSearchProvider,
 } from "./web-search-provider.js";
@@ -85,35 +92,109 @@ async function discoverLocalModelsWithRetry(
   return latest;
 }
 
+/**
+ * Ask the runtime what each configured model can do.
+ *
+ * Only the Ollama transport answers this — `/api/show` is its native route, and
+ * an OpenAI-compatible endpoint has no equivalent. A transport that cannot be
+ * asked yields no entry, which `reconcileCapabilities` reads as "no
+ * information" rather than "no capabilities"; the difference is every request
+ * the model would otherwise serve.
+ *
+ * Probes run concurrently against a loopback endpoint that discovery has
+ * already reached, each with its own short timeout, so a single unresponsive
+ * model cannot hold up startup.
+ */
+export async function probeRuntimeCapabilities(
+  config: AppConfig,
+  installedModelIds: string[],
+): Promise<Map<string, Capability[]>> {
+  const probed = new Map<string, Capability[]>();
+  if (config.local.transport !== "ollama") return probed;
+
+  const names = config.local.models
+    .filter((model) => modelIsInstalled(model.name, installedModelIds))
+    .map((model) => model.name);
+
+  // Batched rather than fanned out. `Promise.all` over the whole list sends one
+  // request per configured model at once, and a large local catalogue would
+  // then overload the very endpoint being asked — producing timeouts, which
+  // this code reads as "could not ask" and turns into unconfirmed capabilities.
+  // A probe that fails under its own load is worse than a slower one.
+  const CONCURRENCY = 4;
+  for (let index = 0; index < names.length; index += CONCURRENCY) {
+    const batch = names.slice(index, index + CONCURRENCY);
+    const results = await Promise.all(
+      batch.map(async (name) => ({
+        name,
+        capabilities: await fetchOllamaCapabilities(config.local.baseUrl, name),
+      })),
+    );
+    for (const result of results) {
+      if (result.capabilities) probed.set(result.name, result.capabilities);
+    }
+  }
+  return probed;
+}
+
 export function createLocalProviders(
   config: AppConfig,
   installedModelIds: string[],
   scheduler = new InferenceScheduler(),
+  runtimeCapabilities: ReadonlyMap<string, Capability[]> = new Map(),
 ): ModelProvider[] {
   return config.local.models
     .filter((model) => modelIsInstalled(model.name, installedModelIds))
-    .map(
-      (model) =>
-        new OpenAICompatibleProvider({
-          id: `local:${model.role}:${model.name}`,
-          label: model.name,
-          provider: "openai-compatible",
-          role: model.role,
-          location: "local",
-          baseUrl: config.local.baseUrl,
-          apiKey: config.local.apiKey,
-          model: model.name,
-          contextWindow: model.contextWindow,
-          qualityRating: model.qualityRating,
-          capabilities: model.capabilities,
-          specialties: model.specialties,
-          nativeOllama: config.local.transport === "ollama",
-          ...(model.reasoningEffort
-            ? { reasoningEffort: model.reasoningEffort }
-            : {}),
-          scheduler,
-        }),
-    );
+    .map((model) => {
+      const reconciled = reconcileCapabilities(
+        model.capabilities,
+        runtimeCapabilities.get(model.name),
+      );
+      return new OpenAICompatibleProvider({
+        id: `local:${model.role}:${model.name}`,
+        label: model.name,
+        provider: "openai-compatible",
+        role: model.role,
+        location: "local",
+        baseUrl: config.local.baseUrl,
+        apiKey: config.local.apiKey,
+        model: model.name,
+        contextWindow: model.contextWindow,
+        qualityRating: model.qualityRating,
+        capabilities: reconciled.capabilities,
+        specialties: model.specialties,
+        nativeOllama: config.local.transport === "ollama",
+        ...(model.reasoningEffort
+          ? { reasoningEffort: model.reasoningEffort }
+          : {}),
+        scheduler,
+      });
+    });
+}
+
+/**
+ * What the runtime changed, for the operator to read.
+ *
+ * Derived from the same inputs `createLocalProviders` reconciles, rather than
+ * recorded as a side effect of building them — a side channel out of a
+ * constructor is how one fact ends up with two representations that can
+ * disagree. Models the runtime agreed with produce no entry.
+ */
+export function describeCapabilityAdjustments(
+  config: AppConfig,
+  installedModelIds: string[],
+  runtimeCapabilities: ReadonlyMap<string, Capability[]>,
+): CapabilityAdjustment[] {
+  return config.local.models
+    .filter((model) => modelIsInstalled(model.name, installedModelIds))
+    .flatMap((model) => {
+      const { added, removed } = reconcileCapabilities(
+        model.capabilities,
+        runtimeCapabilities.get(model.name),
+      );
+      if (added.length === 0 && removed.length === 0) return [];
+      return [{ model: model.name, added, removed }];
+    });
 }
 
 export function describeLocalRuntime(
@@ -122,6 +203,7 @@ export function describeLocalRuntime(
   providers: ModelProvider[],
   promptAnalyzerAvailable: boolean,
   problem?: LocalRuntimeProblem,
+  runtimeCapabilities: ReadonlyMap<string, Capability[]> = new Map(),
 ): LocalRuntimeStatus {
   const providerIds = new Set(providers.map((provider) => provider.model.id));
   const roles = config.local.models.map((model) => {
@@ -132,8 +214,36 @@ export function describeLocalRuntime(
       modelId,
       required: model.role === "general",
       available: providerIds.has(modelId),
+      // Presence in the probe map *is* the provenance. Deriving it from the
+      // same value the reconciliation reads means the two cannot disagree
+      // about whether this model was asked.
+      capabilityProvenance: splitCapabilityProvenance(
+        reconcileCapabilities(
+          model.capabilities,
+          runtimeCapabilities.get(model.name),
+        ).capabilities,
+        runtimeCapabilities.has(model.name),
+      ),
     };
   });
+  // Computed here from the same input rather than passed in beside it. An
+  // earlier version took the adjustments as a separate argument, which is one
+  // fact arriving through two channels — the shape most defects in this
+  // repository take.
+  //
+  // The installed set is the configured *names* of models that got a provider,
+  // not `provider.model.label`. Those are equal today and are not the same
+  // thing: `modelIsInstalled` matches machine names, so the moment a label is
+  // humanised every adjustment would be silently dropped from the status and
+  // the log. Caught by review before it could bite.
+  const installedNames = config.local.models
+    .filter((model) => providerIds.has(`local:${model.role}:${model.name}`))
+    .map((model) => model.name);
+  const capabilityAdjustments = describeCapabilityAdjustments(
+    config,
+    installedNames,
+    runtimeCapabilities,
+  );
 
   return {
     state: !endpointConnected
@@ -149,6 +259,7 @@ export function describeLocalRuntime(
       available: promptAnalyzerAvailable,
     },
     ...(problem ? { problem } : {}),
+    ...(capabilityAdjustments.length > 0 ? { capabilityAdjustments } : {}),
   };
 }
 
@@ -177,6 +288,12 @@ export function currentLocalRuntime(
     // is worse than never showing it — the operator would see it once and be
     // unable to find it again.
     ...(discovered.problem ? { problem: discovered.problem } : {}),
+    // Carried forward for the same reason the cause above is: the status is
+    // rebuilt on every poll, and an adjustment that vanished after the first
+    // read would leave the operator unable to find the explanation again.
+    ...(discovered.capabilityAdjustments
+      ? { capabilityAdjustments: discovered.capabilityAdjustments }
+      : {}),
     state: !discovered.endpointConnected
       ? "unavailable"
       : roles.every((role) => role.available) &&
@@ -188,18 +305,34 @@ export function currentLocalRuntime(
 
 export async function createRuntime(
   config: AppConfig,
-  options: { problem?: LocalRuntimeProblem } = {},
+  options: {
+    problem?: LocalRuntimeProblem;
+    onCapabilityAdjustment?: (adjustment: CapabilityAdjustment) => void;
+    onCapabilitiesUnconfirmed?: (
+      model: string,
+      asserted: Capability[],
+    ) => void;
+  } = {},
 ): Promise<QuorumRuntime> {
   const scheduler = new InferenceScheduler();
   const localDiscovery = await discoverLocalModelsWithRetry(
     config.local.baseUrl,
     config.local.apiKey,
   );
+  const installedModelIds = localDiscovery.connected
+    ? localDiscovery.modelIds
+    : [];
+  const runtimeCapabilities = await probeRuntimeCapabilities(
+    config,
+    installedModelIds,
+  );
   const providers = createLocalProviders(
     config,
-    localDiscovery.connected ? localDiscovery.modelIds : [],
+    installedModelIds,
     scheduler,
+    runtimeCapabilities,
   );
+
   const promptAnalyzerAvailable =
     localDiscovery.connected &&
     modelIsInstalled(
@@ -212,7 +345,28 @@ export async function createRuntime(
     providers,
     promptAnalyzerAvailable,
     options.problem,
+    runtimeCapabilities,
   );
+  // The durable half of the record, read off the status rather than collected
+  // alongside it — a routing change the operator did not make is exactly what
+  // someone greps for months later, and it must say the same thing the
+  // interface said.
+  for (const adjustment of localRuntime.capabilityAdjustments ?? []) {
+    options.onCapabilityAdjustment?.(adjustment);
+  }
+  // The unconfirmed case gets the same durable record, because it is the one
+  // that fails later and further from its cause. An adjustment is a decision
+  // the runtime made; an unconfirmed capability is a claim the planner will act
+  // on that nothing checked, and the first sign of it is a request failing at
+  // generation.
+  for (const role of localRuntime.roles) {
+    if (!role.available) continue;
+    if (role.capabilityProvenance.confirmed.length > 0) continue;
+    options.onCapabilitiesUnconfirmed?.(
+      role.configuredModel,
+      role.capabilityProvenance.asserted,
+    );
+  }
   const promptAnalyzer = promptAnalyzerAvailable
     ? new LocalPromptAnalyzer({
         id: `local:classifier:${config.local.promptAnalyzer.name}`,
@@ -303,10 +457,19 @@ export async function createRuntime(
         localRuntime = describeLocalRuntime(config, false, [], false);
         return;
       }
+      // Re-probed, not carried over. The startup probe is one HTTP call per
+      // model against a runtime that may still have been starting; freezing its
+      // answer meant a boot-time blip left capabilities unconfirmed until the
+      // process restarted, with nothing saying the reading was stale.
+      const refreshedCapabilities = await probeRuntimeCapabilities(
+        config,
+        refreshed.modelIds,
+      );
       const refreshedProviders = createLocalProviders(
         config,
         refreshed.modelIds,
         scheduler,
+        refreshedCapabilities,
       );
       const registeredProviderIds = new Set(
         orchestrator.models.map((model) => model.id),
@@ -343,6 +506,8 @@ export async function createRuntime(
         true,
         refreshedProviders,
         analyzerAvailable,
+        undefined,
+        refreshedCapabilities,
       );
     })().finally(() => {
       refreshInFlight = undefined;

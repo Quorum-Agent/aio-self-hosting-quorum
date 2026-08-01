@@ -2,6 +2,7 @@ import { leavesDevice, locationTier, modelReach } from "@quorum/core";
 import type {
   ExecutionLocation,
   Capability,
+  CapabilityAdjustment,
   ExecutionAttempt,
   LocalRuntimeStatus,
   ModelDescriptor,
@@ -56,6 +57,78 @@ export interface ModelAttemptView {
 export interface ModelAttemptsView {
   attempts: ModelAttemptView[];
   swaps: number;
+}
+
+/**
+ * Models whose capabilities nothing could confirm.
+ *
+ * Only available roles are named. A model that is not installed has a
+ * capability list nobody is relying on, so reporting it as unverified would be
+ * noise about a route that cannot be taken anyway.
+ */
+export function unverifiedCapabilityModels(
+  runtime: LocalRuntimeStatus | undefined,
+): string[] {
+  return (runtime?.roles ?? [])
+    .filter(
+      (role) => role.available && role.capabilityProvenance.confirmed.length === 0,
+    )
+    .map((role) => role.configuredModel);
+}
+
+/**
+ * The clause appended to an otherwise healthy status line when the runtime
+ * overruled the configuration.
+ *
+ * Counts models rather than listing capabilities, because this sits in a column
+ * that compacts to a few words on a narrow window and a list of names would be
+ * the first thing truncated. It says enough to send someone to the inspector,
+ * which is where the per-model detail lives.
+ *
+ * Empty string when nothing was adjusted — the common case, and one that must
+ * add no noise at all.
+ */
+/**
+ * Per-model provenance for the inspector: which capabilities the runtime
+ * examined, and which the planner is trusting on config's word alone.
+ *
+ * Only available roles, and only when something is asserted — a model whose
+ * every capability was confirmed needs no line.
+ */
+export function describeCapabilityProvenance(
+  runtime: LocalRuntimeStatus | undefined,
+): Array<{ model: string; confirmed: Capability[]; asserted: Capability[] }> {
+  return (runtime?.roles ?? [])
+    .filter((role) => role.available && role.capabilityProvenance.asserted.length > 0)
+    .map((role) => ({
+      model: role.configuredModel,
+      confirmed: role.capabilityProvenance.confirmed,
+      asserted: role.capabilityProvenance.asserted,
+    }));
+}
+
+export function describeCapabilityAdjustmentClause(
+  runtime: LocalRuntimeStatus | undefined,
+): string {
+  const adjusted = runtime?.capabilityAdjustments?.length ?? 0;
+  const unconfirmed = unverifiedCapabilityModels(runtime).length;
+  const clauses: string[] = [];
+  if (adjusted > 0) {
+    clauses.push(`runtime re-rated ${adjusted} model${adjusted === 1 ? "" : "s"}`);
+  }
+  // Reported with the same weight as an adjustment, and an external reviewer
+  // was right that the first version did not. Adjustments got the status line,
+  // the inspector and a log; an unconfirmed capability got the inspector alone
+  // — even though it is the riskier of the two. An adjustment is a change the
+  // runtime made and stands behind; an unconfirmed capability is a claim the
+  // planner acts on that nothing has checked, and it fails at generation
+  // rather than at planning.
+  if (unconfirmed > 0) {
+    clauses.push(
+      `capabilities unconfirmed for ${unconfirmed} model${unconfirmed === 1 ? "" : "s"}`,
+    );
+  }
+  return clauses.length > 0 ? ` · ${clauses.join(", ")}` : "";
 }
 
 export function describeRuntimeStatus(
@@ -140,7 +213,12 @@ export function describeRuntimeStatus(
       title: "Local roles discovered",
       detail:
         `${available.join(", ")}${runtime.promptAnalyzer?.available ? ", classifier" : ""}` +
-        `${webSearch?.available ? ", web search" : ""} configured`,
+        `${webSearch?.available ? ", web search" : ""} configured` +
+        // A healthy runtime whose routing differs from the configuration file
+        // is still something the operator should be told without going looking
+        // for it. Short, because this line has to survive a narrow column; the
+        // inspector carries which capabilities moved and in which direction.
+        describeCapabilityAdjustmentClause(runtime),
     };
   }
 
