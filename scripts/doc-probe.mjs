@@ -273,26 +273,31 @@ async function main() {
       ? spendAfter - spendBefore
       : undefined;
 
-  if (delta === undefined) {
-    console.log(`cost $${spent.toFixed(4)} (self-reported floor, unverified)`);
-  } else if (delta < 0) {
-    // A usage counter reset mid-run. Do not report a negative or a zero here:
-    // both read as "this was free", which is exactly the wrong conclusion.
+  // Both measurements can only UNDER-report, for different reasons: the
+  // per-call sum misses any response the provider did not price, and the
+  // ledger lags behind the calls that produced it. So take the larger and name
+  // which one won. Reporting the ledger blindly produced "$0.0000" for a run of
+  // six paid calls on the first try — the same "unreported reads as free"
+  // failure this whole change set out to remove, one layer further out.
+  if (delta !== undefined && delta < 0) {
     console.log(
       `cost UNKNOWN — an account counter reset mid-run (delta $${delta.toFixed(4)}).`,
     );
     console.log(`self-reported floor was $${spent.toFixed(4)}.`);
-  } else {
+  } else if (delta === undefined) {
+    console.log(`cost $${spent.toFixed(4)} (self-reported floor, unverified)`);
+  } else if (delta > spent) {
     console.log(`cost $${delta.toFixed(4)} measured on the key`);
-    const gap = delta - spent;
-    if (gap > 0.0001) {
-      // Worth surfacing rather than hiding: the gap IS the under-reporting,
-      // and it is the only direct evidence that per-call sums cannot be trusted.
-      console.log(
-        `  (self-reported sum was $${spent.toFixed(4)} — $${gap.toFixed(4)} of spend went unreported)`,
-      );
-    }
+    console.log(
+      `  (self-reported sum was $${spent.toFixed(4)} — $${(delta - spent).toFixed(4)} went unreported per-call)`,
+    );
+  } else {
+    console.log(`cost $${spent.toFixed(4)} self-reported (a floor)`);
+    console.log(
+      `  (ledger delta was $${delta.toFixed(4)}; it lags, so this is not a confirmation)`,
+    );
   }
+
   if (failed > 0) {
     console.log(`\n${failed} wrong answers. The documentation is what needs changing, not the reader.`);
     console.log("After editing, re-run: a clearer sentence and a reader who gets it right are different claims.");
