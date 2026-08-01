@@ -138,6 +138,41 @@ const COST_CAP_USD = 1.0;
  *   same key lands in the delta. For a budget that errs toward stopping early,
  *   which is the safe direction, but it must be reported as spend on the key.
  */
+/**
+ * Per-token list prices, so a run's cost can be computed from token counts
+ * instead of taken on trust.
+ *
+ * This is a THIRD measure, and it fails differently from the other two, which
+ * is the point. The per-call `usage.cost` field misses responses the provider
+ * did not price. The account ledger lags. Computing tokens x list price is
+ * exact whenever token counts arrive — and silently zero when they do not, so
+ * it is never trusted alone.
+ *
+ * The prices are the aggregator's own published figures, which it describes as
+ * estimates derived from its upstream providers. That makes this an audit of
+ * the bill rather than a replacement for it: when the computed figure and the
+ * charged figure diverge, the gap is worth seeing, and neither number is
+ * automatically the wrong one.
+ */
+async function readModelPricing() {
+  try {
+    const res = await fetch("https://openrouter.ai/api/v1/models");
+    if (!res.ok) return new Map();
+    const { data } = await res.json();
+    return new Map(
+      data.map((model) => [
+        model.id,
+        {
+          prompt: Number(model.pricing?.prompt ?? 0),
+          completion: Number(model.pricing?.completion ?? 0),
+        },
+      ]),
+    );
+  } catch {
+    return new Map();
+  }
+}
+
 async function readAccountSpend(apiKey) {
   try {
     const res = await fetch("https://openrouter.ai/api/v1/auth/key", {
@@ -196,7 +231,13 @@ async function main() {
   console.log(`${DOCUMENTS.length} documents, ~${Math.round(docs.length / 4000)}k tokens\n`);
 
   const results = new Map(questions.map((q) => [q.key, []]));
+  const pricing = await readModelPricing();
   let spent = 0;
+  let computed = 0;
+  let promptTokens = 0;
+  let completionTokens = 0;
+  let unpricedCalls = 0;
+  let uncountedCalls = 0;
 
   for (const model of MODELS) {
     if (spent >= COST_CAP_USD) {
@@ -238,6 +279,16 @@ async function main() {
           continue;
         }
         spent += Number(body.usage?.cost ?? 0);
+        if (body.usage?.cost === undefined) unpricedCalls++;
+        const inTokens = Number(body.usage?.prompt_tokens ?? 0);
+        const outTokens = Number(body.usage?.completion_tokens ?? 0);
+        if (!inTokens && !outTokens) uncountedCalls++;
+        promptTokens += inTokens;
+        completionTokens += outTokens;
+        const rate = pricing.get(model);
+        if (rate) {
+          computed += inTokens * rate.prompt + outTokens * rate.completion;
+        }
         answer = (body.choices?.[0]?.message?.content ?? "").replace(/\s+/g, " ").trim();
       } catch (error) {
         results.get(question.key).push({ model, status: "ERROR", answer: String(error.message) });
@@ -273,30 +324,58 @@ async function main() {
       ? spendAfter - spendBefore
       : undefined;
 
-  // Both measurements can only UNDER-report, for different reasons: the
-  // per-call sum misses any response the provider did not price, and the
-  // ledger lags behind the calls that produced it. So take the larger and name
-  // which one won. Reporting the ledger blindly produced "$0.0000" for a run of
-  // six paid calls on the first try — the same "unreported reads as free"
-  // failure this whole change set out to remove, one layer further out.
-  if (delta !== undefined && delta < 0) {
-    console.log(
-      `cost UNKNOWN — an account counter reset mid-run (delta $${delta.toFixed(4)}).`,
-    );
-    console.log(`self-reported floor was $${spent.toFixed(4)}.`);
-  } else if (delta === undefined) {
-    console.log(`cost $${spent.toFixed(4)} (self-reported floor, unverified)`);
-  } else if (delta > spent) {
-    console.log(`cost $${delta.toFixed(4)} measured on the key`);
-    console.log(
-      `  (self-reported sum was $${spent.toFixed(4)} — $${(delta - spent).toFixed(4)} went unreported per-call)`,
-    );
-  } else {
-    console.log(`cost $${spent.toFixed(4)} self-reported (a floor)`);
-    console.log(
-      `  (ledger delta was $${delta.toFixed(4)}; it lags, so this is not a confirmation)`,
-    );
+  // THREE measures of the same run, each wrong in a different direction, none
+  // trustworthy alone:
+  //
+  //   self-reported  sum of `usage.cost` — misses responses the provider did
+  //                  not price, so it under-reports silently
+  //   ledger delta   the account's own figure — authoritative, but it LAGS,
+  //                  and read too soon it returns 0 for a paid run
+  //   computed       tokens x published list price — exact when token counts
+  //                  arrive, silently 0 when they do not, and priced from
+  //                  figures the aggregator itself calls estimates
+  //
+  // The first two fail toward "this was free". The third does not, and a
+  // measured run corrected an earlier version of this comment that claimed it
+  // did: computed came out 14% ABOVE what the aggregator charged ($0.0843 vs
+  // $0.0741), because a request is routed to whichever upstream is cheapest
+  // while the list price is the headline. So computed can land either side —
+  // short when token counts are missing, high when the actual route beat list.
+  //
+  // Taking the largest is still right for a budget, but for a different reason
+  // than "they all under-report": it is the conservative estimate, and a
+  // budget that stops early is recoverable while one that overshoots is not.
+  // Both earlier versions of this block reported a paid run as costing nothing
+  // — once by trusting the per-call sum, once by trusting the ledger.
+  const candidates = [
+    { label: "self-reported", value: spent },
+    { label: "computed from tokens", value: computed },
+  ];
+  if (delta !== undefined && delta >= 0) {
+    candidates.push({ label: "measured on the key", value: delta });
   }
+  const best = candidates.reduce((a, b) => (b.value > a.value ? b : a));
+
+  console.log(
+    `${promptTokens.toLocaleString()} in + ${completionTokens.toLocaleString()} out tokens`,
+  );
+  console.log(`cost $${best.value.toFixed(4)} (${best.label} — the largest of:)`);
+  console.log(`   self-reported        $${spent.toFixed(4)}`);
+  console.log(`   computed from tokens $${computed.toFixed(4)}`);
+  console.log(
+    delta === undefined
+      ? "   ledger delta         unavailable"
+      : delta < 0
+        ? "   ledger delta         a counter reset mid-run; unusable"
+        : `   ledger delta         $${delta.toFixed(4)}${delta === 0 ? " (lagging, not a confirmation)" : ""}`,
+  );
+  if (unpricedCalls > 0) {
+    console.log(`   ${unpricedCalls} call(s) returned no cost — self-reported total is short`);
+  }
+  if (uncountedCalls > 0) {
+    console.log(`   ${uncountedCalls} call(s) returned no token counts — computed total is short`);
+  }
+  console.log("");
 
   if (failed > 0) {
     console.log(`\n${failed} wrong answers. The documentation is what needs changing, not the reader.`);
