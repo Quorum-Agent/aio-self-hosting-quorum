@@ -304,31 +304,44 @@ caution.
 ways.** Spend can be measured three ways and they disagree: the provider's per-call
 `usage.cost`, the account ledger, and tokens multiplied by published list price.
 
-What is actually established, as distinct from what an earlier draft of this section
-asserted:
+**Measured, and it is simpler than an earlier draft of this section claimed.** Five calls
+to one model: the provider's reported `usage.cost` totalled $0.005640, tokens priced from
+the published rate totalled $0.005640, and the account ledger moved by exactly $0.005640.
+Three-way agreement to the cent.
 
-- Across six different models, the computed figure ran **14% above the self-reported
-  figure**. An earlier draft described this as 14% above *what was actually charged* and
-  explained it by upstream routing beating list price. **Both were wrong**: no reading of
-  the actual charge had been taken — the ledger returned zero because it lags — and the
-  mechanism was invented rather than measured.
-- On a single model over five calls with every cost reported, computed and self-reported
-  agreed **exactly**. So the cross-model gap is not a general property of list pricing; it
-  comes from particular models, and its cause is **unknown**.
-- The ledger needs several minutes to settle. A reading taken seconds after a run is not a
-  measurement of anything.
+So **`usage.cost` is authoritative** and the guardrail should simply read it. Two earlier
+claims here were wrong and are corrected rather than quietly dropped:
 
-The general point survives the specifics being wrong: a guardrail set at 95% of a figure
-that overshoots fires early and wastes the headroom the threshold exists to reclaim, and
-one set against a figure that undershoots fires late. So pick the estimator by the risk
-being managed:
+- *"Every measure under-reports, so take the largest."* False. The billed figure does not
+  under-report; it matched the ledger exactly. The rule was built on a premise that a
+  measurement disproved.
+- *"The computed figure runs 14% above what was charged, because requests route to the
+  cheapest upstream."* Wrong twice over — the 14% was against the self-reported figure, no
+  reading of the actual charge existed at the time, and the mechanism was invented.
 
-- **For the threshold, read the billed figure** — `usage.cost`, confirmed by the ledger
-  when it has caught up. That is the number the operator is actually charged, and being
-  wrong low here costs answer quality.
-- **Keep the computed figure as an audit, not as the basis.** Its job is to detect when the
-  billed figure is *short* — if calls returned no cost at all, the billed total is missing
-  spend and the conservative figure becomes the honest one.
+The real finding is that **a price table cannot cost these calls at all.** An aggregator
+routes one model id across hosts at different rates — `deepseek-r1` returned via Novita at
+$0.70/M on one run and Azure at $1.48/M on the next — and several endpoints share a
+display name, so a `model|host` key does not identify one. `gemini-3.1-pro` spans six hosts
+from $1.00 to $3.60 with the listed price mid-range, so the error has no consistent
+direction. An attempt to fix this by pricing per-host made it worse (14% → 44%), because
+`grok-4.5` has four endpoints all named "xAI" spanning $2.00–$4.00.
+
+**The ledger settles in about three minutes** — measured, unchanged at +1m and +2m, correct
+from +3m onward. A reading taken seconds after a call returns a partial figure that looks
+like a discount. Anything comparing against it must wait, and five minutes is the safe
+margin.
+
+Which leaves a straightforward design:
+
+- **The threshold reads `usage.cost`**, at 95% of budget. No estimator tension, because the
+  billed figure is accurate.
+- **The ledger is a slow audit**, not an input to a live decision.
+- **A computed figure is a disagreement detector at best.** It should never override the
+  billed number.
+- **The one real gap is a call that returns no cost field at all.** That is when the billed
+  total is genuinely short, and it is the case `TokenUsage.measured` exists to mark.
+
 - **A hard cap, if one is ever added, is the opposite case** and should read the largest
   available figure. Overspending is not recoverable; stopping early is.
 
