@@ -25,7 +25,9 @@ Quorum is not primarily a model client. The durable product is the layer that ow
 
 - conversation and workspace state;
 - context selection;
-- privacy, network, cost, and quality policy;
+- execution-location, tool-reach, cost, and quality policy — *not* "privacy
+  policy"; see the section above, and note that the ceilings govern where
+  computation happens rather than promising anything about bytes;
 - task decomposition;
 - model and tool capability matching;
 - recovery and fallback behavior;
