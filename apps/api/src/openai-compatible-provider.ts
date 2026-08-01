@@ -5,6 +5,7 @@ import {
   locationTier,
   ModelExecutionError,
   modelReach,
+  policyPermitsTool,
 } from "@quorum/core";
 import type {
   Capability,
@@ -14,6 +15,7 @@ import type {
   ModelDescriptor,
   ModelProvider,
   ModelStreamInput,
+  PolicyDefinition,
   ResponseVerbosity,
 } from "@quorum/core";
 
@@ -194,6 +196,32 @@ function runtimeModelSummary(model: ModelDescriptor): RuntimeModelSummary {
   };
 }
 
+/**
+ * Which tools the model is told it has.
+ *
+ * Extracted and exported because it had no test of its own: a mutation making
+ * `policyPermitsTool` ignore the tool's tier turned three tests red in
+ * `@quorum/core` and **none** here, so this filter was inlined inside a
+ * prompt-builder that nothing calls directly. A model told about a tool its
+ * policy forbids will offer to use it, and the refusal then arrives from the
+ * orchestrator as a failure rather than as a limit the user could have seen.
+ *
+ * Every tool is ceiling-checked, not only web-capable ones. The original
+ * exempted a tool whose `capabilities` omitted `"web"`, which was safe only
+ * because the one shipped tool declares it — a second reviewer pointed out that
+ * a descriptor with `location: "web"` and no `"web"` capability would be handed
+ * to the model under a policy that forbids every tool. `location` is what a
+ * ceiling governs, and every tool has one, so nothing needs the exemption.
+ */
+export function toolsVisibleToModel(
+  policy: PolicyDefinition,
+  runtimeTools: ModelStreamInput["runtimeTools"],
+): ModelStreamInput["runtimeTools"] {
+  return runtimeTools.filter(
+    (tool) => tool.available && policyPermitsTool(policy, tool.location),
+  );
+}
+
 function systemContext(
   model: ModelDescriptor,
   runtimeModels: ModelDescriptor[],
@@ -228,14 +256,7 @@ function systemContext(
           locationTier(policyDefinition.inferenceCeiling),
     )
     .map(runtimeModelSummary);
-  const availableTools = runtimeTools.filter(
-    (tool) =>
-      tool.available &&
-      (!tool.capabilities.includes("web") ||
-        (policyDefinition.toolCeiling !== "none" &&
-          locationTier(tool.location) <=
-            locationTier(policyDefinition.toolCeiling))),
-  );
+  const availableTools = toolsVisibleToModel(policyDefinition, runtimeTools);
   const availableCapabilities = [
     ...new Set([
       ...availableRoutes.flatMap((route) => route.capabilities),

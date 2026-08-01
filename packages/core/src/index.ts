@@ -3,6 +3,11 @@ export { ModelExecutionError } from "./model-execution-error.js";
 export { Orchestrator } from "./orchestrator.js";
 export { POLICIES, getPolicy } from "./policies.js";
 export {
+  LOCATION_NOUNS,
+  policiesWithoutSearch,
+  policyDescription,
+} from "./policy-copy.js";
+export {
   containsSensitiveContent,
   RequestCompiler,
 } from "./request-compiler.js";
@@ -20,5 +25,8 @@ export {
   leavesDevice,
   locationTier,
   modelReach,
+  policyPermitsTool,
+  policyReachesOffDevice,
+  WEB_SEARCH_LOCATION,
 } from "./types.js";
 export type * from "./types.js";

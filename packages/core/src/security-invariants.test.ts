@@ -21,9 +21,15 @@
 import { describe, expect, it } from "vitest";
 
 import { DemoProvider } from "./demo-provider.js";
+import { POLICIES } from "./policies.js";
 import { Orchestrator } from "./orchestrator.js";
 import { RequestCompiler } from "./request-compiler.js";
-import { leavesDevice, locationTier, modelReach } from "./types.js";
+import {
+  leavesDevice,
+  locationTier,
+  modelReach,
+  policyReachesOffDevice,
+} from "./types.js";
 import { RoutePlanner } from "./route-planner.js";
 import type {
   ChatRequest,
@@ -520,5 +526,49 @@ describe("a tool ceiling of web refuses a tool that reaches further", () => {
     const errors = await runSearch(toolAt("web"));
 
     expect(errors.some((m) => /retrieval no further than/u.test(m))).toBe(false);
+  });
+});
+
+describe("whether a policy lets anything off the device is asked of both axes", () => {
+  // `policyReachesOffDevice` decides a user-visible mark: the composer shows a
+  // wifi-off icon for a policy that keeps everything here, and a shield
+  // otherwise. That icon is a reach claim in pictogram form, so it gets the
+  // same treatment as the sentences beside it — derived, and tested against a
+  // fixture that can produce the wrong answer.
+  //
+  // The discriminating case is a policy with `inferenceCeiling: "device"` and a
+  // tool ceiling that reaches the internet. Asking only about inference calls
+  // that "nothing leaves", and the interface would then promise, in a symbol,
+  // the opposite of what a web search does. Mutating the tool half of this
+  // function to `false` failed nothing before this test existed.
+  it("counts a tool that leaves the device even when every model stays", () => {
+    expect(
+      policyReachesOffDevice({ inferenceCeiling: "device", toolCeiling: "web" }),
+    ).toBe(true);
+  });
+
+  it("counts a model that leaves the device even when no tool runs", () => {
+    expect(
+      policyReachesOffDevice({ inferenceCeiling: "cloud", toolCeiling: "none" }),
+    ).toBe(true);
+  });
+
+  it("says nothing leaves only when neither axis does", () => {
+    expect(
+      policyReachesOffDevice({ inferenceCeiling: "device", toolCeiling: "none" }),
+    ).toBe(false);
+    // `local` is loopback — a separate process, still this machine.
+    expect(
+      policyReachesOffDevice({ inferenceCeiling: "local", toolCeiling: "none" }),
+    ).toBe(false);
+  });
+
+  it("agrees with the shipped policies that keep work here", () => {
+    // Both of the policies a user reaches for when they want nothing to leave.
+    // If either ever gains a ceiling that egresses, this fails rather than the
+    // icon quietly starting to lie.
+    expect(policyReachesOffDevice(POLICIES.offline)).toBe(false);
+    expect(policyReachesOffDevice(POLICIES.private)).toBe(false);
+    expect(policyReachesOffDevice(POLICIES.balanced)).toBe(true);
   });
 });

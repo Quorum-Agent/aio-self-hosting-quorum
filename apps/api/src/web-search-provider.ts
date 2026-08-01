@@ -1,6 +1,7 @@
 import {
   WebSearchExecutionError,
   leavesDevice,
+  WEB_SEARCH_LOCATION,
   type RuntimeToolDescriptor,
   type WebSearchAttempt,
   type WebSearchProvider,
@@ -973,7 +974,11 @@ export class ConfigurableWebSearchProvider implements WebSearchProvider {
     // vendor's INFERENCE API, which receives the whole conversation under that
     // vendor's retention terms; a search provider receives a query string.
     // Reusing `cloud` here made every search provider read as a model vendor.
-    const location = "web" as const;
+    // Read rather than restated. The settings dialog names which policies
+    // cannot search, and it answers that by asking whether the policy permits a
+    // tool *at this location* — so if this literal and that one ever drifted
+    // apart, the list would be confidently wrong.
+    const location = WEB_SEARCH_LOCATION;
     return {
       id: `web-search:${settings.provider}`,
       label:
