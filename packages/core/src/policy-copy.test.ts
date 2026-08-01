@@ -4,7 +4,7 @@ import {
   LOCATION_NOUNS,
   inferenceReachClaim,
   nextLocationBeyond,
-  policiesWithoutTools,
+  policiesWithoutSearch,
   policyDescription,
   renderReachClaim,
   toolReachSentence,
@@ -40,7 +40,47 @@ function permittedNouns(policy: PolicyDefinition): ExecutionLocation[] {
   return EXECUTION_LOCATIONS.filter((location) => named.includes(location));
 }
 
+/**
+ * What each tier's noun has to *mean*, stated independently of what it says.
+ *
+ * This table exists because an external reviewer defeated the first version of
+ * this file. Every other assertion here indexes `LOCATION_NOUNS` on both sides,
+ * so swapping the `device` and `local` entries left the whole suite green while
+ * the offline card claimed models run "no further than a loopback server" — the
+ * original defect, reproduced exactly, one layer below where it was fixed. The
+ * tests locked consistency with the generator, not truth about the tiers.
+ *
+ * So the oracle is a different one: not the phrase, but the concept the phrase
+ * must name and the concepts it must not. Rewording a noun while keeping its
+ * meaning passes. Swapping two of them cannot.
+ */
+const TIER_MEANING: Record<
+  ExecutionLocation,
+  { names: RegExp; notThese: RegExp }
+> = {
+  device: { names: /quorum/i, notThese: /loopback|network|internet|rent|vendor/i },
+  local: { names: /loopback/i, notThese: /local network|internet|rent|vendor/i },
+  network: { names: /local network/i, notThese: /loopback|internet|rent|vendor/i },
+  remote: { names: /rent/i, notThese: /loopback|local network|internet|vendor/i },
+  web: { names: /public internet/i, notThese: /loopback|local network|rent|vendor/i },
+  cloud: { names: /vendor/i, notThese: /loopback|local network|rent|public internet/i },
+};
+
 describe("the tier vocabulary", () => {
+  it("says of each tier what that tier means, and nothing another tier means", () => {
+    for (const location of EXECUTION_LOCATIONS) {
+      const noun = LOCATION_NOUNS[location];
+      expect({ location, names: TIER_MEANING[location].names.test(noun) }).toEqual({
+        location,
+        names: true,
+      });
+      expect({
+        location,
+        borrows: TIER_MEANING[location].notThese.test(noun),
+      }).toEqual({ location, borrows: false });
+    }
+  });
+
   // Every substring assertion below is worthless if two nouns overlap: a test
   // checking that "your local network" is absent would pass while the copy said
   // it, if some other tier's noun contained the phrase. Assert the property the
@@ -86,6 +126,28 @@ describe("a reach claim", () => {
       expect(nounsPresent(sentence)).toEqual(
         EXECUTION_LOCATIONS.filter((location) => expected.includes(location)),
       );
+    }
+  });
+
+  // The other half of the shared-oracle problem: naming the right two tiers is
+  // not the same as attaching them to the right clauses. A renderer that said
+  // "Models run only beyond X" or hung "they do not reach" on the *permitted*
+  // noun would name exactly the same tiers and pass every assertion above.
+  it("attaches the permitted tier to what is allowed and the excluded tier to what is not", () => {
+    for (const ceiling of EXECUTION_LOCATIONS) {
+      const excluded = nextLocationBeyond(ceiling);
+      if (!excluded) continue;
+      const sentence = renderReachClaim(
+        "Models",
+        inferenceReachClaim({ inferenceCeiling: ceiling }),
+      );
+      const permittedAt = sentence.indexOf(LOCATION_NOUNS[ceiling]);
+      const denialAt = sentence.indexOf("do not reach");
+      const excludedAt = sentence.indexOf(LOCATION_NOUNS[excluded]);
+      expect(sentence).toContain(`run no further than ${LOCATION_NOUNS[ceiling]}`);
+      expect(permittedAt).toBeGreaterThanOrEqual(0);
+      expect(denialAt).toBeGreaterThan(permittedAt);
+      expect(excludedAt).toBeGreaterThan(denialAt);
     }
   });
 
@@ -162,29 +224,53 @@ describe("offline, which has had this sentence wrong twice", () => {
   it("says what it does run and what it excludes, separately", () => {
     expect(offline.description).toContain(LOCATION_NOUNS.device);
     expect(offline.description).toContain(
-      `That excludes ${LOCATION_NOUNS.local} and everything past it.`,
+      `do not reach ${LOCATION_NOUNS.local}`,
     );
   });
 });
 
-describe("naming which policies run no tools", () => {
+describe("naming which policies cannot search", () => {
   // A fixture that can reach the wrong answer: it contains a policy that must
   // be left out. A list of tool-free policies only is satisfied by "return
   // everything", which is precisely the bug being guarded against.
+  //
+  // `network` is the row that matters. It permits tools, so a filter on
+  // `toolCeiling === "none"` — which is what this function did until a reviewer
+  // pointed out it was answering a different question — leaves it off a
+  // sentence that presents itself as the complete list. It cannot run a web
+  // search: the search tool is `web`, which is further out.
   const fixture = [
     { label: "Private", toolCeiling: "none" as const },
     { label: "Balanced", toolCeiling: "web" as const },
+    { label: "LAN tools", toolCeiling: "network" as const },
     { label: "Offline", toolCeiling: "none" as const },
   ];
 
-  it("names the tool-free policies and omits the rest", () => {
-    expect(policiesWithoutTools(fixture)).toEqual(["Private", "Offline"]);
+  it("names every policy the search tool cannot run under, not just the tool-free ones", () => {
+    expect(policiesWithoutSearch(fixture).map((policy) => policy.label)).toEqual([
+      "Private",
+      "LAN tools",
+      "Offline",
+    ]);
   });
 
-  it("returns nothing when every policy runs tools", () => {
+  it("returns nothing when every policy permits the search tool's tier", () => {
     expect(
-      policiesWithoutTools([{ label: "Balanced", toolCeiling: "web" }]),
+      policiesWithoutSearch([{ label: "Balanced", toolCeiling: "web" }]),
     ).toEqual([]);
+  });
+
+  it("reads the search tool's own location rather than assuming one", () => {
+    // A policy that permits `web` tools still cannot run a `cloud` one — which
+    // is what a SearXNG instance is classified as, because it proxies the query
+    // onward. Passing the location in is what lets the sentence stay true if
+    // the configured provider sits further out than the default.
+    expect(
+      policiesWithoutSearch(
+        [{ label: "Balanced", toolCeiling: "web" }],
+        "cloud",
+      ).map((policy) => policy.label),
+    ).toEqual(["Balanced"]);
   });
 
   // Deliberately not `expect(result).toEqual(POLICIES.filter(same predicate))`,
@@ -192,7 +278,9 @@ describe("naming which policies run no tools", () => {
   // any implementation of it. What is asserted is that the shipped set is a
   // *proper* subset: some policy is named, some policy is left out.
   it("splits the shipped policies rather than returning all or none", () => {
-    const named = policiesWithoutTools(Object.values(POLICIES));
+    const named = policiesWithoutSearch(Object.values(POLICIES)).map(
+      (policy) => policy.label,
+    );
     expect(named.length).toBeGreaterThan(0);
     expect(named.length).toBeLessThan(Object.values(POLICIES).length);
     expect(named).toContain(POLICIES.offline.label);

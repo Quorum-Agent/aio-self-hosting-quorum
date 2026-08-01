@@ -86,6 +86,57 @@ export function leavesDevice(location: ExecutionLocation): boolean {
 }
 
 /**
+ * Where Quorum's web-search tool runs.
+ *
+ * `web` rather than `cloud` deliberately: `cloud` means a vendor's *inference*
+ * API, which receives the whole conversation; a search provider receives a
+ * query string. The long note at the descriptor site in
+ * `apps/api/src/web-search-provider.ts` is the argument; this is the value it
+ * argues for, so that copy describing what a policy can search reads the same
+ * constant the descriptor does.
+ */
+export const WEB_SEARCH_LOCATION = "web" as const satisfies ExecutionLocation;
+
+/**
+ * Whether a policy permits a tool that runs at `toolLocation`.
+ *
+ * The single answer to that question. It was written inline at three sites —
+ * the orchestrator's retrieval gate, the model-facing tool inventory, and (as
+ * `toolCeiling === "none"`) the settings copy naming which policies never
+ * search. The first two agreed; the third asked a *different* question and got
+ * the same answer only because web search is currently the one tool. A policy
+ * with `toolCeiling: "network"` runs no web search either, and the copy would
+ * have quietly left it off the list.
+ *
+ * `"none"` is not a tier and cannot be compared, so it is answered first.
+ */
+export function policyPermitsTool(
+  policy: { toolCeiling: ExecutionLocation | "none" },
+  toolLocation: ExecutionLocation,
+): boolean {
+  if (policy.toolCeiling === "none") return false;
+  return locationTier(toolLocation) <= locationTier(policy.toolCeiling);
+}
+
+/**
+ * Whether anything a policy permits can put content off the device — on either
+ * axis.
+ *
+ * Both ceilings, because a policy that keeps every model on the device and
+ * still lets a search tool reach the internet does put content off it. Asking
+ * only about inference would answer "no" for exactly that policy.
+ */
+export function policyReachesOffDevice(policy: {
+  inferenceCeiling: ExecutionLocation;
+  toolCeiling: ExecutionLocation | "none";
+}): boolean {
+  return (
+    leavesDevice(policy.inferenceCeiling) ||
+    (policy.toolCeiling !== "none" && leavesDevice(policy.toolCeiling))
+  );
+}
+
+/**
  * How far a model actually reaches, which is not always what it declares.
  *
  * `ModelDescriptor.location` excludes `"device"`, so an in-process model calls

@@ -1,6 +1,8 @@
 import {
   EXECUTION_LOCATIONS,
   locationTier,
+  policyPermitsTool,
+  WEB_SEARCH_LOCATION,
   type ExecutionLocation,
   type PolicyDefinition,
 } from "./types.js";
@@ -109,7 +111,15 @@ export function renderReachClaim(
   if (!claim.excludedFrom) {
     return permitted;
   }
-  return `${permitted} That excludes ${LOCATION_NOUNS[claim.excludedFrom]} and everything past it.`;
+  // "They", not "That". An external reviewer caught the earlier wording
+  // producing a sentence pair that reads as a contradiction: a policy whose
+  // models may reach a vendor's API but whose tools stop at the public
+  // internet rendered as "Models run no further than a vendor's API. Tools run
+  // no further than the public internet. That excludes a vendor's API…" —
+  // where "That" has no unambiguous referent and the same noun appears as both
+  // permitted and excluded two sentences apart. Naming the subject again binds
+  // the exclusion to the axis it belongs to.
+  return `${permitted} They do not reach ${LOCATION_NOUNS[claim.excludedFrom]}, or anything past it.`;
 }
 
 /**
@@ -159,17 +169,29 @@ export function policyDescription(policy: {
 }
 
 /**
- * Which policies run no tools, named rather than assumed.
+ * Which policies cannot run a web search, identified rather than remembered.
  *
  * The settings dialog previously read "Private and Offline policies never
  * search" — two policy names hard-coded beside the field that decides it. True
  * today, silently false the moment a ceiling moves or a policy is added, and
  * the same shape as the copy defects above.
+ *
+ * An earlier version of this function filtered on `toolCeiling === "none"`,
+ * which an external reviewer correctly called a different question wearing the
+ * right answer: a policy with `toolCeiling: "network"` permits tools, runs no
+ * web search, and would have been left off a list the sentence presents as
+ * complete. It now asks the question the orchestrator asks, through the same
+ * function the orchestrator uses.
+ *
+ * Returns the policies themselves, not their labels. Turning a list of names
+ * into an English sentence is the caller's business — `@quorum/core` should
+ * not own the app's prose or its pluralisation.
  */
-export function policiesWithoutTools(
-  policies: readonly Pick<PolicyDefinition, "label" | "toolCeiling">[],
-): string[] {
-  return policies
-    .filter((policy) => policy.toolCeiling === "none")
-    .map((policy) => policy.label);
+export function policiesWithoutSearch<
+  T extends Pick<PolicyDefinition, "toolCeiling">,
+>(
+  policies: readonly T[],
+  searchLocation: ExecutionLocation = WEB_SEARCH_LOCATION,
+): T[] {
+  return policies.filter((policy) => !policyPermitsTool(policy, searchLocation));
 }

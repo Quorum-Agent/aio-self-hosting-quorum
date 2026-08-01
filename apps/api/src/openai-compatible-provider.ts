@@ -5,6 +5,7 @@ import {
   locationTier,
   ModelExecutionError,
   modelReach,
+  policyPermitsTool,
 } from "@quorum/core";
 import type {
   Capability,
@@ -14,6 +15,7 @@ import type {
   ModelDescriptor,
   ModelProvider,
   ModelStreamInput,
+  PolicyDefinition,
   ResponseVerbosity,
 } from "@quorum/core";
 
@@ -194,6 +196,31 @@ function runtimeModelSummary(model: ModelDescriptor): RuntimeModelSummary {
   };
 }
 
+/**
+ * Which tools the model is told it has.
+ *
+ * Extracted and exported because it had no test of its own: a mutation making
+ * `policyPermitsTool` ignore the tool's tier turned three tests red in
+ * `@quorum/core` and **none** here, so this filter was inlined inside a
+ * prompt-builder that nothing calls directly. A model told about a tool its
+ * policy forbids will offer to use it, and the refusal then arrives from the
+ * orchestrator as a failure rather than as a limit the user could have seen.
+ *
+ * Only web-capable tools are ceiling-checked, because only they have a
+ * meaningful location today. That is a live assumption, not a permanent one.
+ */
+export function toolsVisibleToModel(
+  policy: PolicyDefinition,
+  runtimeTools: ModelStreamInput["runtimeTools"],
+): ModelStreamInput["runtimeTools"] {
+  return runtimeTools.filter(
+    (tool) =>
+      tool.available &&
+      (!tool.capabilities.includes("web") ||
+        policyPermitsTool(policy, tool.location)),
+  );
+}
+
 function systemContext(
   model: ModelDescriptor,
   runtimeModels: ModelDescriptor[],
@@ -228,14 +255,7 @@ function systemContext(
           locationTier(policyDefinition.inferenceCeiling),
     )
     .map(runtimeModelSummary);
-  const availableTools = runtimeTools.filter(
-    (tool) =>
-      tool.available &&
-      (!tool.capabilities.includes("web") ||
-        (policyDefinition.toolCeiling !== "none" &&
-          locationTier(tool.location) <=
-            locationTier(policyDefinition.toolCeiling))),
-  );
+  const availableTools = toolsVisibleToModel(policyDefinition, runtimeTools);
   const availableCapabilities = [
     ...new Set([
       ...availableRoutes.flatMap((route) => route.capabilities),

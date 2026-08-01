@@ -4,7 +4,7 @@ export { Orchestrator } from "./orchestrator.js";
 export { POLICIES, getPolicy } from "./policies.js";
 export {
   LOCATION_NOUNS,
-  policiesWithoutTools,
+  policiesWithoutSearch,
   policyDescription,
 } from "./policy-copy.js";
 export {
@@ -25,5 +25,8 @@ export {
   leavesDevice,
   locationTier,
   modelReach,
+  policyPermitsTool,
+  policyReachesOffDevice,
+  WEB_SEARCH_LOCATION,
 } from "./types.js";
 export type * from "./types.js";

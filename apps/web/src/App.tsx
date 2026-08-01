@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { policyReachesOffDevice } from "@quorum/core";
 import type {
   Capability,
   ChatMessage,
@@ -630,8 +631,22 @@ export default function App() {
               </select>
               <ChevronDown size={14} />
             </label>
-            <label className="policy-select" title={activePolicy?.description}>
-              {policy === "offline" ? <WifiOff size={15} /> : <Shield size={15} />}
+            {/* The tooltip carries `intent`, not `description`. A description
+                is now three sentences of reach detail — right for the policy
+                card, wrong for a `title` attribute, which assistive technology
+                exposes inconsistently and which no keyboard or touch user can
+                open at all. The full text stays one click away in Inspect. */}
+            <label className="policy-select" title={activePolicy?.intent}>
+              {/* Derived, not name-keyed. A wifi-off mark is a reach claim in
+                  pictogram form, and keying it to `policy === "offline"` made
+                  it the same kind of hard-coded assertion as the copy this
+                  branch removed — Private also lets nothing off the device, and
+                  showed a shield. */}
+              {activePolicy && !policyReachesOffDevice(activePolicy) ? (
+                <WifiOff size={15} />
+              ) : (
+                <Shield size={15} />
+              )}
               <select
                 value={policy}
                 aria-label="Execution policy"

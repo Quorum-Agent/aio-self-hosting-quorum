@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { policiesWithoutTools, type PolicyDefinition } from "@quorum/core";
+import { policiesWithoutSearch, type PolicyDefinition } from "@quorum/core";
 
 import {
   getWebSearchSettings,
@@ -51,7 +51,9 @@ interface SettingsDialogProps {
 export function searchlessPolicyNote(
   policies: readonly PolicyDefinition[] | undefined,
 ): string {
-  const names = policiesWithoutTools(policies ?? []);
+  const names = policiesWithoutSearch(policies ?? []).map(
+    (policy) => policy.label,
+  );
   if (names.length === 0) return "";
   const list =
     names.length === 1

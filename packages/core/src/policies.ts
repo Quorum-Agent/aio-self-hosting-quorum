@@ -66,8 +66,13 @@ const POLICY_SPECIFICATIONS: Record<PolicyMode, PolicySpecification> = {
     // Not "keep tools on this machine" — `toolCeiling: "none"` means no tool
     // runs at all, and no tool can be `location: "local"` today anyway (see
     // the note above).
-    intent:
-      "For a request that should be handled by nobody else, at any stage.",
+    // Not "handled by nobody else" and not a confidentiality promise. Two
+    // external reviewers read the first draft of this line as one, and both
+    // were right to: it conflicts with this product's stated goal — capability
+    // ownership, not data privacy — and it also sits awkwardly beside a ceiling
+    // of `local`, which permits a *separate* loopback process. What is true is
+    // that everything answering the request is software the operator runs.
+    intent: "For work you want handled entirely by software you run yourself.",
     inferenceCeiling: "local",
     toolCeiling: "none",
     preferLocal: true,
@@ -112,8 +117,11 @@ const POLICY_SPECIFICATIONS: Record<PolicyMode, PolicySpecification> = {
     // The sentence that was wrong twice, in opposite directions, is now
     // generated from the ceiling. What is left here says only why the mode
     // exists — a statement with no "including" in it to relocate.
+    // "Wholly self-contained" was also read as a secrecy claim. What the mode
+    // is actually for is the situation where nothing else is reachable — no
+    // network, or no model server running — and Quorum has to answer alone.
     intent:
-      "For a machine with no working network, or a request you want wholly self-contained.",
+      "For a machine with no network, or with none of its model servers running.",
     inferenceCeiling: "device",
     toolCeiling: "none",
     preferLocal: true,
@@ -130,11 +138,20 @@ const POLICY_SPECIFICATIONS: Record<PolicyMode, PolicySpecification> = {
   },
 };
 
+// Each policy is frozen as well as the record holding them. `Object.freeze` is
+// shallow, so freezing only the outer object leaves every `description`
+// writable at runtime — which would make the guard against hand-written copy a
+// compile-time formality that any caller could step around. Caught by an
+// external reviewer, who was right that the comment implied more than the call
+// delivered.
 export const POLICIES: Record<PolicyMode, PolicyDefinition> = Object.freeze(
   Object.fromEntries(
     Object.entries(POLICY_SPECIFICATIONS).map(([mode, specification]) => [
       mode,
-      { ...specification, description: policyDescription(specification) },
+      Object.freeze({
+        ...specification,
+        description: policyDescription(specification),
+      }),
     ]),
   ) as Record<PolicyMode, PolicyDefinition>,
 );
