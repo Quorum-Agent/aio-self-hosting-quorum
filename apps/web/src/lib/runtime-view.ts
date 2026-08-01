@@ -177,7 +177,14 @@ export function selectablePolicies(
  */
 const TIER_LABELS: Record<Exclude<ExecutionLocation, "device">, string> = {
   local: "Local",
-  network: "Local network",
+  // `network` and `remote` deliberately share a label. They are distinct tiers
+  // — a LAN peer is not a rented box, and the planner treats them differently —
+  // but the distinction a *user* is reading this heading for is whether their
+  // conversation went to a machine whose stack they control or to a vendor's
+  // API. A home server and a RunPod instance are the same answer to that
+  // question, and neither is the cloud. `cloud` stays separate because it is
+  // the one case where someone else's retention terms apply.
+  network: "Remote host",
   remote: "Remote host",
   web: "Web search",
   cloud: "Cloud",
