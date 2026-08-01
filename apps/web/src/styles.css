@@ -5,7 +5,7 @@
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   --ink: #20231f;
-  --muted: #777b73;
+  --muted: #656961;
   --faint: #a6aaa2;
   --canvas: #f7f6f1;
   --panel: #eeede7;
@@ -136,7 +136,7 @@ button {
 .brand span {
   margin-top: 1px;
   color: #8e958d;
-  font-size: 10px;
+  font-size: 11px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
@@ -169,7 +169,7 @@ button {
 .sidebar-label {
   padding: 24px 9px 8px;
   color: #9da69d;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -211,8 +211,8 @@ button {
 }
 
 .conversation-item time {
-  color: #676e67;
-  font-size: 9px;
+  color: #aab2aa;
+  font-size: 11px;
 }
 
 .conversation-item:hover,
@@ -363,7 +363,7 @@ button {
 .model-status span {
   margin-top: 1px;
   color: var(--muted);
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .topbar-actions {
@@ -469,7 +469,7 @@ button {
 
 .eyebrow {
   color: var(--green);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.13em;
   text-transform: uppercase;
@@ -545,8 +545,8 @@ button {
 
 .starter-grid small {
   overflow: hidden;
-  color: #90948c;
-  font-size: 9px;
+  color: #656961;
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -570,8 +570,8 @@ button {
   width: 30px;
   height: 30px;
   place-items: center;
-  color: #687067;
-  font-size: 8px;
+  color: #5d6159;
+  font-size: 11px;
   font-weight: 700;
   background: #e7e6e0;
   border: 1px solid var(--line);
@@ -586,8 +586,8 @@ button {
 .message > div:last-child > span {
   display: block;
   margin: 1px 0 7px;
-  color: #8b8f87;
-  font-size: 9px;
+  color: #656961;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.07em;
   text-transform: uppercase;
@@ -755,20 +755,20 @@ button {
 .activity-analysis strong,
 .activity-route strong {
   color: #464c44;
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .activity-analysis span,
 .activity-route span {
   color: #8c9188;
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .activity-analysis p {
   grid-column: 1 / -1;
   margin: 4px 0 0;
   color: #686e65;
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.5;
 }
 
@@ -818,7 +818,7 @@ button {
 
 .activity-traces strong {
   color: #51574f;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
 }
 
@@ -826,7 +826,7 @@ button {
   margin-top: 2px;
   overflow-wrap: anywhere;
   color: #5e675f;
-  font-size: 8px;
+  font-size: 11px;
   line-height: 1.45;
   text-transform: capitalize;
 }
@@ -877,7 +877,7 @@ button {
 .activity-web-search small {
   margin-top: 2px;
   color: #5e675f;
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.45;
   overflow-wrap: anywhere;
 }
@@ -885,7 +885,7 @@ button {
 .activity-web-search ol {
   margin: 5px 0 0;
   padding-left: 15px;
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.5;
 }
 
@@ -902,7 +902,7 @@ button {
 .web-attempt-list li {
   margin: 3px 0;
   color: #727970;
-  font-size: 9px;
+  font-size: 11px;
   line-height: 1.45;
 }
 
@@ -916,14 +916,14 @@ button {
 }
 
 .web-attempt-list strong {
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .web-attempt-list span {
   margin-top: 1px;
   overflow-wrap: anywhere;
   color: inherit;
-  font-size: 8px;
+  font-size: 11px;
 }
 
 .activity-web-search a {
@@ -934,7 +934,7 @@ button {
 .activity-boundary {
   margin: 10px 0 0;
   color: #a0a49c;
-  font-size: 8px;
+  font-size: 11px;
   line-height: 1.4;
 }
 
@@ -1045,7 +1045,7 @@ button {
 .composer-note {
   margin: 7px 0 0;
   color: #9b9f97;
-  font-size: 10px;
+  font-size: 11px;
   text-align: center;
   letter-spacing: 0.02em;
 }
@@ -1117,7 +1117,7 @@ button {
 
 .policy-card span {
   color: #738177;
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -1132,7 +1132,7 @@ button {
 .policy-card p {
   margin: 3px 0 0;
   color: #68796c;
-  font-size: 9px;
+  font-size: 11px;
   line-height: 1.45;
 }
 
@@ -1147,7 +1147,7 @@ button {
   justify-content: space-between;
   margin-bottom: 13px;
   color: #5b6058;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -1155,7 +1155,7 @@ button {
 
 .section-title small {
   color: #969a92;
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 600;
 }
 
@@ -1197,7 +1197,7 @@ button {
 .trace-placeholder p {
   margin: 0;
   color: #94988f;
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.55;
 }
 
@@ -1260,14 +1260,14 @@ button {
 
 .trace-item strong {
   color: #4b5048;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
 }
 
 .trace-item span {
   margin-top: 2px;
   color: #9a9e96;
-  font-size: 8px;
+  font-size: 11px;
   text-transform: capitalize;
 }
 
@@ -1287,7 +1287,7 @@ button {
   min-width: 0;
   padding: 7px 4px;
   color: #8d928a;
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 600;
   background: #e7e6e0;
   border: 1px solid transparent;
@@ -1308,7 +1308,7 @@ button {
 .route-rationale {
   margin: 10px 1px 0;
   color: #898e85;
-  font-size: 9px;
+  font-size: 11px;
   line-height: 1.5;
 }
 
@@ -1326,7 +1326,7 @@ button {
 .model-summary > span {
   margin-top: 3px;
   color: #999d95;
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .web-search-query {
@@ -1334,7 +1334,7 @@ button {
   align-items: flex-start;
   gap: 7px;
   color: #626860;
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.45;
   overflow-wrap: anywhere;
 }
@@ -1352,7 +1352,7 @@ button {
   margin: 8px 0 0;
   padding-left: 17px;
   color: #4f5951;
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.55;
 }
 
@@ -1365,7 +1365,7 @@ button {
 .web-search-summary > p {
   margin: 7px 0 0;
   color: #5e675f;
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.45;
 }
 
@@ -1419,7 +1419,7 @@ button {
 .attempt-item strong {
   overflow: hidden;
   color: #454a43;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1428,7 +1428,7 @@ button {
 .attempt-item span {
   margin-top: 2px;
   color: #5e675f;
-  font-size: 8px;
+  font-size: 11px;
   text-transform: capitalize;
 }
 
@@ -1437,7 +1437,7 @@ button {
   margin: 4px 0 0;
   overflow-wrap: anywhere;
   color: #8a5e58;
-  font-size: 8px;
+  font-size: 11px;
   line-height: 1.45;
 }
 
@@ -1469,13 +1469,13 @@ button {
 }
 
 .cloud-summary strong {
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .cloud-summary span {
   margin-top: 1px;
   color: #90958c;
-  font-size: 8px;
+  font-size: 11px;
 }
 
 .mobile-scrim {
@@ -1568,7 +1568,7 @@ button {
 .settings-toggle small {
   margin-top: 3px;
   color: #68796c;
-  font-size: 9px;
+  font-size: 11px;
   line-height: 1.5;
 }
 
@@ -1591,7 +1591,7 @@ button {
   display: block;
   margin: 0 0 5px 2px;
   color: #71766e;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 650;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -1627,7 +1627,7 @@ button {
 
 .auto-order p {
   margin: 0;
-  font-size: 9px;
+  font-size: 11px;
   line-height: 1.55;
 }
 
@@ -1641,14 +1641,14 @@ button {
 
 .settings-section-heading strong {
   color: #4d534b;
-  font-size: 10px;
+  font-size: 11px;
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 
 .settings-section-heading span {
   color: #969b93;
-  font-size: 8px;
+  font-size: 11px;
 }
 
 .provider-setting {
@@ -1685,13 +1685,13 @@ button {
   display: block;
   margin: 4px 0 0 21px;
   color: #878c84;
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .provider-status {
   padding: 3px 6px;
   color: #936354;
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 650;
   background: #f0e1dc;
   border-radius: 5px;
@@ -1711,7 +1711,7 @@ button {
   justify-self: start;
   padding: 3px 0;
   color: #8a5149;
-  font-size: 9px;
+  font-size: 11px;
   background: transparent;
 }
 
@@ -1721,13 +1721,13 @@ button {
 
 .credential-pending {
   color: #8a5149;
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .settings-security-note {
   margin: 14px 2px 0;
   color: #969b93;
-  font-size: 8px;
+  font-size: 11px;
   line-height: 1.55;
 }
 
@@ -1740,7 +1740,7 @@ button {
   gap: 7px;
   margin: 0 22px 10px;
   padding: 9px 10px;
-  font-size: 10px;
+  font-size: 11px;
   border-radius: 7px;
 }
 
@@ -1786,7 +1786,7 @@ button {
   height: 34px;
   padding: 0 12px;
   border-radius: 8px;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 650;
 }
 
@@ -1909,7 +1909,7 @@ button {
   .policy-select select,
   .verbosity-select select {
     max-width: 70px;
-    font-size: 10px;
+    font-size: 11px;
   }
 
   .inspector-button {
