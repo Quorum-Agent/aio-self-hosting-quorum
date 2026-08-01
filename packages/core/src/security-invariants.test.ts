@@ -572,3 +572,149 @@ describe("whether a policy lets anything off the device is asked of both axes", 
     expect(policyReachesOffDevice(POLICIES.balanced)).toBe(true);
   });
 });
+
+describe("web-grounded history excludes cloud on the NEXT turn (Q-01)", () => {
+  // The finding: turn 1 fires a web search and the synthesized answer is
+  // persisted. Turn 2 replays it as context; under `quality` the planner
+  // would pick cloud and ship the web-derived content unless the taint
+  // excludes off-device routes. The wiring being pinned end to end:
+  //   orchestrator stamps provenance "web_grounded" on the result message;
+  //   the compiler sets containsWebGroundedData from that provenance;
+  //   the planner filters eligible models to location "local" when it is set.
+  const turnLocalModel: ModelDescriptor = {
+    id: "local:general:q01",
+    label: "Q01 general",
+    provider: "test",
+    role: "general",
+    location: "local",
+    transport: "loopback",
+    capabilities: ["chat", "reasoning", "coding", "documents"],
+    contextWindow: 32_000,
+    qualityRating: 60,
+    available: true,
+  };
+
+  async function* streamAnswer(answer: string) {
+    yield answer;
+  }
+
+  function q01WebSearch(): WebSearchProvider {
+    return {
+      tool: {
+        id: "web-search:q01",
+        label: "Q01 Search",
+        capabilities: ["web"],
+        location: "web",
+        available: true,
+        contextMayLeaveDevice: true,
+      },
+      async search(query) {
+        return {
+          query,
+          provider: "test",
+          results: [
+            {
+              title: "OpenSSL advisory",
+              url: "https://example.com/openssl",
+              snippet: "CVE-2026-1234 details.",
+            },
+          ],
+        };
+      },
+    };
+  }
+
+  it("turn 2 under quality keeps a web-grounded answer off cloud routes", async () => {
+    const orchestrator = new Orchestrator(
+      [
+        {
+          model: turnLocalModel,
+          stream: (input) => streamAnswer("Local synthesis of the advisory."),
+        },
+        overwhelmingCloudModel
+          ? {
+              model: overwhelmingCloudModel,
+              stream: (input) => streamAnswer("Cloud answer that must not run."),
+            }
+          : { model: turnLocalModel, stream: (input) => streamAnswer("x") },
+      ],
+      new RequestCompiler(),
+      new RoutePlanner(),
+      undefined,
+      q01WebSearch(),
+    );
+
+    // Turn 1: web search fires; the answer is synthesized locally because
+    // freshly retrieved content may not egress on the turn that retrieved it.
+    let turn1Message:
+      | {
+          id: string;
+          role: string;
+          content: string;
+          createdAt: string;
+          provenance?: string;
+        }
+      | undefined;
+    for await (const event of orchestrator.run({
+      conversationId: "c",
+      policy: "quality",
+      messages: [
+        {
+          id: "m1",
+          role: "user",
+          content: "Search the web for the latest OpenSSL advisory.",
+          createdAt: new Date(0).toISOString(),
+        },
+      ],
+    })) {
+      if (event.type === "result") {
+        turn1Message = event.result.message as typeof turn1Message;
+      }
+    }
+
+    // The taint has to exist for turn 2 to mean anything. If this fails, the
+    // rest of the test is vacuous — assert it explicitly.
+    expect(turn1Message?.provenance).toBe("web_grounded");
+
+    // Turn 2: replay the tainted assistant message as stored history, then
+    // ask a referential follow-up under a policy that permits cloud.
+    let turn2Plan:
+      | {
+          route?: string;
+          modelId?: string;
+          cloudDisclosure?: string;
+        }
+      | undefined;
+    for await (const event of orchestrator.run({
+      conversationId: "c",
+      policy: "quality",
+      messages: [
+        {
+          id: "m1",
+          role: "user",
+          content: "Search the web for the latest OpenSSL advisory.",
+          createdAt: new Date(0).toISOString(),
+        },
+        {
+          id: turn1Message!.id,
+          role: "assistant",
+          content: turn1Message!.content,
+          createdAt: turn1Message!.createdAt,
+          provenance: "web_grounded",
+        },
+        {
+          id: "m3",
+          role: "user",
+          content: "Write that up as a short paragraph.",
+          createdAt: new Date(1).toISOString(),
+        },
+      ],
+    })) {
+      if (event.type === "plan") turn2Plan = event.plan;
+    }
+
+    expect(turn2Plan).toBeDefined();
+    expect(turn2Plan?.modelId).not.toBe(overwhelmingCloudModel.id);
+    expect(turn2Plan?.cloudDisclosure).toBeUndefined();
+  });
+});
