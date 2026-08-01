@@ -7,7 +7,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AppConfig } from "./config.js";
 import {
@@ -17,6 +17,7 @@ import {
   ManagedLlamaStartupError,
   renderManagedLlamaPreset,
   startManagedLlamaOrDegrade,
+  waitUntilReady,
   withManagedLlamaEndpoint,
   type ManagedLlamaManifest,
 } from "./managed-llama-runtime.js";
@@ -418,5 +419,104 @@ describe("the failure taxonomy shown above the runtime's own words", () => {
     ).toBe(
       "The managed llama.cpp runtime did not start, so no local model is being served.",
     );
+  });
+});
+
+describe("what the readiness loop concludes from the server it is polling", () => {
+  const manifest: ManagedLlamaManifest = {
+    version: 1,
+    models: [
+      {
+        id: "quorum-main",
+        file: "D:/models/main.gguf",
+        contextWindow: 4_096,
+        gpuLayers: 99,
+        loadOnStartup: true,
+      },
+    ],
+  };
+
+  function options(overrides: Partial<Parameters<typeof waitUntilReady>[0]> = {}) {
+    return {
+      child: { exitCode: null } as never,
+      baseUrl: "http://127.0.0.1:43123/v1",
+      apiKey: "ephemeral",
+      manifest,
+      timeoutMs: 300,
+      getLogTail: () => "",
+      getSpawnError: () => undefined,
+      ...overrides,
+    };
+  }
+
+  function respondWith(catalog: unknown) {
+    return vi.fn(async (input: RequestInfo | URL) =>
+      String(input).endsWith("/health")
+        ? new Response("{}", { headers: { "content-type": "application/json" } })
+        : new Response(JSON.stringify(catalog), {
+            headers: { "content-type": "application/json" },
+          }),
+    );
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  // The failure the compatibility gate exists for, arriving the way it actually
+  // arrives: llama.cpp's router lists the model and marks it failed. Tagging
+  // this `runtime_exited` instead failed no test until this one existed, and
+  // the two produce different advice — one says replace the artifact, the other
+  // says the process died.
+  it("calls a model the router marked failed an artifact rejection", async () => {
+    vi.stubGlobal(
+      "fetch",
+      respondWith({
+        data: [{ id: "quorum-main", status: { value: "failed", failed: true } }],
+      }),
+    );
+
+    await expect(waitUntilReady(options())).rejects.toMatchObject({
+      kind: "artifact_rejected",
+    });
+  });
+
+  // The same case, guarding the rethrow rather than the tag. The loop's catch
+  // swallows polling errors so a not-yet-listening server keeps being retried;
+  // if it swallowed this one too, the rejection would be reported as a timeout
+  // — a wait, not a diagnosis — and the operator would be told to be patient
+  // about a model that will never load.
+  it("does not swallow that rejection into a timeout", async () => {
+    vi.stubGlobal(
+      "fetch",
+      respondWith({
+        data: [{ id: "quorum-main", status: { value: "failed", failed: true } }],
+      }),
+    );
+
+    await expect(waitUntilReady(options())).rejects.not.toMatchObject({
+      kind: "not_ready",
+    });
+  });
+
+  it("calls a server that exited before serving a runtime exit", async () => {
+    vi.stubGlobal("fetch", respondWith({ data: [] }));
+
+    await expect(
+      waitUntilReady(options({ child: { exitCode: 1 } as never })),
+    ).rejects.toMatchObject({ kind: "runtime_exited" });
+  });
+
+  it("calls a server that never answers a timeout", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("ECONNREFUSED");
+      }),
+    );
+
+    await expect(waitUntilReady(options())).rejects.toMatchObject({
+      kind: "not_ready",
+    });
   });
 });

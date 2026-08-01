@@ -297,7 +297,15 @@ function appendLogTail(current: string, chunk: Buffer | string): string {
   return `${current}${String(chunk)}`.slice(-LOG_TAIL_LIMIT);
 }
 
-async function waitUntilReady(options: {
+/**
+ * Poll until the server is serving every configured model, or fail saying why.
+ *
+ * Exported for tests. It has no other caller, but it is where the difference
+ * between "this build cannot load your model" and "something did not start"
+ * is decided, and mutating the tag it attaches failed nothing while the only
+ * coverage constructed those errors by hand.
+ */
+export async function waitUntilReady(options: {
   child: ChildProcess;
   baseUrl: string;
   apiKey: string;
