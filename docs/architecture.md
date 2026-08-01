@@ -302,14 +302,26 @@ caution.
 
 **That threshold constrains which estimate it reads, and the two rules pull opposite
 ways.** Spend can be measured three ways and they disagree: the provider's per-call
-`usage.cost`, the account ledger, and tokens multiplied by published list price. Measured
-on a real run, the computed figure came out **14% above** what was actually charged,
-because a request is routed to whichever upstream is cheapest while the list price is the
-headline.
+`usage.cost`, the account ledger, and tokens multiplied by published list price.
 
-So a guardrail at 95% of the *conservative* figure fires when real spend is nearer 83% of
-budget, wasting the headroom the 95% threshold exists to reclaim. The resolution is to pick
-the estimator by the risk being managed:
+What is actually established, as distinct from what an earlier draft of this section
+asserted:
+
+- Across six different models, the computed figure ran **14% above the self-reported
+  figure**. An earlier draft described this as 14% above *what was actually charged* and
+  explained it by upstream routing beating list price. **Both were wrong**: no reading of
+  the actual charge had been taken — the ledger returned zero because it lags — and the
+  mechanism was invented rather than measured.
+- On a single model over five calls with every cost reported, computed and self-reported
+  agreed **exactly**. So the cross-model gap is not a general property of list pricing; it
+  comes from particular models, and its cause is **unknown**.
+- The ledger needs several minutes to settle. A reading taken seconds after a run is not a
+  measurement of anything.
+
+The general point survives the specifics being wrong: a guardrail set at 95% of a figure
+that overshoots fires early and wastes the headroom the threshold exists to reclaim, and
+one set against a figure that undershoots fires late. So pick the estimator by the risk
+being managed:
 
 - **For the threshold, read the billed figure** — `usage.cost`, confirmed by the ledger
   when it has caught up. That is the number the operator is actually charged, and being
