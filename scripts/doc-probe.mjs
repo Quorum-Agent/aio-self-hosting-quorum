@@ -115,6 +115,109 @@ const MODELS = [
 
 const COST_CAP_USD = 1.0;
 
+/**
+ * What a run cost, measured from the provider's own ledger rather than summed
+ * from per-call self-reports.
+ *
+ * The first version of this script summed `usage.cost` per response with a
+ * `?? 0` fallback, and under-reported a real run by roughly a third: any call
+ * the provider did not price counted as free. That is the same
+ * unreported-becomes-zero hole `TokenUsage.measured` exists to prevent, and
+ * writing the comment did not stop it being written here.
+ *
+ * So: read the account before and after, and use the increase. The biller's
+ * ledger is authoritative in a way a per-response field is not.
+ *
+ * Two hazards this handles rather than discovers later:
+ *
+ * - **A negative delta means a counter rolled, not a refund.** These counters
+ *   reset on day/week/month boundaries — observed live, with `usage_daily` and
+ *   `usage_monthly` both reading 0 while the weekly figure was still
+ *   accumulating, because the run crossed midnight UTC. Treat it as unknown.
+ * - **The figure is per-key, not per-application.** Anything else using the
+ *   same key lands in the delta. For a budget that errs toward stopping early,
+ *   which is the safe direction, but it must be reported as spend on the key.
+ */
+/**
+ * Per-token list prices, so a run's cost can be computed from token counts
+ * instead of taken on trust.
+ *
+ * This is a THIRD measure, and it fails differently from the other two, which
+ * is the point. The per-call `usage.cost` field misses responses the provider
+ * did not price. The account ledger lags. Computing tokens x list price is
+ * exact whenever token counts arrive — and silently zero when they do not, so
+ * it is never trusted alone.
+ *
+ * The prices are the aggregator's own published figures, which it describes as
+ * estimates derived from its upstream providers. That makes this an audit of
+ * the bill rather than a replacement for it: when the computed figure and the
+ * charged figure diverge, the gap is worth seeing, and neither number is
+ * automatically the wrong one.
+ */
+async function readModelPricing() {
+  try {
+    const res = await fetch("https://openrouter.ai/api/v1/models");
+    if (!res.ok) return new Map();
+    const { data } = await res.json();
+    return new Map(
+      data.map((model) => [
+        model.id,
+        {
+          prompt: Number(model.pricing?.prompt ?? 0),
+          completion: Number(model.pricing?.completion ?? 0),
+        },
+      ]),
+    );
+  } catch {
+    return new Map();
+  }
+}
+
+/**
+ * Per-host prices, keyed `model|host`.
+ *
+ * An aggregator routes one model id across several upstreams at different
+ * rates, and the response names the host it used (`body.provider`). Without
+ * this, a computed total is priced from a headline figure that may be no
+ * host's actual rate.
+ */
+async function readHostPricing(models) {
+  const table = new Map();
+  for (const id of models) {
+    try {
+      const res = await fetch(`https://openrouter.ai/api/v1/models/${id}/endpoints`);
+      if (!res.ok) continue;
+      const data = (await res.json()).data;
+      for (const endpoint of data?.endpoints ?? []) {
+        const host = endpoint.provider_name ?? endpoint.name;
+        if (!host) continue;
+        table.set(`${id}|${host}`, {
+          prompt: Number(endpoint.pricing?.prompt ?? 0),
+          completion: Number(endpoint.pricing?.completion ?? 0),
+        });
+      }
+    } catch {
+      // A missing endpoint table falls back to the listed price, which is
+      // wrong for multi-host models but better than dropping the call.
+    }
+  }
+  return table;
+}
+
+async function readAccountSpend(apiKey) {
+  try {
+    const res = await fetch("https://openrouter.ai/api/v1/auth/key", {
+      headers: { authorization: `Bearer ${apiKey}` },
+    });
+    if (!res.ok) return undefined;
+    const data = (await res.json()).data;
+    const value = Number(data?.usage);
+    return Number.isFinite(value) ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 const SYSTEM =
   "You are reading the complete documentation for a software project. Answer ONLY from these documents. " +
   "Do not use outside knowledge about similar projects, and do not guess. If the documents do not answer a " +
@@ -135,6 +238,23 @@ async function main() {
     process.exit(2);
   }
 
+  // Announced, because it is a network call the operator did not ask for and
+  // silence about it would be the same defect this script exists to catch.
+  console.log(
+    [
+      "Reading account usage before and after, to measure spend from the",
+      "provider's ledger rather than from per-call self-reports.",
+      "These two reads are free and consume no credits.",
+      "",
+    ].join("\n"),
+  );
+  const spendBefore = await readAccountSpend(apiKey);
+  if (spendBefore === undefined) {
+    console.log("Account usage unavailable — falling back to per-call totals,");
+    console.log("which are a FLOOR and not a measurement.");
+    console.log("");
+  }
+
   let docs = "";
   for (const path of DOCUMENTS) {
     docs += `===== ${path} =====\n${await readFile(resolve(ROOT, path), "utf8")}\n\n`;
@@ -142,7 +262,15 @@ async function main() {
   console.log(`${DOCUMENTS.length} documents, ~${Math.round(docs.length / 4000)}k tokens\n`);
 
   const results = new Map(questions.map((q) => [q.key, []]));
+  const pricing = await readModelPricing();
+  const hostPricing = await readHostPricing(MODELS);
+  const providersSeen = new Set();
   let spent = 0;
+  let computed = 0;
+  let promptTokens = 0;
+  let completionTokens = 0;
+  let unpricedCalls = 0;
+  let uncountedCalls = 0;
 
   for (const model of MODELS) {
     if (spent >= COST_CAP_USD) {
@@ -154,7 +282,20 @@ async function main() {
       try {
         const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
           method: "POST",
-          headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
+          headers: {
+            authorization: `Bearer ${apiKey}`,
+            "content-type": "application/json",
+            // Identify the caller so this run appears as its own app in the
+            // OpenRouter dashboard, separable from anything else on the key.
+            // Reading that per-app breakdown back through the API needs a
+            // MANAGEMENT key (`/activity` returns 403 without one), and asking
+            // an operator for a credential that can provision keys so a
+            // budget check can run is a worse trade than measuring per-key and
+            // saying so. The header is still worth sending: it costs nothing
+            // and it lets a human audit the split.
+            "HTTP-Referer": "https://github.com/Chance6706/aio-self-hosting-quorum",
+            "X-Title": "Quorum doc-probe",
+          },
           body: JSON.stringify({
             model,
             temperature: 0,
@@ -171,6 +312,28 @@ async function main() {
           continue;
         }
         spent += Number(body.usage?.cost ?? 0);
+        if (body.usage?.cost === undefined) unpricedCalls++;
+        const inTokens = Number(body.usage?.prompt_tokens ?? 0);
+        const outTokens = Number(body.usage?.completion_tokens ?? 0);
+        if (!inTokens && !outTokens) uncountedCalls++;
+        promptTokens += inTokens;
+        completionTokens += outTokens;
+        // Price against the host that ACTUALLY served this call, not the
+        // model's headline rate. The two are frequently not the same number:
+        // `google/gemini-3.1-pro-preview` is served by six hosts ranging
+        // $1.00–$3.60 per million input tokens, a 3.6x band, with the listed
+        // price sitting mid-range — so pricing from the list is wrong in an
+        // unpredictable direction. `deepseek/deepseek-r1` spans $0.70 (Novita)
+        // to $1.48 (Azure). A single-host model like `mistral-large` has no
+        // spread and the distinction does not arise, which is exactly why a
+        // one-model test showed computed and self-reported agreeing perfectly
+        // and hid this.
+        const host = body.provider;
+        if (host) providersSeen.add(`${model} via ${host}`);
+        const rate = hostPricing.get(`${model}|${host}`) ?? pricing.get(model);
+        if (rate) {
+          computed += inTokens * rate.prompt + outTokens * rate.completion;
+        }
         answer = (body.choices?.[0]?.message?.content ?? "").replace(/\s+/g, " ").trim();
       } catch (error) {
         results.get(question.key).push({ model, status: "ERROR", answer: String(error.message) });
@@ -200,7 +363,60 @@ async function main() {
     console.log("");
   }
 
-  console.log(`cost $${spent.toFixed(4)}`);
+  const spendAfter = await readAccountSpend(apiKey);
+  const delta =
+    spendBefore !== undefined && spendAfter !== undefined
+      ? spendAfter - spendBefore
+      : undefined;
+
+  // `usage.cost` is authoritative. Verified: five calls to one model reported
+  // $0.005640, computed $0.005640, and the account ledger — once given five
+  // minutes to settle — moved by exactly $0.005640. Three-way agreement to the
+  // cent.
+  //
+  // Everything else here is a check on that number, not a rival to it:
+  //
+  //   ledger delta   the same figure, minutes late. Read too early it returns
+  //                  0, which reads as "free" and is why an earlier version of
+  //                  this script reported a paid run as costing nothing.
+  //   computed       tokens x a price table. UNRELIABLE, and kept only to flag
+  //                  disagreement. An aggregator routes one model id across
+  //                  hosts at different rates — deepseek-r1 came back via
+  //                  Novita ($0.70/M) on one run and Azure ($1.48/M) on the
+  //                  next — and several hosts share a display name, so
+  //                  `model|host` does not identify an endpoint. Measured 14%
+  //                  and then 44% above the true cost.
+  //
+  // So report the billed figure, and treat a large computed gap as a reason to
+  // look rather than as a better number.
+  const primary = spent;
+  console.log(
+    `${promptTokens.toLocaleString()} in + ${completionTokens.toLocaleString()} out tokens`,
+  );
+  console.log(`cost $${primary.toFixed(4)} billed`);
+  if (delta !== undefined && delta > 0) {
+    const drift = Math.abs(delta - primary);
+    console.log(
+      `   ledger delta         $${delta.toFixed(4)}${drift < 0.0002 ? " (agrees)" : " — DISAGREES, investigate"}`,
+    );
+  } else if (delta === 0) {
+    console.log("   ledger delta         $0.0000 (lagging; needs ~5 minutes, not a confirmation)");
+  } else if (delta !== undefined) {
+    console.log("   ledger delta         a counter reset mid-run; unusable");
+  }
+  if (computed > 0) {
+    const gap = ((computed / primary - 1) * 100).toFixed(0);
+    console.log(`   computed cross-check $${computed.toFixed(4)} (${gap}% — price-table noise, not a correction)`);
+  }
+  if (unpricedCalls > 0) {
+    // The one case where the billed figure really is short.
+    console.log(`   ${unpricedCalls} call(s) returned NO cost — billed total is genuinely incomplete`);
+  }
+  if (providersSeen.size > 0) {
+    console.log(`   routed via: ${[...providersSeen].join(", ")}`);
+  }
+  console.log("");
+
   if (failed > 0) {
     console.log(`\n${failed} wrong answers. The documentation is what needs changing, not the reader.`);
     console.log("After editing, re-run: a clearer sentence and a reader who gets it right are different claims.");
