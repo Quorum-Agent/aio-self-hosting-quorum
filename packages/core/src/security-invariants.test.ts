@@ -436,6 +436,93 @@ describe("the classification stage reports where it ran", () => {
     expect(classificationLocations.length).toBeGreaterThan(0);
     expect(new Set(classificationLocations)).toEqual(new Set(["network"]));
   });
+
+  it("skips an off-device analyzer under a policy whose ceiling forbids it", async () => {
+    // The analyzer sees the full message list — conversation-bearing exactly
+    // as a model step is. Private's ceiling is local, so a network analyzer
+    // must not run: classification would leak the very content the planner
+    // refuses to route there. Mutation-verified: deleting the ceiling
+    // comparison from the gate turns this red (the analyzer runs).
+    let analyzerRan = false;
+    const analyzer = {
+      id: "peer:classifier",
+      label: "Peer classifier",
+      location: "network" as const,
+      analyze: async () => {
+        analyzerRan = true;
+        return {
+          intent: "conversation" as const,
+          confidence: 0.9,
+          taskSummary: "t",
+        };
+      },
+    };
+    const orchestrator = new Orchestrator(
+      [new DemoProvider()],
+      undefined,
+      new RoutePlanner(),
+      analyzer,
+    );
+
+    const details: string[] = [];
+    for await (const event of orchestrator.run({
+      conversationId: "c",
+      policy: "private",
+      messages: [
+        { id: "m", role: "user", content: "Hello.", createdAt: new Date(0).toISOString() },
+      ],
+    })) {
+      if (event.type === "trace" && event.trace.kind === "classification") {
+        if (event.trace.detail) details.push(event.trace.detail);
+      }
+    }
+
+    expect(analyzerRan).toBe(false);
+    expect(details.some((d) => /Skipped:/u.test(d))).toBe(true);
+  });
+
+  it("skips an off-device analyzer when the request contains sensitive data", async () => {
+    // The data floor, not the policy ceiling: balanced permits network-tier
+    // work, but a sensitive request must not be classified off-device — the
+    // same floor the planner applies to the answer model.
+    let analyzerRan = false;
+    const analyzer = {
+      id: "peer:classifier",
+      label: "Peer classifier",
+      location: "network" as const,
+      analyze: async () => {
+        analyzerRan = true;
+        return {
+          intent: "conversation" as const,
+          confidence: 0.9,
+          taskSummary: "t",
+        };
+      },
+    };
+    const orchestrator = new Orchestrator(
+      [new DemoProvider()],
+      undefined,
+      new RoutePlanner(),
+      analyzer,
+    );
+
+    for await (const event of orchestrator.run({
+      conversationId: "c",
+      policy: "balanced",
+      messages: [
+        {
+          id: "m",
+          role: "user",
+          content: "Summarize this confidential document: sk-abcdefghijklmnopqrstuvwxyz.",
+          createdAt: new Date(0).toISOString(),
+        },
+      ],
+    })) {
+      void event;
+    }
+
+    expect(analyzerRan).toBe(false);
+  });
 });
 
 describe("web is a tool tier, distinct from a model vendor", () => {
