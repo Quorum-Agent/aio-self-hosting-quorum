@@ -833,6 +833,11 @@ describe("RequestCompiler", () => {
       "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDgL7SFnKcY3Q8u",
       "private_key",
     ],
+    // Q-02: "social" alone is common shorthand for a social security number;
+    // the dashed form is not the only shape a bare nine-digit SSN takes.
+    ["My social is 123456789", "government_id"],
+    ["social: 123456789", "government_id"],
+    ["social security number 123456789", "government_id"],
   ])("detects normalized sensitive %s data", (value, category) => {
     const compiled = compiler.compile(request(value));
 
@@ -845,6 +850,8 @@ describe("RequestCompiler", () => {
     "Explain what an API key is.",
     "What does 'confidential' mean in a legal contract?",
     "Order number 4532015112830366 shipped today",
+    "Her social media following is 1234567890 strong",
+    "The social had 12345 attendees",
   ])("does not poison a conversation for non-secret language: %s", (value) => {
     expect(containsSensitiveContent(value)).toBe(false);
   });
