@@ -606,11 +606,13 @@ export class SearxngWebSearchProvider implements WebSearchProvider {
   constructor(baseUrl: string, resultLimit = DEFAULT_RESULT_LIMIT) {
     this.#baseUrl = normalizeSearchBaseUrl(baseUrl, "SearXNG base URL");
     this.#resultLimit = resultLimit;
-    this.tool = providerTool(
-      "searxng",
-      "SearXNG",
-      isLoopbackHostname(new URL(this.#baseUrl).hostname) ? "local" : "cloud",
-    );
+    // Always "cloud", even on loopback. SearXNG is a metasearch proxy: it
+    // forwards every query to upstream engines, so the bytes leave the device
+    // regardless of where the instance listens. Classifying a loopback
+    // instance "local" made `contextMayLeaveDevice` false (derived via
+    // leavesDevice) and let the UI claim the search stayed on this device —
+    // and let a toolCeiling of "web" permit a provider that egresses past it.
+    this.tool = providerTool("searxng", "SearXNG", "cloud");
   }
 
   async search(

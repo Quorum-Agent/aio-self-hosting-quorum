@@ -497,6 +497,17 @@ describe("web search providers", () => {
     ).toThrow("explicit loopback hostname");
   });
 
+  it("classifies even loopback SearXNG as cloud, because it proxies upstream", () => {
+    // Mutation-verified: restoring the loopback→"local" ternary turns this red.
+    // A loopback instance forwards every query to upstream engines, so the
+    // query leaves the device wherever the instance listens. The previous
+    // classification reported contextMayLeaveDevice: false (derived from the
+    // tier) and passed a toolCeiling of "web".
+    const provider = new SearxngWebSearchProvider("http://127.0.0.1:8080");
+    expect(provider.tool.location).toBe("cloud");
+    expect(provider.tool.contextMayLeaveDevice).toBe(true);
+  });
+
   it("preserves all failed Auto attempts in a structured error", async () => {
     vi.stubGlobal(
       "fetch",
