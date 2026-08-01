@@ -3,6 +3,11 @@ export { ModelExecutionError } from "./model-execution-error.js";
 export { Orchestrator } from "./orchestrator.js";
 export { POLICIES, getPolicy } from "./policies.js";
 export {
+  LOCATION_NOUNS,
+  policiesWithoutTools,
+  policyDescription,
+} from "./policy-copy.js";
+export {
   containsSensitiveContent,
   RequestCompiler,
 } from "./request-compiler.js";

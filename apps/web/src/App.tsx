@@ -802,6 +802,7 @@ export default function App() {
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
         onSaved={refreshRuntime}
+        policies={runtime?.policies}
       />
 
       {/* Both drawers overlay the conversation below 841px. The scrim is

@@ -205,6 +205,19 @@ export interface LocalRuntimeStatus {
 export interface PolicyDefinition {
   id: PolicyMode;
   label: string;
+  /**
+   * What the mode is *for*, hand-written, making no claim about reach.
+   *
+   * Split out from `description` because reach claims written by hand invert
+   * silently — see `policy-copy.ts` for the three that did.
+   */
+  intent: string;
+  /**
+   * The user-visible sentence: `intent`, then a reach statement **computed
+   * from the two ceilings below**. Never write this by hand; `policies.ts`
+   * builds every one of them through `policyDescription`, and its test fails
+   * if any policy carries a literal.
+   */
   description: string;
   /**
    * The furthest tier inference may travel.
