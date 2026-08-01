@@ -9,6 +9,8 @@ var-e2e-*/
 *.log
 *.tsbuildinfo
 .DS_Store
+__pycache__/
+*.py[cod]
 
 # Assistant tooling that writes into the working tree; unrelated to Quorum
 .blender-toolkit/
