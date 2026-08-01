@@ -316,6 +316,21 @@ describe("RequestCompiler", () => {
     expect(compiled.requirements.capabilities).not.toContain("web");
   });
 
+  it("lets the most recent standing authorization re-grant web after an earlier denial", () => {
+    // Q-14: directives are resolved newest-first, not any-denial-wins. A user
+    // who lifts their own offline restriction expects the network back.
+    const compiled = compiler.compile(
+      conversationRequest([
+        "Do not use the internet for this.",
+        "Actually, search the web for the latest Quorum release.",
+        "Also tell me more.",
+      ]),
+    );
+
+    expect(compiled.requirements.intent).toBe("research");
+    expect(compiled.requirements.capabilities).toContain("web");
+  });
+
   it.each([
     "What is my current medication schedule?",
     "Give me the sources for my HIV medication.",
