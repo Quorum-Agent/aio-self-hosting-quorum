@@ -1825,9 +1825,22 @@ describe("which tools the model is told it has", () => {
     expect(
       toolsVisibleToModel(policy("network"), tools).map((entry) => entry.id),
     ).toEqual(["local-thing"]);
+    // A ceiling of "none" means no tool runs — including one whose location
+    // never leaves the machine.
+    expect(toolsVisibleToModel(policy("none"), tools)).toEqual([]);
+  });
+
+  // The filter used to exempt any tool whose capabilities omitted "web", which
+  // held only because the single shipped tool declares it. A descriptor that
+  // reaches the internet without saying "web" was handed to the model under a
+  // policy forbidding every tool.
+  it("checks the ceiling against the tool's location, not its capability list", () => {
     expect(
-      toolsVisibleToModel(policy("none"), tools).map((entry) => entry.id),
-    ).toEqual(["local-thing"]);
+      toolsVisibleToModel(policy("none"), [tool("mystery", "web", [])]),
+    ).toEqual([]);
+    expect(
+      toolsVisibleToModel(policy("network"), [tool("mystery", "web", [])]),
+    ).toEqual([]);
   });
 
   it("does not offer a tool the runtime says is unavailable", () => {
