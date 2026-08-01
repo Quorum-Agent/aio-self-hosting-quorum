@@ -88,7 +88,18 @@ export const POLICIES: Record<PolicyMode, PolicyDefinition> = {
     // question to ask instead is whether the app still starts with no network
     // at all, which it must.
     label: "Offline",
-    description: "Run every computation on this machine, including the local network.",
+    // Third wording of this one sentence, and the second time it has been
+    // wrong. It said "Disable every network operation, including local network
+    // endpoints" — a privacy claim about a compute-locality mode. Rewriting it
+    // to positive framing produced "Run every computation on this machine,
+    // including the local network", where "including" silently changed what it
+    // attached to: from what is DISABLED to what is PERMITTED. That states the
+    // opposite of the ceiling. `device` is the lowest tier, so offline excludes
+    // loopback and the LAN as well as everything further out — see the
+    // invariant "Offline mode excludes loopback endpoints as well as remote
+    // endpoints". Name what runs, and name what is excluded, separately.
+    description:
+      "Run every computation inside Quorum itself. No loopback server, no local network, nothing beyond.",
     inferenceCeiling: "device",
     toolCeiling: "none",
     preferLocal: true,
