@@ -294,6 +294,36 @@ Unmeasured spend is charged as a conservative estimate and labelled as an estima
 Treating an unreporting provider as having spent nothing would put the hole in a spend cap
 at exactly the backend that stays quiet.
 
+**The guardrail fires at 95% of the stated budget, not at 100%**, because stopping early
+is not free. A relay through a 9–12B local generalist is materially weaker than the cloud
+model it replaced — the fallback costs answer quality, not just convenience — so the
+design should run as close to the limit as it can rather than leaving headroom out of
+caution.
+
+**That threshold constrains which estimate it reads, and the two rules pull opposite
+ways.** Spend can be measured three ways and they disagree: the provider's per-call
+`usage.cost`, the account ledger, and tokens multiplied by published list price. Measured
+on a real run, the computed figure came out **14% above** what was actually charged,
+because a request is routed to whichever upstream is cheapest while the list price is the
+headline.
+
+So a guardrail at 95% of the *conservative* figure fires when real spend is nearer 83% of
+budget, wasting the headroom the 95% threshold exists to reclaim. The resolution is to pick
+the estimator by the risk being managed:
+
+- **For the threshold, read the billed figure** — `usage.cost`, confirmed by the ledger
+  when it has caught up. That is the number the operator is actually charged, and being
+  wrong low here costs answer quality.
+- **Keep the computed figure as an audit, not as the basis.** Its job is to detect when the
+  billed figure is *short* — if calls returned no cost at all, the billed total is missing
+  spend and the conservative figure becomes the honest one.
+- **A hard cap, if one is ever added, is the opposite case** and should read the largest
+  available figure. Overspending is not recoverable; stopping early is.
+
+Stated plainly because the naive combination — conservative estimator plus an aggressive
+threshold — produces neither safety nor efficiency, and looks correct from either side
+alone.
+
 ### Saved-model staleness
 
 A saved slot assignment can outlive the artifact it names. The availability half of that
