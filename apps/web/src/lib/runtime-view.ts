@@ -1,5 +1,6 @@
 import { leavesDevice, locationTier, modelReach } from "@quorum/core";
 import type {
+  ExecutionLocation,
   Capability,
   ExecutionAttempt,
   LocalRuntimeStatus,
@@ -38,6 +39,8 @@ export interface CloudUsageView {
    * exists to draw: `remote` and `cloud` differ in who controls the stack.
    */
   routeLabel: string;
+  /** Heading for the activity block; names the tier rather than "off-device". */
+  headingLabel: string;
 }
 
 export interface ModelAttemptView {
@@ -166,6 +169,20 @@ export function selectablePolicies(
   return policies.filter((policy) => policy.id !== "cost_controlled");
 }
 
+/**
+ * Display names per tier. `network` is "Local network" rather than "Network"
+ * because the tier means a machine on the operator's own LAN, and `remote` is
+ * "Remote host" because "Remote" alone reads like a synonym for cloud — which
+ * is the exact distinction the tier model exists to preserve.
+ */
+const TIER_LABELS: Record<Exclude<ExecutionLocation, "device">, string> = {
+  local: "Local",
+  network: "Local network",
+  remote: "Remote host",
+  web: "Web search",
+  cloud: "Cloud",
+};
+
 export function describeCloudUsage(
   plan: TaskPlan | undefined,
   models: ModelDescriptor[],
@@ -177,15 +194,23 @@ export function describeCloudUsage(
   const cloudAttempts =
     plan?.attempts?.filter((attempt) => leavesDevice(attempt.route)) ?? [];
   const selected = plan ? leavesDevice(plan.route) : false;
-  const routeLabel = plan
-    ? plan.route.charAt(0).toUpperCase() + plan.route.slice(1)
-    : "Off-device";
+  const routeLabel = plan ? TIER_LABELS[plan.route] : "Off-device";
   const modelContacted = cloudAttempts.some(
     (attempt) => attempt.contextMayHaveBeenTransmitted,
   );
   const webContacted =
     plan?.webSearch?.contextMayHaveLeftDevice === true;
   const contacted = modelContacted || webContacted;
+  // An operator who deliberately configured a LAN peer already knows it is off
+  // the device; saying so is noise. Name the tier they set up instead. A single
+  // friendly label will not do, though — this heading covers the network,
+  // remote AND cloud tiers, so a fixed "Local network" would be actively wrong
+  // the moment a vendor API answered.
+  const headingLabel = selected
+    ? `${routeLabel} activity`
+    : webContacted
+      ? "Web search"
+      : "Off-device activity";
   const labels = [
     ...new Set(
       cloudAttempts.map(
@@ -220,6 +245,7 @@ export function describeCloudUsage(
     selected,
     contacted,
     routeLabel,
+    headingLabel,
     activity: selected || contacted,
     text: activityText
       ? activityText
