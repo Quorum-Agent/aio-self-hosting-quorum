@@ -6,7 +6,7 @@ interface WarmupOptions {
   model: string;
   /** Required — see the note on OpenAICompatibleProviderOptions.nativeOllama. */
   nativeOllama: boolean;
-  scheduler: InferenceScheduler;
+  scheduler?: InferenceScheduler;
 }
 
 const WARMUP_TIMEOUT_MS = 180_000;
@@ -38,10 +38,9 @@ async function consumeBounded(response: Response): Promise<void> {
 }
 
 export async function warmLocalModel(options: WarmupOptions): Promise<void> {
-  const release = await options.scheduler.acquire(
-    undefined,
-    WARMUP_TIMEOUT_MS,
-  );
+  const release = options.scheduler
+    ? await options.scheduler.acquire(undefined, WARMUP_TIMEOUT_MS)
+    : undefined;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), WARMUP_TIMEOUT_MS);
 
@@ -104,6 +103,6 @@ export async function warmLocalModel(options: WarmupOptions): Promise<void> {
     throw error;
   } finally {
     clearTimeout(timer);
-    release();
+    release?.();
   }
 }
