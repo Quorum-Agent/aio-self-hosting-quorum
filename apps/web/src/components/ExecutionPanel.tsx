@@ -297,7 +297,7 @@ export function ExecutionPanel({
       >
         {cloudUsage.activity ? <Cloud size={15} /> : <ShieldCheck size={15} />}
         <div>
-          <strong>Off-device activity</strong>
+          <strong>{cloudUsage.headingLabel}</strong>
           <span>
             {cloudUsage.text}
           </span>

@@ -275,6 +275,11 @@ describe("runtime view", () => {
       // contact IS a local route; the diagram must say so while the attempt
       // ledger still records that the earlier contact happened.
       routeLabel: "Local",
+      // Nothing is selected off-device — the answer came from a local model —
+      // but a cloud attempt did happen and is still in the ledger, so the
+      // generic heading is right here. Naming a tier would credit a route that
+      // did not produce the answer.
+      headingLabel: "Off-device activity",
       text: "Contacted Cloud test; final route local",
     });
   });
@@ -311,6 +316,10 @@ describe("runtime view", () => {
       selected: false,
       contacted: true,
       routeLabel: "Local",
+      // The model stayed local; only the search left. Calling this "Local
+      // network activity" would name a tier nothing used, and calling it
+      // "Cloud usage" is what it used to say.
+      headingLabel: "Web search",
       text: "Web search via SearXNG; planned model route local",
     });
   });
