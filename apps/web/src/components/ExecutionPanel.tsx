@@ -15,6 +15,8 @@ import {
 import type { Ref } from "react";
 
 import type {
+  Capability,
+  CapabilityAdjustment,
   ExecutionTrace,
   LocalRuntimeProblem,
   ModelDescriptor,
@@ -44,6 +46,16 @@ interface ExecutionPanelProps {
    * this panel, which exists to show the work, gets the evidence.
    */
   localRuntimeProblem?: LocalRuntimeProblem | undefined;
+  /** Models whose capabilities the runtime decided. Empty is the normal case. */
+  capabilityAdjustments?: CapabilityAdjustment[] | undefined;
+  /** Available models whose capabilities nothing could confirm. */
+  unverifiedModels?: string[] | undefined;
+  /** Which capabilities were examined per model, and which are config-only. */
+  capabilityProvenance?: Array<{
+    model: string;
+    confirmed: Capability[];
+    asserted: Capability[];
+  }>;
   onClose: () => void;
   ref?: Ref<HTMLElement>;
 }
@@ -69,6 +81,9 @@ export function ExecutionPanel({
   traces,
   verbosity,
   localRuntimeProblem,
+  capabilityAdjustments = [],
+  unverifiedModels = [],
+  capabilityProvenance = [],
   onClose,
   ref,
 }: ExecutionPanelProps) {
@@ -111,16 +126,92 @@ export function ExecutionPanel({
         </div>
       </section>
 
-      {localRuntimeProblem && (
+      {(localRuntimeProblem ||
+        capabilityAdjustments.length > 0 ||
+        unverifiedModels.length > 0 ||
+        capabilityProvenance.length > 0) && (
         <section className="panel-section" role="status">
           <div className="section-title">
             <span>Local runtime</span>
           </div>
-          <p className="runtime-problem-summary">{localRuntimeProblem.summary}</p>
-          {localRuntimeProblem.detail && (
-            <pre className="runtime-problem-detail">
-              {localRuntimeProblem.detail}
-            </pre>
+          {localRuntimeProblem && (
+            <>
+              <p className="runtime-problem-summary">
+                {localRuntimeProblem.summary}
+              </p>
+              {localRuntimeProblem.detail && (
+                <pre className="runtime-problem-detail">
+                  {localRuntimeProblem.detail}
+                </pre>
+              )}
+            </>
+          )}
+          {unverifiedModels.length > 0 && (
+            // The weaker guarantee, named rather than hidden, and stating the
+            // consequence rather than only the fact. Behind llama.cpp or a
+            // plain OpenAI-compatible endpoint nothing can be asked what a
+            // model does, so the capability list is an assertion from a config
+            // file — and the planner treats assertions and confirmations
+            // identically, so an asserted `vision` sends an image to a model
+            // that cannot see it and fails at generation.
+            <p className="runtime-capabilities-unverified">
+              Nothing could confirm what {unverifiedModels.join(", ")} can do.
+              Routing will trust the configured capabilities.
+            </p>
+          )}
+          {capabilityProvenance.length > 0 && (
+            // Which capabilities were actually examined, per model. A single
+            // "verified" flag was the first version, and it overclaimed: a
+            // probe decides vision and tools and says nothing about the rest,
+            // so a model could read as confirmed while `reasoning` and
+            // `coding` remained unexamined config.
+            <ul className="capability-adjustment-list">
+              {capabilityProvenance.map((entry) => (
+                <li key={`provenance-${entry.model}`}>
+                  <strong>{entry.model}</strong>
+                  {entry.confirmed.length > 0 && (
+                    <span className="capability-added">
+                      runtime confirmed {entry.confirmed.join(", ")}
+                    </span>
+                  )}
+                  {entry.asserted.length > 0 && (
+                    <span className="capability-asserted">
+                      from config {entry.asserted.join(", ")}
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+          {capabilityAdjustments.length > 0 && (
+            <>
+              {/* Both directions are named because they mean opposite things:
+                  an addition is a capability the operator had and could not
+                  use, a removal is a claim the configuration was making that
+                  the model cannot honour. Collapsing them into "changed" would
+                  lose exactly the part worth reading. */}
+              <p className="runtime-problem-summary">
+                These models can do something different from what the
+                configuration declares. The runtime was asked, and it decided.
+              </p>
+              <ul className="capability-adjustment-list">
+                {capabilityAdjustments.map((adjustment) => (
+                  <li key={adjustment.model}>
+                    <strong>{adjustment.model}</strong>
+                    {adjustment.added.length > 0 && (
+                      <span className="capability-added">
+                        gained {adjustment.added.join(", ")}
+                      </span>
+                    )}
+                    {adjustment.removed.length > 0 && (
+                      <span className="capability-removed">
+                        cannot {adjustment.removed.join(", ")}
+                      </span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </>
           )}
         </section>
       )}

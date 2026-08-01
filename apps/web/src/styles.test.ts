@@ -174,3 +174,23 @@ describe("the local runtime's own words", () => {
     expect(declarations(".runtime-problem-summary")).toContain("font-size: 12px;");
   });
 });
+
+describe("capabilities the runtime decided", () => {
+  // Additions and removals mean opposite things — one is a capability the
+  // operator had and could not use, the other a claim the configuration was
+  // making that the model cannot honour. Rendering them identically would lose
+  // the half a reader is scanning for.
+  it("distinguishes a gained capability from a lost one", () => {
+    expect(declarations(".capability-added")).not.toBe(
+      declarations(".capability-removed"),
+    );
+  });
+
+  // Model names are unbroken tokens like `qwen2.5-coder:1.5b` in a panel that
+  // is a grid track, so an unwrapped one widens the whole application.
+  it("wraps a model name instead of widening the panel", () => {
+    expect(declarations(".capability-adjustment-list strong")).toContain(
+      "overflow-wrap: anywhere;",
+    );
+  });
+});

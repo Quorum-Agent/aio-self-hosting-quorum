@@ -2059,3 +2059,48 @@ body {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+.capability-adjustment-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 7px;
+}
+
+.capability-adjustment-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.capability-adjustment-list strong {
+  color: #3c4139;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+/* Added and removed are styled apart because they mean opposite things, and a
+   reader scanning the list is looking for the removals — those are the ones
+   that stop a request being routed anywhere. */
+.capability-added {
+  color: #2f6b45;
+}
+
+.capability-removed {
+  color: #8a3d33;
+}
+
+.runtime-capabilities-unverified {
+  margin: 0 0 9px;
+  color: #6b6f66;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.capability-asserted {
+  color: #7a6a3f;
+}

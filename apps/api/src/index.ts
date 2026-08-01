@@ -2,6 +2,8 @@ import { resolve } from "node:path";
 
 import { config as loadEnvironment } from "dotenv";
 
+import type { CapabilityAdjustment } from "@quorum/core";
+
 import { loadConfig, PROJECT_ROOT } from "./config.js";
 import {
   managedLlamaProblem,
@@ -45,10 +47,20 @@ try {
   // for a model this build cannot load. Printing that to a console the operator
   // is not watching, while the interface says only "unavailable", is how a
   // five-item checklist gets offered for a problem already diagnosed.
+  const capabilityAdjustments: CapabilityAdjustment[] = [];
+  const unconfirmedCapabilities: Array<{ model: string; asserted: string[] }> = [];
   const runtime = await createRuntime(config, {
     ...(managedLlamaFailure
       ? { problem: managedLlamaProblem(managedLlamaFailure.error) }
       : {}),
+    // Collected now, logged once the real logger exists. A routing change the
+    // operator did not make is worth a durable, structured record — the status
+    // carries it to the interface, and this is what someone greps months later
+    // when a model stops being chosen.
+    onCapabilityAdjustment: (adjustment) =>
+      capabilityAdjustments.push(adjustment),
+    onCapabilitiesUnconfirmed: (model, asserted) =>
+      unconfirmedCapabilities.push({ model, asserted }),
   });
   server = await buildServer(config, runtime);
   const activeServer = server;
@@ -63,6 +75,22 @@ try {
     activeServer.log.error(
       { err: managedLlamaFailure.error },
       managedLlamaFailure.message,
+    );
+  }
+  for (const adjustment of capabilityAdjustments) {
+    activeServer.log.info(
+      {
+        model: adjustment.model,
+        added: adjustment.added,
+        removed: adjustment.removed,
+      },
+      `The local runtime decided what ${adjustment.model} can do, overriding the configured capabilities.`,
+    );
+  }
+  for (const unconfirmed of unconfirmedCapabilities) {
+    activeServer.log.warn(
+      { model: unconfirmed.model, asserted: unconfirmed.asserted },
+      `Nothing could confirm what ${unconfirmed.model} can do; routing will trust the configured capabilities.`,
     );
   }
   if (runtime.warmupStatus.state === "warming") {
