@@ -394,7 +394,11 @@ export async function createRuntime(
           apiKey: config.local.apiKey,
           model: target.model,
           nativeOllama: config.local.transport === "ollama",
-          scheduler,
+          // Deliberately no scheduler. Warmup must not hold the inference
+          // slot before the port opens — Q-13: a standing warmup IIFE holds
+          // the only slot from before listen, and the first message after a
+          // restart loses classification at t+20s, its route at t+50s, and
+          // is answered by the scaffold — persisted as real history.
         });
         target.status = "ready";
       } catch (error) {

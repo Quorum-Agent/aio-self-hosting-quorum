@@ -30,4 +30,5 @@ export {
   policyReachesOffDevice,
   WEB_SEARCH_LOCATION,
 } from "./types.js";
+export { randomUUID } from "./uuid.js";
 export type * from "./types.js";

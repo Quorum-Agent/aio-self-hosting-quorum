@@ -69,4 +69,55 @@ describe("buildAuthoritativeContext", () => {
     ]);
     expect(context[0]?.content).toContain("secret");
   });
+
+  it("bounds stored history to the most recent messages", () => {
+    const manyMessages = Array.from({ length: 150 }, (_, index) => ({
+      id: `msg-${index}`,
+      role: "user" as const,
+      content: `Message ${index}`,
+      createdAt: new Date(index).toISOString(),
+    }));
+
+    const context = buildAuthoritativeContext(
+      manyMessages,
+      {
+        id: "latest",
+        role: "user",
+        content: "Latest",
+        createdAt: new Date(150).toISOString(),
+      },
+      new Date(151).toISOString(),
+      "server-generated",
+      50,
+    );
+
+    // 50 stored + 1 new = 51 total
+    expect(context).toHaveLength(51);
+    // The oldest messages are dropped
+    expect(context[0]?.id).toBe("msg-100");
+    expect(context[49]?.id).toBe("msg-149");
+    expect(context[50]?.id).toBe("server-generated");
+  });
+
+  it("defaults to a 100-message stored history window", () => {
+    const manyMessages = Array.from({ length: 150 }, (_, index) => ({
+      id: `msg-${index}`,
+      role: "user" as const,
+      content: `Message ${index}`,
+      createdAt: new Date(index).toISOString(),
+    }));
+
+    const context = buildAuthoritativeContext(
+      manyMessages,
+      {
+        id: "latest",
+        role: "user",
+        content: "Latest",
+        createdAt: new Date(150).toISOString(),
+      },
+    );
+
+    expect(context).toHaveLength(101);
+    expect(context[0]?.id).toBe("msg-50");
+  });
 });

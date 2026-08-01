@@ -306,6 +306,19 @@ export async function buildServer(config: AppConfig, runtime: QuorumRuntime) {
 
     const controller = new AbortController();
     reply.raw.on("close", () => controller.abort());
+    // End-to-end request deadline. Per-stage timeouts (first-token, idle,
+    // validated-output, total) bound each model call, and the analyzer and
+    // search carry their own budgets — but nothing bounded the SUM of
+    // classification + retrieval + draft + fallback + synthesis. A request
+    // that keeps hitting per-stage timeouts back to back could hang for many
+    // minutes; abort it instead, which lands in the normal cancelled/failed
+    // persistence path below.
+    const REQUEST_DEADLINE_MS = 240_000;
+    const requestDeadline = setTimeout(
+      () => controller.abort(new Error("The request exceeded its overall time limit.")),
+      REQUEST_DEADLINE_MS,
+    );
+    requestDeadline.unref?.();
     const executionStartedAt = Date.now();
     const executionTraces = new Map<string, ExecutionTrace>();
     let latestPlan: TaskPlan | undefined;
@@ -463,6 +476,7 @@ export async function buildServer(config: AppConfig, runtime: QuorumRuntime) {
         });
       }
     } finally {
+      clearTimeout(requestDeadline);
       clearInterval(keepAlive);
       if (!reply.raw.destroyed) reply.raw.end();
     }

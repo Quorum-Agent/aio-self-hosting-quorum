@@ -148,6 +148,41 @@ describe("web search providers", () => {
     );
   });
 
+  it("strips bidi and zero-width format characters from result titles (Q-03)", async () => {
+    // Mutation-verified: removing the \p{Cf} strip from compactText turns
+    // this red. The spoofed title below is the finding's exact attack: a
+    // right-to-left override renders "https://secure-paypal.org" in front of
+    // the real destination in any pre-wrap surface.
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          results: [
+            {
+              title:
+                "PayPal Account Verification ‮gro.lapyap-eruces//:sptth‬",
+              url: "https://attacker-host.example.org/paypal",
+              content: "Snippet with zero-width​joiner and ⁦isolates⁩.",
+            },
+          ],
+        }),
+        { headers: { "content-type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new SearxngWebSearchProvider("http://127.0.0.1:8080");
+    const result = await provider.search("paypal login");
+
+    expect(result.results).toHaveLength(1);
+    const [entry] = result.results;
+    expect(entry?.title).toBe(
+      "PayPal Account Verification gro.lapyap-eruces//:sptth",
+    );
+    // No format characters survive anywhere in title or snippet.
+    expect(entry?.title).not.toMatch(/\p{Cf}/u);
+    expect(entry?.snippet).not.toMatch(/\p{Cf}/u);
+  });
+
   it("uses Brave's authenticated HTTPS endpoint", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
@@ -495,6 +530,17 @@ describe("web search providers", () => {
         searxngBaseUrl: "http://192.168.1.10:8080",
       }),
     ).toThrow("explicit loopback hostname");
+  });
+
+  it("classifies even loopback SearXNG as cloud, because it proxies upstream", () => {
+    // Mutation-verified: restoring the loopback→"local" ternary turns this red.
+    // A loopback instance forwards every query to upstream engines, so the
+    // query leaves the device wherever the instance listens. The previous
+    // classification reported contextMayLeaveDevice: false (derived from the
+    // tier) and passed a toolCeiling of "web".
+    const provider = new SearxngWebSearchProvider("http://127.0.0.1:8080");
+    expect(provider.tool.location).toBe("cloud");
+    expect(provider.tool.contextMayLeaveDevice).toBe(true);
   });
 
   it("preserves all failed Auto attempts in a structured error", async () => {

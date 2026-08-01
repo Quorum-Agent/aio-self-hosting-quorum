@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomUUID } from "./uuid.js";
 
 import { getPolicy } from "./policies.js";
 import { safeDisplayText } from "./safe-text.js";
@@ -183,7 +183,46 @@ export class Orchestrator {
       return trace;
     };
 
-    if (this.#promptAnalyzer && input.policy !== "offline") {
+    const analyzerLocation = this.#promptAnalyzer?.location ?? "local";
+    const analyzerPolicy = getPolicy(input.policy);
+    // The analyzer receives the FULL message list, so it is a
+    // conversation-bearing stage exactly as a model step is. Gate it on the
+    // policy's inference ceiling: a network analyzer under Private would
+    // leak the conversation during classification even though the planner
+    // would refuse a network model for the answer. Sensitive and
+    // web-grounded requests additionally require a LOCAL analyzer — the
+    // same data floor the planner applies to models.
+    const analyzerAllowed =
+      this.#promptAnalyzer &&
+      input.policy !== "offline" &&
+      locationTier(analyzerLocation) <=
+        locationTier(analyzerPolicy.inferenceCeiling) &&
+      (analyzerLocation === "local" ||
+        !(
+          request.requirements.containsSensitiveData ||
+          request.requirements.containsWebGroundedData
+        ));
+    if (this.#promptAnalyzer && !analyzerAllowed) {
+      // Skipped on policy grounds, not on failure — disclose it as a
+      // completed trace with the reason so the rail does not read as a
+      // classifier outage.
+      const skippedStep: PlanStep = {
+        id: randomUUID(),
+        label: `Extract request intent with ${this.#promptAnalyzer.label}`,
+        kind: "classification",
+        location: analyzerLocation,
+        modelId: this.#promptAnalyzer.id,
+      };
+      yield {
+        type: "trace",
+        trace: executionTrace(
+          skippedStep,
+          "completed",
+          `Skipped: the ${analyzerPolicy.label} policy does not permit classification at ${analyzerLocation}. Deterministic classification retained.`,
+        ),
+      };
+    }
+    if (this.#promptAnalyzer && analyzerAllowed && input.policy !== "offline") {
       const analyzerStep: PlanStep = {
         id: randomUUID(),
         label: `Extract request intent with ${this.#promptAnalyzer.label}`,
