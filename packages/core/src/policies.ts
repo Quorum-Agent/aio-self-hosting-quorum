@@ -1,3 +1,4 @@
+import { policyDescription } from "./policy-copy.js";
 import type { PolicyDefinition, PolicyMode } from "./types.js";
 
 /**
@@ -37,16 +38,41 @@ import type { PolicyDefinition, PolicyMode } from "./types.js";
  * permission from letting a model reach a vendor's API. Writing `"cloud"` here
  * granted more than was meant and read as though a search provider were a
  * model vendor.
+ *
+ * ---
+ *
+ * **These entries no longer carry a `description`.** Each declares an `intent`
+ * — what the mode is for — and the reach half of the user-visible sentence is
+ * computed from the ceilings immediately below it by `policyDescription`.
+ *
+ * That is not tidying. Three separate pieces of shipped copy stated a reach
+ * their own values contradicted within one day, one of them here: `offline`'s
+ * card read "Run every computation on this machine, including the local
+ * network" while declaring `inferenceCeiling: "device"`, which excludes the
+ * local network and loopback both. A hand-written sentence sitting beside the
+ * value it describes is the *one fact, two fields* shape most defects in
+ * `REDTEAM-FINDINGS.md` take, and the fix is the one already applied to
+ * `leavesDevice()` — derive it, once, from the value itself.
+ *
+ * An `intent` may not make a reach claim of its own. `policies.test.ts`
+ * enforces that by asserting no tier noun appears in any of them.
  */
-export const POLICIES: Record<PolicyMode, PolicyDefinition> = {
+type PolicySpecification = Omit<PolicyDefinition, "description">;
+
+const POLICY_SPECIFICATIONS: Record<PolicyMode, PolicySpecification> = {
   private: {
     id: "private",
     label: "Private",
     // Not "keep tools on this machine" — `toolCeiling: "none"` means no tool
-    // runs at all, and no tool can be `location: "local"` today anyway (see the
-    // note above). Other shipped copy already said "Private and Offline
-    // policies never search", which the old wording contradicted.
-    description: "Keep inference on this machine and run no tools.",
+    // runs at all, and no tool can be `location: "local"` today anyway (see
+    // the note above).
+    // Not "handled by nobody else" and not a confidentiality promise. Two
+    // external reviewers read the first draft of this line as one, and both
+    // were right to: it conflicts with this product's stated goal — capability
+    // ownership, not data privacy — and it also sits awkwardly beside a ceiling
+    // of `local`, which permits a *separate* loopback process. What is true is
+    // that everything answering the request is software the operator runs.
+    intent: "For work you want handled entirely by software you run yourself.",
     inferenceCeiling: "local",
     toolCeiling: "none",
     preferLocal: true,
@@ -54,8 +80,8 @@ export const POLICIES: Record<PolicyMode, PolicyDefinition> = {
   balanced: {
     id: "balanced",
     label: "Balanced",
-    description:
-      "Prefer local execution; allow automatic web search and cloud only when they add clear value.",
+    intent:
+      "The default: prefer what you host, and go further only when it clearly helps.",
     inferenceCeiling: "cloud",
     toolCeiling: "web",
     preferLocal: true,
@@ -63,7 +89,7 @@ export const POLICIES: Record<PolicyMode, PolicyDefinition> = {
   quality: {
     id: "quality",
     label: "Best quality",
-    description: "Choose the strongest available route for each request.",
+    intent: "The strongest available route for each request.",
     inferenceCeiling: "cloud",
     toolCeiling: "web",
     preferLocal: false,
@@ -88,18 +114,14 @@ export const POLICIES: Record<PolicyMode, PolicyDefinition> = {
     // question to ask instead is whether the app still starts with no network
     // at all, which it must.
     label: "Offline",
-    // Third wording of this one sentence, and the second time it has been
-    // wrong. It said "Disable every network operation, including local network
-    // endpoints" — a privacy claim about a compute-locality mode. Rewriting it
-    // to positive framing produced "Run every computation on this machine,
-    // including the local network", where "including" silently changed what it
-    // attached to: from what is DISABLED to what is PERMITTED. That states the
-    // opposite of the ceiling. `device` is the lowest tier, so offline excludes
-    // loopback and the LAN as well as everything further out — see the
-    // invariant "Offline mode excludes loopback endpoints as well as remote
-    // endpoints". Name what runs, and name what is excluded, separately.
-    description:
-      "Run every computation inside Quorum itself. No loopback server, no local network, nothing beyond.",
+    // The sentence that was wrong twice, in opposite directions, is now
+    // generated from the ceiling. What is left here says only why the mode
+    // exists — a statement with no "including" in it to relocate.
+    // "Wholly self-contained" was also read as a secrecy claim. What the mode
+    // is actually for is the situation where nothing else is reachable — no
+    // network, or no model server running — and Quorum has to answer alone.
+    intent:
+      "For a machine with no network, or with none of its model servers running.",
     inferenceCeiling: "device",
     toolCeiling: "none",
     preferLocal: true,
@@ -107,13 +129,32 @@ export const POLICIES: Record<PolicyMode, PolicyDefinition> = {
   cost_controlled: {
     id: "cost_controlled",
     label: "Cost controlled",
-    description: "Prefer free local routes and cap exceptional cloud use.",
+    intent:
+      "Prefer routes that cost nothing, and cap what an exceptional request may spend.",
     inferenceCeiling: "cloud",
     toolCeiling: "web",
     preferLocal: true,
     cloudBudgetUsd: 1,
   },
 };
+
+// Each policy is frozen as well as the record holding them. `Object.freeze` is
+// shallow, so freezing only the outer object leaves every `description`
+// writable at runtime — which would make the guard against hand-written copy a
+// compile-time formality that any caller could step around. Caught by an
+// external reviewer, who was right that the comment implied more than the call
+// delivered.
+export const POLICIES: Record<PolicyMode, PolicyDefinition> = Object.freeze(
+  Object.fromEntries(
+    Object.entries(POLICY_SPECIFICATIONS).map(([mode, specification]) => [
+      mode,
+      Object.freeze({
+        ...specification,
+        description: policyDescription(specification),
+      }),
+    ]),
+  ) as Record<PolicyMode, PolicyDefinition>,
+);
 
 export function getPolicy(mode: PolicyMode): PolicyDefinition {
   return POLICIES[mode];

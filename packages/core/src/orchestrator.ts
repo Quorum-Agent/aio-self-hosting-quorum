@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { getPolicy } from "./policies.js";
 import { safeDisplayText } from "./safe-text.js";
-import { leavesDevice, locationTier } from "./types.js";
+import { leavesDevice, locationTier, policyPermitsTool } from "./types.js";
 import {
   containsSensitiveContent,
   RequestCompiler,
@@ -279,10 +279,7 @@ export class Orchestrator {
       // while `systemContext` already compared tiers and would have hidden
       // that same tool from the model. The field promised enforcement that
       // did not happen, in the one direction where it matters.
-      if (
-        locationTier(this.#webSearch.tool.location) >
-        locationTier(policy.toolCeiling)
-      ) {
+      if (!policyPermitsTool(policy, this.#webSearch.tool.location)) {
         yield {
           type: "error",
           message:

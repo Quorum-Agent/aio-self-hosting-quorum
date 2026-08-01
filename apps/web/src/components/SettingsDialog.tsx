@@ -9,6 +9,8 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { policiesWithoutSearch, type PolicyDefinition } from "@quorum/core";
+
 import {
   getWebSearchSettings,
   updateWebSearchSettings,
@@ -29,6 +31,35 @@ interface SettingsDialogProps {
   open: boolean;
   onClose: () => void;
   onSaved: () => Promise<void>;
+  /**
+   * The runtime's own policy definitions, so the note below can name the
+   * tool-free policies instead of remembering them. Absent until the runtime
+   * has loaded, in which case the sentence is omitted — no claim is safer than
+   * a remembered one.
+   */
+  policies?: readonly PolicyDefinition[] | undefined;
+}
+
+/**
+ * "Private and Offline policies never search."
+ *
+ * That was two policy names written by hand next to the field that decides it:
+ * true when written, silently false the moment a `toolCeiling` moves or a
+ * policy is added. It is the same shape as the `offline` card that stated the
+ * opposite of its own ceiling, so it gets the same treatment — read the value.
+ */
+export function searchlessPolicyNote(
+  policies: readonly PolicyDefinition[] | undefined,
+): string {
+  const names = policiesWithoutSearch(policies ?? []).map(
+    (policy) => policy.label,
+  );
+  if (names.length === 0) return "";
+  const list =
+    names.length === 1
+      ? names[0]
+      : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+  return `${list} ${names.length === 1 ? "does" : "do"} not search.`;
 }
 
 export function canSaveWebSearchSettings(
@@ -59,6 +90,7 @@ export function SettingsDialog({
   open,
   onClose,
   onSaved,
+  policies,
 }: SettingsDialogProps) {
   const [settings, setSettings] = useState<WebSearchSettings>();
   const [enabled, setEnabled] = useState(true);
@@ -498,8 +530,8 @@ export function SettingsDialog({
 
               <p className="settings-security-note">
                 API keys are never written to Quorum’s SQLite database. Use
-                environment variables for persistent credentials. Private and
-                Offline policies never search.
+                environment variables for persistent credentials.{" "}
+                {searchlessPolicyNote(policies)}
               </p>
             </div>
 

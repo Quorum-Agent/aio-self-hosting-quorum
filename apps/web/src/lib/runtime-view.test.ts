@@ -42,6 +42,7 @@ const chatModel: ModelDescriptor = {
 const offlinePolicy = {
   id: "offline" as const,
   label: "Offline",
+  intent: "For a machine with no working network.",
   description: "No network",
   inferenceCeiling: "device" as const,
   toolCeiling: "none" as const,

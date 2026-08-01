@@ -4,9 +4,16 @@ import {
   discoverModels,
   estimateInputTokens,
   parseCompletionFrame,
+  toolsVisibleToModel,
   OpenAICompatibleProvider,
 } from "./openai-compatible-provider.js";
-import type { ModelDescriptor, ModelStreamInput } from "@quorum/core";
+import { POLICIES } from "@quorum/core";
+import type {
+  ModelDescriptor,
+  ModelStreamInput,
+  PolicyDefinition,
+  RuntimeToolDescriptor,
+} from "@quorum/core";
 
 function finalAnswer(content: string): string {
   return `<quorum-final>${content}</quorum-final>`;
@@ -1775,5 +1782,78 @@ describe("token usage capture", () => {
     ].join("\n");
 
     expect(parseCompletionFrame(frame).usage).toBeUndefined();
+  });
+});
+
+describe("which tools the model is told it has", () => {
+  function tool(
+    id: string,
+    location: RuntimeToolDescriptor["location"],
+    capabilities: RuntimeToolDescriptor["capabilities"] = ["web"],
+    available = true,
+  ): RuntimeToolDescriptor {
+    return {
+      id,
+      label: id,
+      capabilities,
+      location,
+      available,
+      contextMayLeaveDevice: true,
+    };
+  }
+
+  function policy(
+    toolCeiling: PolicyDefinition["toolCeiling"],
+  ): PolicyDefinition {
+    return { ...POLICIES.balanced, toolCeiling };
+  }
+
+  // This filter had no test at all: making `policyPermitsTool` ignore the
+  // tool's tier turned three tests red in @quorum/core and none here, because
+  // the comparison lived inside a prompt builder nothing calls directly.
+  //
+  // The `network` ceiling is the discriminating case. It permits tools, so a
+  // filter that only rejects `"none"` shows the model a web search it cannot
+  // run — and the fixture below contains a tool that must survive, so
+  // "hide everything" fails too.
+  it("hides a web tool that reaches further than the policy permits", () => {
+    const tools = [tool("web-search", "web"), tool("local-thing", "local", [])];
+
+    expect(
+      toolsVisibleToModel(policy("web"), tools).map((entry) => entry.id),
+    ).toEqual(["web-search", "local-thing"]);
+    expect(
+      toolsVisibleToModel(policy("network"), tools).map((entry) => entry.id),
+    ).toEqual(["local-thing"]);
+    // A ceiling of "none" means no tool runs — including one whose location
+    // never leaves the machine.
+    expect(toolsVisibleToModel(policy("none"), tools)).toEqual([]);
+  });
+
+  // The filter used to exempt any tool whose capabilities omitted "web", which
+  // held only because the single shipped tool declares it. A descriptor that
+  // reaches the internet without saying "web" was handed to the model under a
+  // policy forbidding every tool.
+  it("checks the ceiling against the tool's location, not its capability list", () => {
+    expect(
+      toolsVisibleToModel(policy("none"), [tool("mystery", "web", [])]),
+    ).toEqual([]);
+    expect(
+      toolsVisibleToModel(policy("network"), [tool("mystery", "web", [])]),
+    ).toEqual([]);
+  });
+
+  it("does not offer a tool the runtime says is unavailable", () => {
+    expect(
+      toolsVisibleToModel(policy("cloud"), [tool("web-search", "web", ["web"], false)]),
+    ).toEqual([]);
+  });
+
+  it("admits a cloud search provider only under a ceiling that reaches it", () => {
+    const searxng = [tool("searxng", "cloud")];
+    expect(toolsVisibleToModel(policy("web"), searxng)).toEqual([]);
+    expect(
+      toolsVisibleToModel(policy("cloud"), searxng).map((entry) => entry.id),
+    ).toEqual(["searxng"]);
   });
 });
