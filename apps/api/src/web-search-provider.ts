@@ -257,6 +257,13 @@ const PROVIDER_DEFINITIONS: ProviderDefinition[] = [
 function compactText(value: string, maximum: number): string {
   return value
     .replace(/[\u0000-\u001f\u007f]+/gu, " ")
+    // \p{Cf}: format characters — bidi overrides/isolates (U+202A–202E,
+    // U+2066–2069), zero-width spaces (U+200B–200F), joiners, soft hyphens,
+    // tags. Attacker-controlled result titles reach the transcript and the
+    // inspector; a right-to-left override renders a spoofed destination in
+    // front of the real URL, which is exactly the attack "inspect links
+    // before opening" tells the user to perform (Q-03).
+    .replace(/\p{Cf}+/gu, "")
     .replace(/\s+/gu, " ")
     .trim()
     .slice(0, maximum);
