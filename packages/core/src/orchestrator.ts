@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { getPolicy } from "./policies.js";
+import { safeDisplayText } from "./safe-text.js";
 import { leavesDevice, locationTier } from "./types.js";
 import {
   containsSensitiveContent,
@@ -24,18 +25,6 @@ import type {
   WebSearchProvider,
   WebSearchResponse,
 } from "./types.js";
-
-const DISPLAY_CONTROL_PATTERN =
-  /[\u0000-\u001f\u007f-\u009f]|\p{Cf}/gu;
-
-function safeDisplayText(value: string, maximumLength = 240): string {
-  return value
-    .normalize("NFKC")
-    .replace(DISPLAY_CONTROL_PATTERN, " ")
-    .replace(/\s+/gu, " ")
-    .trim()
-    .slice(0, maximumLength);
-}
 
 const MAXIMUM_FAILED_DRAFTS = 2;
 

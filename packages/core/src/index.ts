@@ -7,6 +7,7 @@ export {
   RequestCompiler,
 } from "./request-compiler.js";
 export { RoutePlanner } from "./route-planner.js";
+export { safeDisplayText } from "./safe-text.js";
 export { WebSearchExecutionError } from "./web-search-execution-error.js";
 export {
   CONTEXTUAL_SOFTWARE_PHRASES,

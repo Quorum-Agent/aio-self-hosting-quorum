@@ -13,6 +13,7 @@ import type { AppConfig } from "./config.js";
 import {
   buildManagedLlamaArguments,
   loadManagedLlamaManifest,
+  managedLlamaProblem,
   renderManagedLlamaPreset,
   startManagedLlamaOrDegrade,
   withManagedLlamaEndpoint,
@@ -319,5 +320,38 @@ describe("managed llama.cpp runtime", () => {
       contextWindows: new Map([["quorum-main", 8_192]]),
     });
     expect(JSON.stringify(appConfig)).toBe(before);
+  });
+});
+
+describe("what the interface is told when the managed runtime will not start", () => {
+  it("reports the runtime's own words, not a paraphrase of them", () => {
+    // Verbatim from llama.cpp b10192 refusing a qwen3.5 artifact.
+    const problem = managedLlamaProblem(
+      new Error(
+        "Managed llama.cpp exited with code 1. error loading model hyperparameters: key qwen35.rope.dimension_sections has wrong array length; expected 4, got 3",
+      ),
+    );
+
+    expect(problem.summary).toContain("did not start");
+    expect(problem.detail).toContain("qwen35.rope.dimension_sections");
+  });
+
+  it("survives something thrown that is not an Error", () => {
+    expect(managedLlamaProblem("spawn ENOENT").detail).toBe("spawn ENOENT");
+  });
+
+  it("strips control characters out of subprocess output", () => {
+    // A log tail is untrusted text reaching the interface verbatim. This is the
+    // one place it is sanitised, so it is the one place worth asserting.
+    const problem = managedLlamaProblem(
+      new Error("failed\u0000 to load\u202e reversed"),
+    );
+    expect(problem.detail).toBe("failed to load reversed");
+  });
+
+  it("bounds a long log tail rather than handing the panel a wall of text", () => {
+    expect(managedLlamaProblem(new Error("x".repeat(5_000))).detail).toHaveLength(
+      600,
+    );
   });
 });

@@ -85,7 +85,11 @@ export function describeRuntimeStatus(
     return {
       state: "unavailable",
       title: "Local runtime unavailable",
-      detail: "Local model endpoint is not connected",
+      // "Local model endpoint is not connected" describes the symptom the
+      // client can see for itself. When the server knows *why* — a managed
+      // runtime that refused to start, and the artifact it choked on — that is
+      // the sentence worth the space.
+      detail: runtime.problem?.summary ?? "Local model endpoint is not connected",
     };
   }
 

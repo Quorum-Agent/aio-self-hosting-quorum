@@ -16,6 +16,7 @@ import type { Ref } from "react";
 
 import type {
   ExecutionTrace,
+  LocalRuntimeProblem,
   ModelDescriptor,
   PolicyDefinition,
   ResponseVerbosity,
@@ -35,6 +36,14 @@ interface ExecutionPanelProps {
   plan: TaskPlan | undefined;
   traces: ExecutionTrace[];
   verbosity: ResponseVerbosity;
+  /**
+   * Why the local runtime is not serving, if it is not.
+   *
+   * Shown here rather than in the header status because the runtime's own words
+   * are a log line, not a label — the header gets one actionable sentence and
+   * this panel, which exists to show the work, gets the evidence.
+   */
+  localRuntimeProblem?: LocalRuntimeProblem | undefined;
   onClose: () => void;
   ref?: Ref<HTMLElement>;
 }
@@ -59,6 +68,7 @@ export function ExecutionPanel({
   plan,
   traces,
   verbosity,
+  localRuntimeProblem,
   onClose,
   ref,
 }: ExecutionPanelProps) {
@@ -100,6 +110,20 @@ export function ExecutionPanel({
           <p>{policy?.description}</p>
         </div>
       </section>
+
+      {localRuntimeProblem && (
+        <section className="panel-section" role="status">
+          <div className="section-title">
+            <span>Local runtime</span>
+          </div>
+          <p className="runtime-problem-summary">{localRuntimeProblem.summary}</p>
+          {localRuntimeProblem.detail && (
+            <pre className="runtime-problem-detail">
+              {localRuntimeProblem.detail}
+            </pre>
+          )}
+        </section>
+      )}
 
       <section className="panel-section">
         <div className="section-title">

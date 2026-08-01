@@ -191,6 +191,28 @@ export interface LocalModelRoleStatus {
   available: boolean;
 }
 
+/**
+ * Why the local runtime is not serving, when something already knows.
+ *
+ * The managed llama.cpp runtime produces an exact cause — the readiness loop
+ * catches `llama-server` exiting and holds its log tail, which for a rejected
+ * artifact reads *"error loading model hyperparameters: key
+ * qwen35.rope.dimension_sections has wrong array length; expected 4, got 3"*.
+ * That cause was written to the server console and nowhere else, so the
+ * interface said "unavailable" and offered the operator a list of five things
+ * to check while the runtime already knew which one it was.
+ *
+ * `summary` is the one sentence an operator can act on. `detail` is the
+ * runtime's own words, kept verbatim rather than pattern-matched into a
+ * friendlier message: parsing another project's log output to decide what to
+ * say is a guess that breaks silently on their next release, and the raw line
+ * is more use to whoever has to fix it.
+ */
+export interface LocalRuntimeProblem {
+  summary: string;
+  detail?: string;
+}
+
 export interface LocalRuntimeStatus {
   state: "ready" | "degraded" | "unavailable";
   endpointConnected: boolean;
@@ -200,6 +222,7 @@ export interface LocalRuntimeStatus {
     modelId?: Id;
     available: boolean;
   };
+  problem?: LocalRuntimeProblem;
 }
 
 export interface PolicyDefinition {

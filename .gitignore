@@ -9,3 +9,7 @@ var-e2e-*/
 *.log
 *.tsbuildinfo
 .DS_Store
+
+# Assistant tooling that writes into the working tree; unrelated to Quorum
+.blender-toolkit/
+.codex-remote-attachments/

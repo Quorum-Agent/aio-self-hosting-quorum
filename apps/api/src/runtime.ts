@@ -2,6 +2,7 @@ import {
   DemoProvider,
   Orchestrator,
   RoutePlanner,
+  type LocalRuntimeProblem,
   type LocalRuntimeStatus,
   type ModelProvider,
   type RuntimeToolDescriptor,
@@ -120,6 +121,7 @@ export function describeLocalRuntime(
   endpointConnected: boolean,
   providers: ModelProvider[],
   promptAnalyzerAvailable: boolean,
+  problem?: LocalRuntimeProblem,
 ): LocalRuntimeStatus {
   const providerIds = new Set(providers.map((provider) => provider.model.id));
   const roles = config.local.models.map((model) => {
@@ -146,6 +148,7 @@ export function describeLocalRuntime(
       modelId: `local:classifier:${config.local.promptAnalyzer.name}`,
       available: promptAnalyzerAvailable,
     },
+    ...(problem ? { problem } : {}),
   };
 }
 
@@ -168,6 +171,12 @@ export function currentLocalRuntime(
     ...(discovered.promptAnalyzer
       ? { promptAnalyzer: discovered.promptAnalyzer }
       : {}),
+    // Carried forward rather than recomputed. This runs on every status read
+    // and every chat dispatch; dropping it here would make the cause visible
+    // only on the first poll after startup and then silently disappear, which
+    // is worse than never showing it — the operator would see it once and be
+    // unable to find it again.
+    ...(discovered.problem ? { problem: discovered.problem } : {}),
     state: !discovered.endpointConnected
       ? "unavailable"
       : roles.every((role) => role.available) &&
@@ -177,7 +186,10 @@ export function currentLocalRuntime(
   };
 }
 
-export async function createRuntime(config: AppConfig): Promise<QuorumRuntime> {
+export async function createRuntime(
+  config: AppConfig,
+  options: { problem?: LocalRuntimeProblem } = {},
+): Promise<QuorumRuntime> {
   const scheduler = new InferenceScheduler();
   const localDiscovery = await discoverLocalModelsWithRetry(
     config.local.baseUrl,
@@ -199,6 +211,7 @@ export async function createRuntime(config: AppConfig): Promise<QuorumRuntime> {
     localDiscovery.connected,
     providers,
     promptAnalyzerAvailable,
+    options.problem,
   );
   const promptAnalyzer = promptAnalyzerAvailable
     ? new LocalPromptAnalyzer({

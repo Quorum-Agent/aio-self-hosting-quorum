@@ -156,3 +156,21 @@ describe("conversation column width", () => {
     );
   });
 });
+
+describe("the local runtime's own words", () => {
+  // A llama.cpp error is one long unbroken line containing a file path. Without
+  // an explicit wrap it sizes the inspector, and the inspector is a grid track
+  // — the whole application then scrolls sideways on a message the user cannot
+  // dismiss.
+  it("wraps a log line instead of widening the panel", () => {
+    const rule = declarations(".runtime-problem-detail");
+    expect(rule).toContain("white-space: pre-wrap;");
+    expect(rule).toContain("overflow-wrap: anywhere;");
+  });
+
+  it("keeps the summary at a readable size rather than the metadata floor", () => {
+    // 12px is the floor for compact metadata; this is something the operator
+    // has to read and act on, so it does not sit at the floor by accident.
+    expect(declarations(".runtime-problem-summary")).toContain("font-size: 12px;");
+  });
+});

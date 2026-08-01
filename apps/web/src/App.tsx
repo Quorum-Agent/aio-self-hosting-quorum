@@ -794,6 +794,7 @@ export default function App() {
         plan={plan}
         traces={traces}
         verbosity={verbosity}
+        localRuntimeProblem={runtime?.localRuntime.problem}
         ref={executionRef}
         onClose={() => setExecutionOpen(false)}
       />

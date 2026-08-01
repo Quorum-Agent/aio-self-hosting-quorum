@@ -486,3 +486,41 @@ describe("runtime view", () => {
     ]);
   });
 });
+
+describe("the status a user reads when no local model is served", () => {
+  function unavailable(problem?: {
+    summary: string;
+    detail?: string;
+  }): LocalRuntimeStatus {
+    return {
+      state: "unavailable",
+      endpointConnected: false,
+      roles: [],
+      ...(problem ? { problem } : {}),
+    };
+  }
+
+  // The generic line describes what the client can already see. When the server
+  // knows the artifact the runtime refused, that is what belongs in the space.
+  it("prefers the reason the runtime reported over the symptom", () => {
+    expect(
+      describeRuntimeStatus(
+        unavailable({
+          summary:
+            "The managed llama.cpp runtime did not start, so no local model is being served.",
+        }),
+      ),
+    ).toEqual({
+      state: "unavailable",
+      title: "Local runtime unavailable",
+      detail:
+        "The managed llama.cpp runtime did not start, so no local model is being served.",
+    });
+  });
+
+  it("still says something when no cause was reported", () => {
+    expect(describeRuntimeStatus(unavailable()).detail).toBe(
+      "Local model endpoint is not connected",
+    );
+  });
+});

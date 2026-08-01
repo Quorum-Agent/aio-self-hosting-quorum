@@ -4,6 +4,7 @@ import { config as loadEnvironment } from "dotenv";
 
 import { loadConfig, PROJECT_ROOT } from "./config.js";
 import {
+  managedLlamaProblem,
   startManagedLlamaOrDegrade,
   type ManagedLlamaRuntime,
 } from "./managed-llama-runtime.js";
@@ -37,7 +38,18 @@ try {
       console.error(message, error);
     },
   ));
-  const runtime = await createRuntime(config);
+  // The cause travels with the status, not only to the log. `llama-server`
+  // exits on a rejected artifact and the readiness loop keeps its last output,
+  // so by this point the exact reason is in hand — "error loading model
+  // hyperparameters: key qwen35.rope.dimension_sections has wrong array length"
+  // for a model this build cannot load. Printing that to a console the operator
+  // is not watching, while the interface says only "unavailable", is how a
+  // five-item checklist gets offered for a problem already diagnosed.
+  const runtime = await createRuntime(config, {
+    ...(managedLlamaFailure
+      ? { problem: managedLlamaProblem(managedLlamaFailure.error) }
+      : {}),
+  });
   server = await buildServer(config, runtime);
   const activeServer = server;
 

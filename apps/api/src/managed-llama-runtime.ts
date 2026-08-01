@@ -20,6 +20,8 @@ import {
 
 import { z } from "zod";
 
+import { safeDisplayText, type LocalRuntimeProblem } from "@quorum/core";
+
 import type { AppConfig, ManagedLlamaConfig } from "./config.js";
 
 const modelIdSchema = z
@@ -429,6 +431,35 @@ export function withManagedLlamaEndpoint(
  * nothing and the runtime reports itself unavailable — the same state as no
  * Ollama. It cannot silently answer from an unintended model.
  */
+/**
+ * Turn a managed-runtime startup failure into something the interface can show.
+ *
+ * Separate from `startManagedLlamaOrDegrade` so it can be tested. The wiring in
+ * `index.ts` is a composition root with no test around it, so anything with a
+ * decision in it — which text is shown, how it is bounded, what happens to a
+ * non-`Error` throw — belongs here instead, leaving that file a call.
+ *
+ * The detail is the runtime's own words rather than a friendlier paraphrase.
+ * For a rejected artifact `llama-server` exits and its last output is the
+ * reason: *"error loading model hyperparameters: key
+ * qwen35.rope.dimension_sections has wrong array length; expected 4, got 3"* —
+ * verified against llama.cpp b10192. Matching on that text to say something
+ * kinder would be a guess about another project's log format, and would break
+ * quietly at their next release; the raw line is more use to whoever has to act
+ * on it.
+ */
+export function managedLlamaProblem(error: unknown): LocalRuntimeProblem {
+  const detail = safeDisplayText(
+    error instanceof Error ? error.message : String(error),
+    600,
+  );
+  return {
+    summary:
+      "The managed llama.cpp runtime did not start, so no local model is being served.",
+    ...(detail ? { detail } : {}),
+  };
+}
+
 export async function startManagedLlamaOrDegrade(
   config: AppConfig,
   onDegraded: (message: string, error: unknown) => void,
