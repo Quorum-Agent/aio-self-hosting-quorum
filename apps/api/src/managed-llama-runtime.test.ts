@@ -7,14 +7,17 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AppConfig } from "./config.js";
 import {
   buildManagedLlamaArguments,
   loadManagedLlamaManifest,
+  managedLlamaProblem,
+  ManagedLlamaStartupError,
   renderManagedLlamaPreset,
   startManagedLlamaOrDegrade,
+  waitUntilReady,
   withManagedLlamaEndpoint,
   type ManagedLlamaManifest,
 } from "./managed-llama-runtime.js";
@@ -319,5 +322,201 @@ describe("managed llama.cpp runtime", () => {
       contextWindows: new Map([["quorum-main", 8_192]]),
     });
     expect(JSON.stringify(appConfig)).toBe(before);
+  });
+});
+
+describe("what the interface is told when the managed runtime will not start", () => {
+  it("reports the runtime's own words, not a paraphrase of them", () => {
+    // Verbatim from llama.cpp b10192 refusing a qwen3.5 artifact.
+    const problem = managedLlamaProblem(
+      new Error(
+        "Managed llama.cpp exited with code 1. error loading model hyperparameters: key qwen35.rope.dimension_sections has wrong array length; expected 4, got 3",
+      ),
+    );
+
+    expect(problem.summary).toContain("did not start");
+    expect(problem.detail).toContain("qwen35.rope.dimension_sections");
+  });
+
+  it("survives something thrown that is not an Error", () => {
+    expect(managedLlamaProblem("spawn ENOENT").detail).toBe("spawn ENOENT");
+  });
+
+  it("strips control characters out of subprocess output", () => {
+    // A log tail is untrusted text reaching the interface verbatim. This is the
+    // one place it is sanitised, so it is the one place worth asserting.
+    const problem = managedLlamaProblem(
+      new Error("failed\u0000 to load\u202e reversed"),
+    );
+    expect(problem.detail).toBe("failed to load reversed");
+  });
+
+  it("bounds a long log tail rather than handing the panel a wall of text", () => {
+    expect(managedLlamaProblem(new Error("x".repeat(5_000))).detail).toHaveLength(
+      600,
+    );
+  });
+});
+
+describe("the failure taxonomy shown above the runtime's own words", () => {
+  const kinds = [
+    "executable_missing",
+    "manifest_invalid",
+    "configuration_mismatch",
+    "artifact_rejected",
+    "runtime_exited",
+    "not_ready",
+    "port_unavailable",
+  ] as const;
+
+  // Without this, "did not start" is the answer for a missing binary, a busy
+  // port, a timeout and a model file the build cannot parse — four different
+  // things to do, one sentence. The distinctness is the property; the exact
+  // wording is not.
+  it("says something different for every kind of failure", () => {
+    const summaries = kinds.map(
+      (kind) =>
+        managedLlamaProblem(new ManagedLlamaStartupError(kind, "detail")).summary,
+    );
+    expect(new Set(summaries).size).toBe(kinds.length);
+    expect(summaries.every((summary) => summary.length > 0)).toBe(true);
+  });
+
+  it("tells an operator with a rejected artifact what is actually wrong", () => {
+    const problem = managedLlamaProblem(
+      new ManagedLlamaStartupError(
+        "artifact_rejected",
+        "Managed model quorum-main failed during startup. error loading model hyperparameters: key qwen35.rope.dimension_sections has wrong array length; expected 4, got 3",
+      ),
+    );
+    expect(problem.summary).toContain("not compatible");
+    expect(problem.detail).toContain("qwen35.rope.dimension_sections");
+  });
+
+  it("falls back to the unclassified sentence for an untagged error", () => {
+    expect(managedLlamaProblem(new Error("something else")).summary).toBe(
+      "The managed llama.cpp runtime did not start, so no local model is being served.",
+    );
+  });
+
+  it("keeps a detail when an Error carries no message", () => {
+    // `.message` is empty, so the earlier version dropped the detail entirely
+    // and left only a summary. Something is better than nothing here.
+    expect(managedLlamaProblem(new Error("")).detail).toBe("Error");
+  });
+
+  it("does not itself throw on a value that cannot be stringified", () => {
+    // This runs during startup on whatever was thrown. A crash here converts a
+    // reported degradation into an unreported one.
+    const hostile = Object.create(null) as unknown;
+    expect(() => managedLlamaProblem(hostile)).not.toThrow();
+    expect(
+      managedLlamaProblem({
+        toString() {
+          throw new Error("boom");
+        },
+      }).summary,
+    ).toBe(
+      "The managed llama.cpp runtime did not start, so no local model is being served.",
+    );
+  });
+});
+
+describe("what the readiness loop concludes from the server it is polling", () => {
+  const manifest: ManagedLlamaManifest = {
+    version: 1,
+    models: [
+      {
+        id: "quorum-main",
+        file: "D:/models/main.gguf",
+        contextWindow: 4_096,
+        gpuLayers: 99,
+        loadOnStartup: true,
+      },
+    ],
+  };
+
+  function options(overrides: Partial<Parameters<typeof waitUntilReady>[0]> = {}) {
+    return {
+      child: { exitCode: null } as never,
+      baseUrl: "http://127.0.0.1:43123/v1",
+      apiKey: "ephemeral",
+      manifest,
+      timeoutMs: 300,
+      getLogTail: () => "",
+      getSpawnError: () => undefined,
+      ...overrides,
+    };
+  }
+
+  function respondWith(catalog: unknown) {
+    return vi.fn(async (input: RequestInfo | URL) =>
+      String(input).endsWith("/health")
+        ? new Response("{}", { headers: { "content-type": "application/json" } })
+        : new Response(JSON.stringify(catalog), {
+            headers: { "content-type": "application/json" },
+          }),
+    );
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  // The failure the compatibility gate exists for, arriving the way it actually
+  // arrives: llama.cpp's router lists the model and marks it failed. Tagging
+  // this `runtime_exited` instead failed no test until this one existed, and
+  // the two produce different advice — one says replace the artifact, the other
+  // says the process died.
+  it("calls a model the router marked failed an artifact rejection", async () => {
+    vi.stubGlobal(
+      "fetch",
+      respondWith({
+        data: [{ id: "quorum-main", status: { value: "failed", failed: true } }],
+      }),
+    );
+
+    await expect(waitUntilReady(options())).rejects.toMatchObject({
+      kind: "artifact_rejected",
+    });
+  });
+
+  // The same case, guarding the rethrow rather than the tag. The loop's catch
+  // swallows polling errors so a not-yet-listening server keeps being retried;
+  // if it swallowed this one too, the rejection would be reported as a timeout
+  // — a wait, not a diagnosis — and the operator would be told to be patient
+  // about a model that will never load.
+  it("does not swallow that rejection into a timeout", async () => {
+    vi.stubGlobal(
+      "fetch",
+      respondWith({
+        data: [{ id: "quorum-main", status: { value: "failed", failed: true } }],
+      }),
+    );
+
+    await expect(waitUntilReady(options())).rejects.not.toMatchObject({
+      kind: "not_ready",
+    });
+  });
+
+  it("calls a server that exited before serving a runtime exit", async () => {
+    vi.stubGlobal("fetch", respondWith({ data: [] }));
+
+    await expect(
+      waitUntilReady(options({ child: { exitCode: 1 } as never })),
+    ).rejects.toMatchObject({ kind: "runtime_exited" });
+  });
+
+  it("calls a server that never answers a timeout", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("ECONNREFUSED");
+      }),
+    );
+
+    await expect(waitUntilReady(options())).rejects.toMatchObject({
+      kind: "not_ready",
+    });
   });
 });

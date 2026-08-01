@@ -226,3 +226,37 @@ describe("createLocalProviders", () => {
     });
   });
 });
+
+describe("a local runtime that cannot serve says why", () => {
+  const problem = {
+    summary:
+      "The managed llama.cpp runtime did not start, so no local model is being served.",
+    detail:
+      "Managed llama.cpp exited with code 1. error loading model hyperparameters: key qwen35.rope.dimension_sections has wrong array length; expected 4, got 3",
+  };
+
+  it("carries the cause the startup path already caught", () => {
+    expect(describeLocalRuntime(config, false, [], false, problem)).toMatchObject(
+      { state: "unavailable", problem },
+    );
+  });
+
+  it("claims nothing when nothing knows a cause", () => {
+    expect(describeLocalRuntime(config, false, [], false).problem).toBeUndefined();
+  });
+
+  // The status is rebuilt on every poll and every chat dispatch. Dropping the
+  // cause here would show it once, on the first read after startup, and then
+  // silently lose it — leaving an operator who saw the reason unable to find it
+  // again. The fixture keeps the endpoint disconnected so the surviving field
+  // is the only difference between the two shapes.
+  it("keeps the cause across a status refresh", () => {
+    const discovered = describeLocalRuntime(config, false, [], false, problem);
+    expect(currentLocalRuntime(discovered, []).problem).toEqual(problem);
+  });
+
+  it("does not invent a cause when the discovered status had none", () => {
+    const discovered = describeLocalRuntime(config, false, [], false);
+    expect(currentLocalRuntime(discovered, []).problem).toBeUndefined();
+  });
+});

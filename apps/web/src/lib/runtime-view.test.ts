@@ -487,3 +487,135 @@ describe("runtime view", () => {
     ]);
   });
 });
+
+describe("the status a user reads when no local model is served", () => {
+  function unavailable(problem?: {
+    summary: string;
+    detail?: string;
+  }): LocalRuntimeStatus {
+    return {
+      state: "unavailable",
+      endpointConnected: false,
+      roles: [],
+      ...(problem ? { problem } : {}),
+    };
+  }
+
+  // The generic line describes what the client can already see. When the server
+  // knows the artifact the runtime refused, that is what belongs in the space.
+  it("prefers the reason the runtime reported over the symptom", () => {
+    expect(
+      describeRuntimeStatus(
+        unavailable({
+          summary:
+            "The managed llama.cpp runtime did not start, so no local model is being served.",
+        }),
+      ),
+    ).toEqual({
+      state: "unavailable",
+      title: "Local runtime unavailable",
+      detail:
+        "The managed llama.cpp runtime did not start, so no local model is being served.",
+    });
+  });
+
+  it("still says something when no cause was reported", () => {
+    expect(describeRuntimeStatus(unavailable()).detail).toBe(
+      "Local model endpoint is not connected",
+    );
+  });
+});
+
+describe("a reported cause outranks the symptom on every unhealthy branch", () => {
+  // The failure that actually happens, and the one the first version of this
+  // missed: the managed runtime rejects an artifact, configuration falls back
+  // to the loopback endpoint, and Ollama is answering there. The endpoint IS
+  // connected, so the "unavailable" branch never runs, and the header used to
+  // report the fallback's missing model names as though they were the reason.
+  it("names the cause when the endpoint is connected but nothing is serving", () => {
+    expect(
+      describeRuntimeStatus({
+        state: "degraded",
+        endpointConnected: true,
+        roles: [
+          {
+            role: "general",
+            configuredModel: "qwen3.5:9b",
+            required: true,
+            available: false,
+          },
+        ],
+        problem: {
+          summary:
+            "The llama.cpp build Quorum runs rejected a model file, so no local model is being served.",
+        },
+      }),
+    ).toEqual({
+      state: "degraded",
+      title: "Local runtime degraded",
+      detail:
+        "The llama.cpp build Quorum runs rejected a model file, so no local model is being served.",
+    });
+  });
+
+  // The fixture has a role available, so "Configured models are not installed"
+  // is not the branch under test — this is the one that names missing roles,
+  // and it must still lose to a reported cause.
+  it("outranks the missing-role description too", () => {
+    const detail = describeRuntimeStatus({
+      state: "degraded",
+      endpointConnected: true,
+      roles: [
+        {
+          role: "general",
+          configuredModel: "a",
+          required: true,
+          available: true,
+        },
+        {
+          role: "coding",
+          configuredModel: "b",
+          required: false,
+          available: false,
+        },
+      ],
+      problem: { summary: "A cause the runtime reported." },
+    }).detail;
+    expect(detail).toBe("A cause the runtime reported.");
+  });
+
+  it("still describes the symptom when nothing reported a cause", () => {
+    expect(
+      describeRuntimeStatus({
+        state: "degraded",
+        endpointConnected: true,
+        roles: [
+          {
+            role: "general",
+            configuredModel: "qwen3.5:9b",
+            required: true,
+            available: false,
+          },
+        ],
+      }).detail,
+    ).toBe("Configured models are not installed");
+  });
+
+  it("does not hijack a healthy runtime", () => {
+    expect(
+      describeRuntimeStatus({
+        state: "ready",
+        endpointConnected: true,
+        roles: [
+          {
+            role: "general",
+            configuredModel: "a",
+            required: true,
+            available: true,
+          },
+        ],
+        problem: { summary: "stale cause from an earlier failure" },
+      }).state,
+    ).toBe("ready");
+  });
+});

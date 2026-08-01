@@ -2036,3 +2036,26 @@ body {
 .activity-disclosure span {
   color: #496353;
 }
+
+.runtime-problem-summary {
+  margin: 0 0 9px;
+  color: #4a4f47;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* A log line has no spaces to break at, so without this the panel widens and
+   the whole application scrolls sideways. `pre` is deliberate — this is the
+   runtime's output verbatim, not prose — which makes the wrap explicit. */
+.runtime-problem-detail {
+  margin: 0;
+  padding: 9px 10px;
+  border-radius: 7px;
+  background: #f2f1ed;
+  color: #5b6058;
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
