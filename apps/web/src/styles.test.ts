@@ -174,3 +174,29 @@ describe("the local runtime's own words", () => {
     expect(declarations(".runtime-problem-summary")).toContain("font-size: 12px;");
   });
 });
+
+describe("legibility floor (Q-25/Q-26)", () => {
+  // The red team measured 51 of 71 font-size declarations at 10px or below,
+  // 14 of them at 8px, against a browser default of 16px — with the worst
+  // offenders inside the execution inspector, the product's differentiator.
+  // The compact aesthetic stays; the floor is an 11px metadata tier.
+  it("uses no font smaller than 11px anywhere", () => {
+    const sizes = [...styles.matchAll(/font-size:\s*(\d+)px/g)].map((match) =>
+      Number(match[1]),
+    );
+    expect(sizes.length).toBeGreaterThan(0);
+    expect(Math.min(...sizes)).toBeGreaterThanOrEqual(11);
+  });
+
+  // WCAG AA is 4.5:1. These are the exact pairs the finding measured as
+  // failures; the hex values are pinned so a future palette edit that drops
+  // them below AA fails here rather than in an audit.
+  it("keeps the measured-AA pairs at their passing values", () => {
+    expect(styles).toContain("--muted: #656961;");
+    expect(declarations(".conversation-item time")).toContain("color: #aab2aa;");
+    // Two `.starter-grid small` rules exist (shared display, then color); the
+    // helper returns the first, so the color is asserted on the raw sheet.
+    expect(styles).toMatch(/\.starter-grid small\s*\{[^}]*color: #656961;/);
+    expect(declarations(".message-avatar")).toContain("color: #5d6159;");
+  });
+});
