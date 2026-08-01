@@ -14,6 +14,7 @@ import {
   buildManagedLlamaArguments,
   loadManagedLlamaManifest,
   managedLlamaProblem,
+  ManagedLlamaStartupError,
   renderManagedLlamaPreset,
   startManagedLlamaOrDegrade,
   withManagedLlamaEndpoint,
@@ -352,6 +353,70 @@ describe("what the interface is told when the managed runtime will not start", (
   it("bounds a long log tail rather than handing the panel a wall of text", () => {
     expect(managedLlamaProblem(new Error("x".repeat(5_000))).detail).toHaveLength(
       600,
+    );
+  });
+});
+
+describe("the failure taxonomy shown above the runtime's own words", () => {
+  const kinds = [
+    "executable_missing",
+    "manifest_invalid",
+    "configuration_mismatch",
+    "artifact_rejected",
+    "runtime_exited",
+    "not_ready",
+    "port_unavailable",
+  ] as const;
+
+  // Without this, "did not start" is the answer for a missing binary, a busy
+  // port, a timeout and a model file the build cannot parse — four different
+  // things to do, one sentence. The distinctness is the property; the exact
+  // wording is not.
+  it("says something different for every kind of failure", () => {
+    const summaries = kinds.map(
+      (kind) =>
+        managedLlamaProblem(new ManagedLlamaStartupError(kind, "detail")).summary,
+    );
+    expect(new Set(summaries).size).toBe(kinds.length);
+    expect(summaries.every((summary) => summary.length > 0)).toBe(true);
+  });
+
+  it("tells an operator with a rejected artifact what is actually wrong", () => {
+    const problem = managedLlamaProblem(
+      new ManagedLlamaStartupError(
+        "artifact_rejected",
+        "Managed model quorum-main failed during startup. error loading model hyperparameters: key qwen35.rope.dimension_sections has wrong array length; expected 4, got 3",
+      ),
+    );
+    expect(problem.summary).toContain("not compatible");
+    expect(problem.detail).toContain("qwen35.rope.dimension_sections");
+  });
+
+  it("falls back to the unclassified sentence for an untagged error", () => {
+    expect(managedLlamaProblem(new Error("something else")).summary).toBe(
+      "The managed llama.cpp runtime did not start, so no local model is being served.",
+    );
+  });
+
+  it("keeps a detail when an Error carries no message", () => {
+    // `.message` is empty, so the earlier version dropped the detail entirely
+    // and left only a summary. Something is better than nothing here.
+    expect(managedLlamaProblem(new Error("")).detail).toBe("Error");
+  });
+
+  it("does not itself throw on a value that cannot be stringified", () => {
+    // This runs during startup on whatever was thrown. A crash here converts a
+    // reported degradation into an unreported one.
+    const hostile = Object.create(null) as unknown;
+    expect(() => managedLlamaProblem(hostile)).not.toThrow();
+    expect(
+      managedLlamaProblem({
+        toString() {
+          throw new Error("boom");
+        },
+      }).summary,
+    ).toBe(
+      "The managed llama.cpp runtime did not start, so no local model is being served.",
     );
   });
 });

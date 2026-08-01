@@ -116,7 +116,10 @@ async function sha256File(path: string): Promise<string> {
 async function verifyGgufFile(model: ManagedLlamaModel): Promise<void> {
   const metadata = await stat(model.file);
   if (!metadata.isFile()) {
-    throw new Error(`Managed model ${model.id} does not reference a file.`);
+    throw new ManagedLlamaStartupError(
+      "manifest_invalid",
+      `Managed model ${model.id} does not reference a file.`,
+    );
   }
   const handle = await open(model.file, "r");
   try {
@@ -126,7 +129,10 @@ async function verifyGgufFile(model: ManagedLlamaModel): Promise<void> {
       result.bytesRead !== magic.length ||
       magic.toString("ascii") !== "GGUF"
     ) {
-      throw new Error(`Managed model ${model.id} is not a GGUF file.`);
+      throw new ManagedLlamaStartupError(
+        "manifest_invalid",
+        `Managed model ${model.id} is not a GGUF file.`,
+      );
     }
   } finally {
     await handle.close();
@@ -134,7 +140,10 @@ async function verifyGgufFile(model: ManagedLlamaModel): Promise<void> {
   if (model.sha256) {
     const actual = await sha256File(model.file);
     if (actual !== model.sha256.toLowerCase()) {
-      throw new Error(`Managed model ${model.id} failed SHA-256 verification.`);
+      throw new ManagedLlamaStartupError(
+        "manifest_invalid",
+        `Managed model ${model.id} failed SHA-256 verification.`,
+      );
     }
   }
 }
@@ -152,14 +161,20 @@ export async function loadManagedLlamaManifest(
 
   for (const configured of parsed.models) {
     if (seen.has(configured.id)) {
-      throw new Error(`Managed model ID ${configured.id} is duplicated.`);
+      throw new ManagedLlamaStartupError(
+        "manifest_invalid",
+        `Managed model ID ${configured.id} is duplicated.`,
+      );
     }
     seen.add(configured.id);
     const file = isAbsolute(configured.file)
       ? configured.file
       : resolve(manifestDirectory, configured.file);
     if (/[\r\n]/.test(file)) {
-      throw new Error(`Managed model ${configured.id} has an invalid path.`);
+      throw new ManagedLlamaStartupError(
+        "manifest_invalid",
+        `Managed model ${configured.id} has an invalid path.`,
+      );
     }
     const model: ManagedLlamaModel = {
       id: configured.id,
@@ -227,7 +242,10 @@ async function reserveLoopbackPort(): Promise<number> {
   const address = server.address();
   if (!address || typeof address === "string") {
     server.close();
-    throw new Error("Could not reserve a loopback port for llama.cpp.");
+    throw new ManagedLlamaStartupError(
+      "port_unavailable",
+      "Could not reserve a loopback port for llama.cpp.",
+    );
   }
   await new Promise<void>((resolveClose, reject) => {
     server.close((error) => (error ? reject(error) : resolveClose()));
@@ -302,7 +320,8 @@ async function waitUntilReady(options: {
     const spawnError = options.getSpawnError();
     if (spawnError) throw spawnError;
     if (options.child.exitCode !== null) {
-      throw new Error(
+      throw new ManagedLlamaStartupError(
+        "runtime_exited",
         `Managed llama.cpp exited with code ${options.child.exitCode}. ${options.getLogTail()}`.trim(),
       );
     }
@@ -336,24 +355,23 @@ async function waitUntilReady(options: {
           (id) => byId.get(id)?.status?.failed === true,
         );
         if (startupFailed) {
-          throw new Error(
+          throw new ManagedLlamaStartupError(
+            "artifact_rejected",
             `Managed model ${startupFailed} failed during startup. ${options.getLogTail()}`.trim(),
           );
         }
         if (catalogReady && startupReady) return;
       }
     } catch (error) {
-      if (
-        error instanceof Error &&
-        error.message.startsWith("Managed model ")
-      ) {
+      if (error instanceof ManagedLlamaStartupError) {
         throw error;
       }
     }
     await delay(STARTUP_POLL_MS);
   }
 
-  throw new Error(
+  throw new ManagedLlamaStartupError(
+    "not_ready",
     `Managed llama.cpp did not become ready within ${options.timeoutMs}ms. ${options.getLogTail()}`.trim(),
   );
 }
@@ -373,7 +391,8 @@ export function withManagedLlamaEndpoint(
     (model) => !runtime.modelIds.includes(model),
   );
   if (missing.length > 0) {
-    throw new Error(
+    throw new ManagedLlamaStartupError(
+      "configuration_mismatch",
       `Managed llama.cpp manifest is missing configured model IDs: ${missing.join(", ")}.`,
     );
   }
@@ -432,6 +451,80 @@ export function withManagedLlamaEndpoint(
  * Ollama. It cannot silently answer from an unintended model.
  */
 /**
+ * What kind of startup failure this was.
+ *
+ * Carried on the error rather than recovered from its text. An earlier version
+ * of this file gave every failure the same user-facing sentence — "the managed
+ * llama.cpp runtime did not start" — which is equally true of a missing binary,
+ * a busy port, a readiness timeout and a model file the build cannot parse, and
+ * therefore tells an operator nothing about which one they have.
+ *
+ * The reason it was left that way was a rule about not pattern-matching another
+ * project's log output, which is sound and was over-applied: classifying on
+ * failures *this codebase raises itself* is not the same as reading llama.cpp's
+ * error text, and a tag is not a regex. The raw output still travels verbatim
+ * in `detail`; this only decides which sentence sits above it.
+ */
+export type ManagedLlamaFailureKind =
+  | "executable_missing"
+  | "manifest_invalid"
+  | "configuration_mismatch"
+  | "artifact_rejected"
+  | "runtime_exited"
+  | "not_ready"
+  | "port_unavailable";
+
+export class ManagedLlamaStartupError extends Error {
+  readonly kind: ManagedLlamaFailureKind;
+
+  constructor(kind: ManagedLlamaFailureKind, message: string) {
+    super(message);
+    this.name = "ManagedLlamaStartupError";
+    this.kind = kind;
+  }
+}
+
+const FAILURE_SUMMARIES: Record<ManagedLlamaFailureKind, string> = {
+  executable_missing:
+    "Quorum could not find a llama.cpp server to run, so no local model is being served.",
+  manifest_invalid:
+    "A model file named by the manifest could not be used, so no local model is being served.",
+  configuration_mismatch:
+    "The configured model names do not match any the manifest declares, so no local model is being served.",
+  // The one the compatibility gate exists for, and the reason a taxonomy is
+  // worth having: this failure needs a different action from every other one.
+  artifact_rejected:
+    "The llama.cpp build Quorum runs rejected a model file, so no local model is being served. The artifact and the runtime are not compatible — replace the file or change the runtime.",
+  runtime_exited:
+    "The llama.cpp server exited before it was ready, so no local model is being served.",
+  not_ready:
+    "The llama.cpp server did not become ready in time, so no local model is being served.",
+  port_unavailable:
+    "Quorum could not reserve a loopback port for llama.cpp, so no local model is being served.",
+};
+
+const UNCLASSIFIED_SUMMARY =
+  "The managed llama.cpp runtime did not start, so no local model is being served.";
+
+/**
+ * The error's own words, without assuming it has any.
+ *
+ * Total over `unknown` because it is called on whatever the startup path threw,
+ * during startup. `String(error)` is not safe on an arbitrary value — an object
+ * with a null prototype throws on conversion, as does one whose `toString`
+ * throws — and this function failing would turn a reported degradation into an
+ * unreported crash.
+ */
+function errorText(error: unknown): string {
+  if (error instanceof Error && error.message) return error.message;
+  try {
+    return String(error);
+  } catch {
+    return "";
+  }
+}
+
+/**
  * Turn a managed-runtime startup failure into something the interface can show.
  *
  * Separate from `startManagedLlamaOrDegrade` so it can be tested. The wiring in
@@ -449,13 +542,13 @@ export function withManagedLlamaEndpoint(
  * on it.
  */
 export function managedLlamaProblem(error: unknown): LocalRuntimeProblem {
-  const detail = safeDisplayText(
-    error instanceof Error ? error.message : String(error),
-    600,
-  );
+  const detail = safeDisplayText(errorText(error), 600);
+  const summary =
+    error instanceof ManagedLlamaStartupError
+      ? FAILURE_SUMMARIES[error.kind]
+      : UNCLASSIFIED_SUMMARY;
   return {
-    summary:
-      "The managed llama.cpp runtime did not start, so no local model is being served.",
+    summary,
     ...(detail ? { detail } : {}),
   };
 }
@@ -503,7 +596,10 @@ export async function startManagedLlamaRuntime(
   const executablePath = resolve(config.executablePath);
   const executable = await stat(executablePath);
   if (!executable.isFile()) {
-    throw new Error("Managed llama.cpp executable path is not a file.");
+    throw new ManagedLlamaStartupError(
+      "executable_missing",
+      "Managed llama.cpp executable path is not a file.",
+    );
   }
   const manifest = await loadManagedLlamaManifest(config.manifestPath);
   const port = await reserveLoopbackPort();

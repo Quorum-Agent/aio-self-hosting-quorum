@@ -111,6 +111,29 @@ export function describeRuntimeStatus(
     .filter((role) => !role.available)
     .map((role) => role.role);
 
+  // A reported cause outranks a description of the symptom on every branch that
+  // is not healthy — not just the disconnected one.
+  //
+  // The first version of this consulted `problem` only where the endpoint was
+  // unreachable, which misses the failure that actually happens: the managed
+  // runtime refuses an artifact, the configuration falls back to the loopback
+  // endpoint, Ollama is running there, and the endpoint therefore *is*
+  // connected. The roles are missing, and the header said "Configured models
+  // are not installed" — naming the fallback's model names, which is true and
+  // is not the reason. Caught by an external reviewer, who pointed out that
+  // adding the field and teaching half the view to read it reproduces the
+  // defect this branch exists to fix.
+  if (runtime.state !== "ready" && runtime.problem) {
+    return {
+      state: runtime.state,
+      title:
+        runtime.state === "unavailable"
+          ? "Local runtime unavailable"
+          : "Local runtime degraded",
+      detail: runtime.problem.summary,
+    };
+  }
+
   if (runtime.state === "ready") {
     return {
       state: "ready",
