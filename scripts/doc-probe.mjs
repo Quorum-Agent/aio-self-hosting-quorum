@@ -115,6 +115,43 @@ const MODELS = [
 
 const COST_CAP_USD = 1.0;
 
+/**
+ * What a run cost, measured from the provider's own ledger rather than summed
+ * from per-call self-reports.
+ *
+ * The first version of this script summed `usage.cost` per response with a
+ * `?? 0` fallback, and under-reported a real run by roughly a third: any call
+ * the provider did not price counted as free. That is the same
+ * unreported-becomes-zero hole `TokenUsage.measured` exists to prevent, and
+ * writing the comment did not stop it being written here.
+ *
+ * So: read the account before and after, and use the increase. The biller's
+ * ledger is authoritative in a way a per-response field is not.
+ *
+ * Two hazards this handles rather than discovers later:
+ *
+ * - **A negative delta means a counter rolled, not a refund.** These counters
+ *   reset on day/week/month boundaries — observed live, with `usage_daily` and
+ *   `usage_monthly` both reading 0 while the weekly figure was still
+ *   accumulating, because the run crossed midnight UTC. Treat it as unknown.
+ * - **The figure is per-key, not per-application.** Anything else using the
+ *   same key lands in the delta. For a budget that errs toward stopping early,
+ *   which is the safe direction, but it must be reported as spend on the key.
+ */
+async function readAccountSpend(apiKey) {
+  try {
+    const res = await fetch("https://openrouter.ai/api/v1/auth/key", {
+      headers: { authorization: `Bearer ${apiKey}` },
+    });
+    if (!res.ok) return undefined;
+    const data = (await res.json()).data;
+    const value = Number(data?.usage);
+    return Number.isFinite(value) ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 const SYSTEM =
   "You are reading the complete documentation for a software project. Answer ONLY from these documents. " +
   "Do not use outside knowledge about similar projects, and do not guess. If the documents do not answer a " +
@@ -133,6 +170,23 @@ async function main() {
   if (questions.length === 0) {
     console.error(`No question named "${only}". Known: ${QUESTIONS.map((q) => q.key).join(", ")}`);
     process.exit(2);
+  }
+
+  // Announced, because it is a network call the operator did not ask for and
+  // silence about it would be the same defect this script exists to catch.
+  console.log(
+    [
+      "Reading account usage before and after, to measure spend from the",
+      "provider's ledger rather than from per-call self-reports.",
+      "These two reads are free and consume no credits.",
+      "",
+    ].join("\n"),
+  );
+  const spendBefore = await readAccountSpend(apiKey);
+  if (spendBefore === undefined) {
+    console.log("Account usage unavailable — falling back to per-call totals,");
+    console.log("which are a FLOOR and not a measurement.");
+    console.log("");
   }
 
   let docs = "";
@@ -154,7 +208,20 @@ async function main() {
       try {
         const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
           method: "POST",
-          headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
+          headers: {
+            authorization: `Bearer ${apiKey}`,
+            "content-type": "application/json",
+            // Identify the caller so this run appears as its own app in the
+            // OpenRouter dashboard, separable from anything else on the key.
+            // Reading that per-app breakdown back through the API needs a
+            // MANAGEMENT key (`/activity` returns 403 without one), and asking
+            // an operator for a credential that can provision keys so a
+            // budget check can run is a worse trade than measuring per-key and
+            // saying so. The header is still worth sending: it costs nothing
+            // and it lets a human audit the split.
+            "HTTP-Referer": "https://github.com/Chance6706/aio-self-hosting-quorum",
+            "X-Title": "Quorum doc-probe",
+          },
           body: JSON.stringify({
             model,
             temperature: 0,
@@ -200,7 +267,32 @@ async function main() {
     console.log("");
   }
 
-  console.log(`cost $${spent.toFixed(4)}`);
+  const spendAfter = await readAccountSpend(apiKey);
+  const delta =
+    spendBefore !== undefined && spendAfter !== undefined
+      ? spendAfter - spendBefore
+      : undefined;
+
+  if (delta === undefined) {
+    console.log(`cost $${spent.toFixed(4)} (self-reported floor, unverified)`);
+  } else if (delta < 0) {
+    // A usage counter reset mid-run. Do not report a negative or a zero here:
+    // both read as "this was free", which is exactly the wrong conclusion.
+    console.log(
+      `cost UNKNOWN — an account counter reset mid-run (delta $${delta.toFixed(4)}).`,
+    );
+    console.log(`self-reported floor was $${spent.toFixed(4)}.`);
+  } else {
+    console.log(`cost $${delta.toFixed(4)} measured on the key`);
+    const gap = delta - spent;
+    if (gap > 0.0001) {
+      // Worth surfacing rather than hiding: the gap IS the under-reporting,
+      // and it is the only direct evidence that per-call sums cannot be trusted.
+      console.log(
+        `  (self-reported sum was $${spent.toFixed(4)} — $${gap.toFixed(4)} of spend went unreported)`,
+      );
+    }
+  }
   if (failed > 0) {
     console.log(`\n${failed} wrong answers. The documentation is what needs changing, not the reader.`);
     console.log("After editing, re-run: a clearer sentence and a reader who gets it right are different claims.");
