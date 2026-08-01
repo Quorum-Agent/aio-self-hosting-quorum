@@ -878,6 +878,33 @@ describe("RequestCompiler", () => {
     expect(compiled.requirements.containsSensitiveData).toBe(false);
   });
 
+  it("does not let an assistant message containing a live-looking key poison the next turn", () => {
+    // Q-18: the detector scans user-authored content only. An assistant reply
+    // that quotes a secret-shaped token (e.g. explaining redaction) must not
+    // mark the conversation sensitive and strip cloud/web routing forever.
+    const compiled = compiler.compile({
+      ...request("Tell me more about that."),
+      messages: [
+        {
+          id: "assistant-1",
+          role: "assistant",
+          content:
+            "Keys such as sk-ant-api03-XXXXYYYYZZZZ1234567890abcdef should be rotated immediately.",
+          createdAt: new Date(0).toISOString(),
+        },
+        {
+          id: "user-2",
+          role: "user",
+          content: "Tell me more about that.",
+          createdAt: new Date(1).toISOString(),
+        },
+      ],
+    });
+
+    expect(compiled.requirements.containsSensitiveData).toBe(false);
+    expect(compiled.requirements.sensitiveDataCategories).toEqual([]);
+  });
+
   it("marks prior web-grounded assistant output as local-only context", () => {
     const compiled = compiler.compile({
       ...request("Compare that with the alternative."),
