@@ -351,6 +351,46 @@ Stated plainly because the naive combination — conservative estimator plus an 
 threshold — produces neither safety nor efficiency, and looks correct from either side
 alone.
 
+#### Enforcement mechanics (the part that is not built)
+
+The threshold, the authoritative measure and the interaction model above are settled.
+What remains is plumbing, and its shape is decided here so it cannot be redesigned by
+accident:
+
+1. **Usage must reach the orchestrator.** Today `ModelProvider.stream()` yields only
+   strings, so the counts the transports already parse (final-chunk `usage` on the
+   compatible transport, `prompt_eval_count`/`eval_count` on native Ollama) die inside
+   the provider. The contract gains a side channel — the provider exposes the
+   `TokenUsage` of the just-completed stream — rather than changing the string-yielding
+   shape every caller depends on. `measured: false` stays meaningful: an unreporting
+   provider is estimated, labelled an estimate, and never treated as zero.
+2. **Cost is computed where the attempt ledger already lives.** The orchestrator's
+   append-only `attempts[]` gains the usage per attempt; a request's spend is
+   `usage.cost` when the provider reports it (authoritative — see above), else
+   tokens × the descriptor's `costPerMillionTokens` marked as an estimate. No price
+   table: the aggregator routing finding above stands.
+3. **The budget reads a per-policy rolling total.** `cost_controlled` declares
+   `cloudBudgetUsd`; spend accumulates in the local usage ledger against that policy.
+   At 95% of the budget the request **stops and asks** — the terminal
+   "budget exhausted, choose and resend" state from the interaction section above, not
+   a silent degrade and not a failure. The resumed request carries enough context to
+   continue (the compiled request and the plan), and the user's choice (answer locally,
+   or authorise further spend) is recorded in the same ledger.
+4. **The check runs before dispatch, not mid-stream.** Estimating the *upcoming* call's
+   cost from the compiled prompt's token count is sufficient for the threshold
+   decision; the settled `usage.cost` of *completed* calls is what the rolling total
+   accrues. A mid-request prompt — the bidirectional channel — is deliberately not the
+   mechanism; it would couple every transport to a reply path for one policy.
+
+What is explicitly rejected:
+
+- *Planner-level quiet exclusion of cloud models once the budget is spent.* Already
+  rejected in the interaction section; repeated here because it is the implementation
+  that looks cheapest and is the one that was asked against.
+- *Charging the estimate to the user-visible total without a label.* Any surface that
+  shows cost must say whether it is looking at a measured or estimated figure — the
+  `measured` flag exists for exactly this.
+
 ### Saved-model staleness
 
 A saved slot assignment can outlive the artifact it names. The availability half of that

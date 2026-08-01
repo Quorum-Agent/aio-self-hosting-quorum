@@ -23,6 +23,79 @@ non-obvious protections are load-bearing and currently correct.
 
 ---
 
+## 0. Remediation status (2026-08-01, branch `fix/red-team-phase-1`)
+
+**Every finding below was re-verified against current source before any fix was written.**
+Most had already been remediated on `main` (notably the `5be0fb7` series); the rest were
+fixed on this branch. Verified fixes are probe- or mutation-confirmed against the current
+code, not inferred from test names.
+
+| ID | Status | Evidence |
+| --- | --- | --- |
+| **Q-01** | **FIXED** (already on main; pinned end-to-end on branch) | `provenance: "web_grounded"` stamped by orchestrator; compiler sets `containsWebGroundedData`; planner filters to `local`. Branch adds a two-turn security-invariants test — mutation: dropping the planner filter routes the cloud model and turns it red. |
+| **Q-02** | **PARTIALLY FIXED** | Pattern coverage verified by probe as already present (AWS secret keys, IBAN, multi-word passphrases, PEM body, first-person health). **Bare SSN was the real gap** — fixed on branch (`My social is 123456789`). English-only limitation stands; detector is heuristic, not comprehensive — see "explainability" under Remaining work. |
+| **Q-03** | **FIXED** (branch) | `compactText` now strips `\p{Cf}` (RLO, bidi isolates, zero-width). UI already had `unicode-bidi: isolate` on source anchors. Mutation-verified. |
+| **Q-04** | **FIXED** (already on main) | Missing `\s+` present; a denial vetoes `web` unconditionally even against a conflicting authorization pattern in the same prompt. Probe-verified both orders. |
+| **Q-05** | **FIXED** (already on main) | Coding branch is checked before vision; "Docker image", "resize an image", "screenshot programmatically" all classify as coding (tests at `request-compiler.test.ts:299-301`). |
+| **Q-06** | **FIXED** (already on main) | `acquire()` honors the caller's budget (`maximumWaitMs ?? #queueWaitMs`); no clamp. A `kind:"request"` failure now yields an `error` event — no silent scaffold fabrication. |
+| **Q-07** | **FIXED** (already on main) | Outbound query is built from the current-turn prompt only (control-stripped, 500-char cap); prior content is never spliced. Test-pinned at `orchestrator.test.ts:412`. |
+| **Q-08** | **FIXED** (branch) | `buildAuthoritativeContext` applies a sliding window (default 100 stored messages) so the compiler, planner and provider all see a bounded context. Provider-level truncation remains as the second stage. Summarization and "branch from here" remain **not built** — see Remaining work. |
+| **Q-09** | **FIXED** (already on main) | Startup discovery retries with backoff, and `refreshLocalModels` re-probes on `/api/runtime` and **forced on every `/api/chat`**; late-starting model servers join without a restart. Test-pinned. |
+| **Q-10** | **FIXED** (already on main) | `hasDurableDisclosure` renders the rail at Standard verbosity when `cloudDisclosure` exists; test at `MessageExecutionActivity.test.tsx:141`. |
+| **Q-11** | **OPEN — accepted residual risk** | Mitigation-by-instruction against prompt injection cannot be "fixed" at the prompt layer; the output side (Q-03) and taint (Q-01) are the controls, and both are now in place. |
+| **Q-12** | **FIXED** (already on main) | Cloud default rating is 80 (configurable); a matched local specialist (65+18=83) now outranks it in quality mode. |
+| **Q-13** | **FIXED** (branch) | Warmup no longer acquires the inference scheduler slot; it cannot starve the first request after a restart. |
+| **Q-14** | **FIXED** (already on main; branch adds missing direction) | Most-recent-directive-wins scan; branch adds the authorize-after-deny test so both over- and under-correction turn red. |
+| **Q-15** | **FIXED** (already on main) | Personal-scope block precedes freshness; "my current medication schedule" stays local (tests). |
+| **Q-16** | **FIXED** (already on main) | `enabled: bootstrap.enabled && (stored.enabled ?? bootstrap.enabled)` — the environment kill switch is authoritative. Test-pinned. |
+| **Q-17** | **FIXED** (already on main) | `DELETE`/`PATCH`/export routes exist and the Sidebar wires all three. |
+| **Q-18** | **FIXED** (already on main; branch hardens the test) | Only user-authored content is scanned. The pre-existing test used a string no credential pattern matches (would pass with the bug); branch adds an assistant-quoted live-looking `sk-` token test, mutation-verified. |
+| **Q-19** | **OPEN** (unreachable on stock install) | Rate limiter charges per failed attempt; only reachable with multiple providers configured. Not addressed on this branch. |
+| **Q-20** | **OPEN** (latent) | `#createProvider` constructor throw escapes the candidate loop. Not addressed. |
+| **Q-21** | **OPEN** (contingent on Q-11) | Analyzer `task_summary` becomes the outbound query verbatim. Accepted as residual; bounded at 500 chars and sensitive-content-checked. |
+| **Q-22** | **FIXED** (already on main) | Rail status derives from attempts with explicit failed/cancelled branches before "Worked for". |
+| **Q-23** | **FIXED** (already on main) | Single `isLoopbackHostname`; `loopback-url.ts` documents why the acceptance predicate is purpose-built. |
+| **Q-24** | **FIXED** (already on main) | `if (event.nativeEvent.isComposing) return;` in Composer. |
+| **Q-25 / Q-26** | **OPEN — next branch** | 33 `font-size` declarations ≤ 9px (8px in the execution inspector); four contrast pairs below WCAG AA. Confirmed still present 2026-08-01. Tracked as the typography/contrast sweep. |
+| **Q-27** | **FIXED** (already on main) | `MarkdownMessage` renders code blocks, inline code, links (safe-link validated), copy buttons. |
+| **Q-28** | **FIXED** (already on main) | Composer auto-grows to 180px. |
+| **Q-29 / Q-30 / Q-31** | **OPEN** (UX polish) | Inspector re-open on send; stop-reconciliation timing; mid-search audit placeholder. Not addressed. |
+| **Q-32 / Q-33 / Q-34** | **OPEN** (minor) | Analyzer double-spends its budget (inconsistency, not a hang); queue-wait error reports requested budget rather than enforced; settings backspace edge. Not addressed. |
+| **Q-35** | **FIXED** (already on main) | Result-limit dropdown renders 3–10. |
+| **Q-36 / Q-37 / Q-38 / Q-39 / Q-40** | **OPEN** (as documented) | Stale-conversation 404; "Stopped" vs "Failed" from provider error text; runtime polling cadence; dead `onAttempt` forward; no API auth (correctly documented as local-first — the desktop sidecar per-launch secret is the planned control). Not addressed. |
+
+**Branch additions beyond the original findings** (gaps found during re-verification):
+
+- **Web build was broken outright** — `node:crypto` `randomUUID` imported by `@quorum/core`
+  crashed the Vite bundle. Replaced with the platform-global `crypto.randomUUID()`.
+- **SearXNG misclassification** — a loopback instance was `location: "local"`, so
+  `contextMayLeaveDevice` derived `false` and a `toolCeiling: "web"` policy permitted a
+  provider that proxies every query upstream. Now always `cloud`. Mutation-verified.
+- **Prompt analyzer ungated** — only `offline` blocked it; a `network` analyzer under
+  Private would classify (i.e. egress) the full conversation the planner refuses to route.
+  Now gated on `inferenceCeiling` plus the sensitive/web-grounded local-only floor; skips
+  are disclosed in the trace. Mutation-verified.
+- **No end-to-end request deadline** — per-stage timeouts bound each call but not their
+  sum. `/api/chat` now aborts at 240s into the existing cancelled/failed persistence path.
+
+**Remaining work, in priority order:**
+
+1. **Q-25/Q-26 typography & contrast sweep** — the only user-visible defect class left.
+2. **Spend guardrail enforcement** — capture is built (`TokenUsage.measured`), enforcement
+   is not. The provider contract yields only strings, so usage never reaches the
+   orchestrator. Design recorded in `docs/architecture.md` §Spend guardrail; the
+   interaction (stop-and-ask at 95%) needs the bidirectional-channel decision there
+   before code. This is a feature, not a fix.
+3. **Sensitive-detector explainability & override** — surface *what matched* and allow a
+   per-conversation override; the detector's English-only, regex-based nature should be
+   disclosed in-product rather than implied comprehensive (carries Q-02's caveat forward).
+4. **Context summarization & conversation branching** — Q-08's sliding window prevents the
+   hard failure; it does not preserve what fell off. A summarization stage and a
+   "branch from here" action remain unbuilt.
+5. Q-19, Q-20, Q-21, Q-29–Q-34, Q-36–Q-40 as documented above.
+
+---
+
 ## 1. Critical
 
 ### Q-01 · Web-retrieved content reaches the cloud on the next turn [CONFIRMED]
