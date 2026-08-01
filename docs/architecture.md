@@ -296,6 +296,61 @@ Unmeasured spend is charged as a conservative estimate and labelled as an estima
 Treating an unreporting provider as having spent nothing would put the hole in a spend cap
 at exactly the backend that stays quiet.
 
+**The guardrail fires at 95% of the stated budget, not at 100%**, because stopping early
+is not free. A relay through a 9–12B local generalist is materially weaker than the cloud
+model it replaced — the fallback costs answer quality, not just convenience — so the
+design should run as close to the limit as it can rather than leaving headroom out of
+caution.
+
+**That threshold constrains which estimate it reads, and the two rules pull opposite
+ways.** Spend can be measured three ways and they disagree: the provider's per-call
+`usage.cost`, the account ledger, and tokens multiplied by published list price.
+
+**Measured, and it is simpler than an earlier draft of this section claimed.** Five calls
+to one model: the provider's reported `usage.cost` totalled $0.005640, tokens priced from
+the published rate totalled $0.005640, and the account ledger moved by exactly $0.005640.
+Three-way agreement to the cent.
+
+So **`usage.cost` is authoritative** and the guardrail should simply read it. Two earlier
+claims here were wrong and are corrected rather than quietly dropped:
+
+- *"Every measure under-reports, so take the largest."* False. The billed figure does not
+  under-report; it matched the ledger exactly. The rule was built on a premise that a
+  measurement disproved.
+- *"The computed figure runs 14% above what was charged, because requests route to the
+  cheapest upstream."* Wrong twice over — the 14% was against the self-reported figure, no
+  reading of the actual charge existed at the time, and the mechanism was invented.
+
+The real finding is that **a price table cannot cost these calls at all.** An aggregator
+routes one model id across hosts at different rates — `deepseek-r1` returned via Novita at
+$0.70/M on one run and Azure at $1.48/M on the next — and several endpoints share a
+display name, so a `model|host` key does not identify one. `gemini-3.1-pro` spans six hosts
+from $1.00 to $3.60 with the listed price mid-range, so the error has no consistent
+direction. An attempt to fix this by pricing per-host made it worse (14% → 44%), because
+`grok-4.5` has four endpoints all named "xAI" spanning $2.00–$4.00.
+
+**The ledger settles in about three minutes** — measured, unchanged at +1m and +2m, correct
+from +3m onward. A reading taken seconds after a call returns a partial figure that looks
+like a discount. Anything comparing against it must wait, and five minutes is the safe
+margin.
+
+Which leaves a straightforward design:
+
+- **The threshold reads `usage.cost`**, at 95% of budget. No estimator tension, because the
+  billed figure is accurate.
+- **The ledger is a slow audit**, not an input to a live decision.
+- **A computed figure is a disagreement detector at best.** It should never override the
+  billed number.
+- **The one real gap is a call that returns no cost field at all.** That is when the billed
+  total is genuinely short, and it is the case `TokenUsage.measured` exists to mark.
+
+- **A hard cap, if one is ever added, is the opposite case** and should read the largest
+  available figure. Overspending is not recoverable; stopping early is.
+
+Stated plainly because the naive combination — conservative estimator plus an aggressive
+threshold — produces neither safety nor efficiency, and looks correct from either side
+alone.
+
 ### Saved-model staleness
 
 A saved slot assignment can outlive the artifact it names. The availability half of that
