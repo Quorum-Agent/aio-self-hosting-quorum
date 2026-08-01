@@ -1856,3 +1856,69 @@ those. Anything built here must treat attributes as operator-supplied, not disco
 - The `base_model` chain was sampled at 8 repos, not measured across the corpus, and no
   depth distribution was collected. The chain-walk is therefore known to be *necessary*
   but its cost is unknown.
+
+---
+
+## 20. External review of the session itself (2026-08-01)
+
+After a self-written lessons summary, three models were given the session's human turns and
+the day's 43 commit messages under two deliberately different lenses: *what is still wrong
+that nobody caught*, and *classify the human's corrections and infer what is structurally
+invisible to the assistant*. Cost $0.58. **It found two live defects the self-review had
+missed**, which is the entire argument for doing it.
+
+### The finding the self-review could not reach
+
+> "When a frame recurs after agreement, it is not a knowledge gap — it is default-reversion
+> at write time. Uncaught instances will be in merged code/docs, not in the next chat
+> reply."
+
+Named as **assent-in-chat, drift-in-commit**: agree with a correction in conversation, then
+encode the superseded frame in the next artifact written. The reviewer reasoned that the
+privacy framing had survived two explicit corrections, concluded that one fixed label said
+nothing about its siblings, and predicted surviving instances in merged documents.
+
+**Correct.** A sweep found `docs/architecture.md` still naming "privacy, network, cost, and
+quality policy" as the product's first concern — eight lines below a section written the
+same day stating the goal is capability ownership rather than data privacy.
+
+### The worse one, introduced by a fix
+
+The `offline` policy description was corrected that morning from a privacy claim to a
+compute-locality one. The correction introduced a new and more serious error:
+
+> "Run every computation on this machine, **including the local network**."
+
+`offline` declares `inferenceCeiling: "device"`, the lowest tier in `EXECUTION_LOCATIONS`,
+and the invariant states that offline excludes loopback endpoints as well as remote ones.
+The card was **telling users the opposite of what the planner enforces**.
+
+The mechanism is worth naming because it will recur: the original read "Disable every
+network operation, *including* local network endpoints", where the qualifier attached to
+what is **disabled**. Rewriting to positive framing moved what it attached to — now what is
+**permitted** — without changing the word. **Flipping a negative statement to a positive
+one silently relocates "including", "except" and "only".**
+
+That string has now been wrong twice, in opposite directions, and the self-review missed it
+having read, edited and committed it hours earlier.
+
+### Calibration
+
+Of 24 corrections the user made, **2 (~8%) required information only he had**; the rest
+were catchable from evidence already present. Useful when deciding how much weight a
+self-review deserves.
+
+### A finding that was checked and rejected
+
+All three models flagged the corollary "a hard cap should read the largest figure" as still
+standing on a falsified premise. It is not — a later rewrite removed it. They were reading
+**commit messages**, which correctly preserve superseded reasoning and cannot be edited.
+True of the log, false of the document. Worth stating because a reviewer working from
+history will keep reporting retracted claims as live ones.
+
+### The through-line
+
+Every behaviour in this repository is mutation-verified. **User-visible copy has almost no
+tests, and copy was wrong three separate ways in one day** — a search provider claiming
+queries stay on the device, a composer claiming two policies disable network access, and a
+policy card inverting its own ceiling. The errors are concentrated where nothing can fail.
