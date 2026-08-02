@@ -70,7 +70,7 @@ function modelIsInstalled(
 }
 
 async function discoverLocalModelsWithRetry(
-  baseUrl: string,
+  apiBase: string,
   apiKey: string,
 ): ReturnType<typeof discoverModels> {
   const retryDelays = [0, 100, 250, 500];
@@ -79,7 +79,7 @@ async function discoverLocalModelsWithRetry(
     if (delayMs > 0) {
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
-    latest = await discoverModels(baseUrl, apiKey);
+    latest = await discoverModels(apiBase, apiKey);
     if (latest.connected) return latest;
   }
   return latest;
@@ -100,7 +100,7 @@ export function createLocalProviders(
           provider: "openai-compatible",
           role: model.role,
           location: "local",
-          baseUrl: config.local.baseUrl,
+          baseUrl: config.local.apiBase,
           apiKey: config.local.apiKey,
           model: model.name,
           contextWindow: model.contextWindow,
@@ -192,7 +192,7 @@ export async function createRuntime(
 ): Promise<QuorumRuntime> {
   const scheduler = new InferenceScheduler();
   const localDiscovery = await discoverLocalModelsWithRetry(
-    config.local.baseUrl,
+    config.local.apiBase,
     config.local.apiKey,
   );
   const providers = createLocalProviders(
@@ -217,7 +217,7 @@ export async function createRuntime(
     ? new LocalPromptAnalyzer({
         id: `local:classifier:${config.local.promptAnalyzer.name}`,
         label: config.local.promptAnalyzer.name,
-        baseUrl: config.local.baseUrl,
+        apiBase: config.local.apiBase,
         apiKey: config.local.apiKey,
         model: config.local.promptAnalyzer.name,
         contextWindow: config.local.promptAnalyzer.contextWindow,
@@ -233,7 +233,7 @@ export async function createRuntime(
         label: config.network.model,
         provider: "openai-compatible",
         location: "network",
-        baseUrl: config.network.baseUrl,
+        apiBase: config.network.apiBase,
         apiKey: config.network.apiKey,
         model: config.network.model,
         contextWindow: config.network.contextWindow,
@@ -390,7 +390,7 @@ export async function createRuntime(
       target.status = "warming";
       try {
         await warmLocalModel({
-          baseUrl: config.local.baseUrl,
+          apiBase: config.local.apiBase,
           apiKey: config.local.apiKey,
           model: target.model,
           nativeOllama: config.local.transport === "ollama",

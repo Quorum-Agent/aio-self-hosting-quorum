@@ -90,8 +90,10 @@ export interface AppConfig {
   port: number;
   logLevel: string;
   dataDirectory: string;
+  quorumLocalApiKey?: string;
   local: {
-    baseUrl: string;
+    apiBase: string;
+    downloadBase?: string;
     apiKey: string;
     transport: "ollama" | "openai-compatible";
     models: LocalModelConfig[];
@@ -100,7 +102,8 @@ export interface AppConfig {
   };
   managedLlama?: ManagedLlamaConfig;
   cloud?: {
-    baseUrl: string;
+    apiBase: string;
+    downloadBase?: string;
     model: string;
     apiKey: string;
     contextWindow: number;
@@ -114,7 +117,8 @@ export interface AppConfig {
    * ends. Configured by hand; discovery and pairing are deliberately not built.
    */
   network?: {
-    baseUrl: string;
+    apiBase: string;
+    downloadBase?: string;
     model: string;
     apiKey: string;
     contextWindow: number;
@@ -235,6 +239,7 @@ export function loadConfig(): AppConfig {
   const dataDirectory = resolveFromProjectRoot(
     process.env["QUORUM_DATA_DIR"] ?? "./var",
   );
+  const quorumLocalApiKey = process.env["QUORUM_LOCAL_API_KEY"]?.trim();
   // Operator-saved slot assignments, consulted only where the environment is
   // silent. Every `??` below reads left to right as: environment, then saved
   // setting, then built-in default. Reversing any of those pairs would change
@@ -307,8 +312,13 @@ export function loadConfig(): AppConfig {
     port: Number(process.env["PORT"] ?? 8787),
     logLevel: process.env["LOG_LEVEL"] ?? "info",
     dataDirectory,
+    quorumLocalApiKey,
     local: {
-      baseUrl: normalizeLoopbackBaseUrl(
+      apiBase: normalizeLoopbackBaseUrl(
+        process.env["QUORUM_LOCAL_BASE_URL"] ??
+          "http://127.0.0.1:11434/v1",
+      ),
+      downloadBase: normalizeLoopbackBaseUrl(
         process.env["QUORUM_LOCAL_BASE_URL"] ??
           "http://127.0.0.1:11434/v1",
       ),
@@ -352,7 +362,10 @@ export function loadConfig(): AppConfig {
     process.env["QUORUM_NETWORK_MODEL"]?.trim()
       ? {
           network: {
-            baseUrl: normalizeNetworkBaseUrl(
+            apiBase: normalizeNetworkBaseUrl(
+              process.env["QUORUM_NETWORK_BASE_URL"]!.trim(),
+            ),
+            downloadBase: normalizeNetworkBaseUrl(
               process.env["QUORUM_NETWORK_BASE_URL"]!.trim(),
             ),
             model: process.env["QUORUM_NETWORK_MODEL"]!.trim(),
@@ -371,7 +384,11 @@ export function loadConfig(): AppConfig {
     ...(cloudApiKey
       ? {
           cloud: {
-            baseUrl: normalizeCloudBaseUrl(
+            apiBase: normalizeCloudBaseUrl(
+              process.env["QUORUM_CLOUD_BASE_URL"] ??
+                "https://api.openai.com/v1",
+            ),
+            downloadBase: normalizeCloudBaseUrl(
               process.env["QUORUM_CLOUD_BASE_URL"] ??
                 "https://api.openai.com/v1",
             ),

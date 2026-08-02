@@ -10,7 +10,7 @@ import type { InferenceScheduler } from "./inference-scheduler.js";
 interface PromptAnalyzerOptions {
   id: string;
   label: string;
-  baseUrl: string;
+  apiBase: string;
   apiKey: string;
   model: string;
   contextWindow: number;
