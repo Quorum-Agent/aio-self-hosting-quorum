@@ -1,0 +1,33 @@
+#!/bin/sh
+# prerm — pre-removal script for Quorum .deb package
+set -e
+
+echo "Removing Quorum..."
+
+# --- Stop any running Quorum processes ---
+if command -v pkill >/dev/null 2>&1; then
+    pkill -f "/opt/quorum/Quorum" 2>/dev/null || true
+    pkill -f "quorum" 2>/dev/null || true
+fi
+
+# --- Remove symlink ---
+rm -f /usr/bin/quorum
+
+# --- Remove desktop entry ---
+rm -f /usr/share/applications/quorum.desktop
+
+# --- Remove icon ---
+rm -f /usr/share/icons/hicolor/256x256/apps/quorum.png
+
+# --- Update desktop database ---
+if command -v update-desktop-database >/dev/null 2>&1; then
+    update-desktop-database /usr/share/applications || true
+fi
+
+# --- Update icon cache ---
+if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+    gtk-update-icon-cache /usr/share/icons/hicolor || true
+fi
+
+# --- Config is preserved (/etc/quorum) for re-install ---
+echo "Quorum removed. Configuration in /etc/quorum/ is preserved."

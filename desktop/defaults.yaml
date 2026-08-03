@@ -1,0 +1,37 @@
+# desktop/defaults.yaml — Default configuration values for Quorum.
+#
+# WARNING: This file is GENERATED from quorum_core.config.QuorumConfig.
+# Do NOT edit it manually — run `python -m quorum_core.config --dump-defaults`
+# to regenerate. QuorumConfig.model_fields are the authoritative source.
+#
+# These values match apps/api/src/config.ts :: DEFAULT_CONFIG exactly.
+
+api:
+  host: "0.0.0.0"
+  port: 8000
+  cors_origins:
+    - "*"
+  request_timeout_ms: 30000
+
+model:
+  provider: openai
+  model_name: gpt-4
+  temperature: 0.7
+  max_tokens: 4096
+  top_p: 1.0
+  # api_key is intentionally absent — set via QUORUM_MODEL__API_KEY env var
+
+logging:
+  level: info
+  format: json
+  # file: null  — optional, unset by default
+
+workspace:
+  root_dir: ~/.quorum
+  # cache_dir: null  — defaults to <root_dir>/cache
+  session_timeout_minutes: 60
+
+features:
+  enable_streaming: true
+  enable_tool_use: true
+  enable_telemetry: false

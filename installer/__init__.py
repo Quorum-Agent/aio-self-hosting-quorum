@@ -1,0 +1,1 @@
+"""Quorum installer package — build artifacts, checksums, and bundling."""

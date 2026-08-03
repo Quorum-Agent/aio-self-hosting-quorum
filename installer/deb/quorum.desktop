@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Quorum
+GenericName=AI Model Router
+Comment=Self-hosted AI orchestration engine with policy-based quorum verification
+Exec=quorum
+Icon=quorum
+Terminal=false
+Categories=Office;Network;AI;
+Keywords=AI;LLM;router;orchestration;hermes;
+StartupNotify=true
+X-GNOME-Autostart-enabled=false

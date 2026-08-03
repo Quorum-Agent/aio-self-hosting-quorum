@@ -1,0 +1,40 @@
+{
+  "name": "quorum-desktop",
+  "version": "0.1.0",
+  "description": "Quorum policy-core desktop plugin for Hermes — tray menu, config panel, model health, and lifecycle management for the Quorum AI router.",
+  "author": "Quorum",
+  "id": "quorum",
+  "type": "desktop-plugin",
+  "entry": "desktop/quorum_plugin.py",
+  "hermes_compat": ">=0.1.0",
+  "permissions": [
+    "process:manage",
+    "network:loopback",
+    "filesystem:read",
+    "filesystem:write"
+  ],
+  "trayMenu": {
+    "items": [
+      "start_quorum",
+      "stop_quorum",
+      "model_status",
+      "open_config",
+      "view_logs"
+    ]
+  },
+  "configPanel": {
+    "sections": [
+      "local_model",
+      "cloud_model",
+      "network_model"
+    ]
+  },
+  "healthCheck": {
+    "endpoint": "/api/health",
+    "exemptFromAuth": true
+  },
+  "updater": {
+    "provider": "hermes-updater",
+    "noSeparateMechanism": true
+  }
+}
