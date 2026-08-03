@@ -1,0 +1,32 @@
+[project]
+name = "quorum-build"
+version = "0.1.0"
+description = "Build system for Quorum standalone executable"
+requires-python = ">=3.10"
+dependencies = [
+    "pyinstaller>=6.0.0,<7.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pyinstaller]
+# PyInstaller configuration defaults
+onedir = false
+windowed = false
+strip = true
+noupx = false
+clean = true
+log_level = "WARN"
+
+# Hidden imports needed by quorum_core
+hidden_imports = [
+    "quorum_core",
+    "quorum_core.config",
+    "quorum_core.model",
+    "quorum_core.policy",
+    "quorum_core.execution",
+    "quorum_core.discovery",
+    "quorum_core.security",
+]

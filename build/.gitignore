@@ -1,0 +1,8 @@
+# Build artifacts (generated)
+dist/
+build/pyinstaller_work/
+build/Quorum.spec
+build/llama-server.exe
+build/llama-server
+__pycache__/
+*.pyc
