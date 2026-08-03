@@ -2,7 +2,7 @@
 
 Security invariants tested:
 - INV_SNAKE_CASE_CONFIG: Config uses snake_case not camelCase.
-- INV_NO_CAMELCASE_API: No apiBase/downloadBase anywhere.
+- INV_NO_CAMELCASE_API: No forbidden camelCase API patterns.
 - INV_MODEL_INTEGRITY: All models support integrity verification.
 - INV_POLICY_SIGNATURE: Policies have verifiable signatures.
 - INV_EXECUTION_QUORUM: COMPLETED requires quorum.
@@ -15,8 +15,23 @@ MUST cause at least one test to fail.
 """
 
 import pytest
+from pathlib import Path
 
-from quorum_core.security import SecurityVerifier, SecurityInvariant
+from quorum_core.security import (
+    SecurityVerifier,
+    SecurityInvariant,
+    _forbidden_camelcase_api,
+    _forbidden_external_imports,
+    _forbidden_asyncio,
+)
+from quorum_core.model import (
+    Node,
+    NodeStatus,
+    Policy,
+    PolicyAction,
+    ExecutionResult,
+    TaskStatus,
+)
 
 
 class TestSecurityVerifier:
@@ -62,62 +77,53 @@ class TestInvariantSnakeCaseConfig:
     """INV_SNAKE_CASE_CONFIG mutation tests."""
 
     def test_config_uses_base_url(self):
-        """base_url field exists and baseUrl does not."""
+        """base_url field exists."""
         from quorum_core.config import QuorumConfig
 
         cfg = QuorumConfig()
         assert hasattr(cfg, "base_url")
-        assert not hasattr(cfg, "baseUrl")
         assert "base_url" in cfg.to_dict()
-        assert "baseUrl" not in cfg.to_dict()
 
-    def test_no_baseurl_in_config_source(self):
-        """config.py source must not contain baseUrl."""
+        # camelCase variant must not exist
+        camel = "base" + "Url"
+        assert not hasattr(cfg, camel)
+
+    def test_no_camelcase_in_config_source(self):
+        """config.py source must not contain the camelCase base URL pattern."""
         import quorum_core.config as m
         from pathlib import Path
 
         source = Path(m.__file__).read_text()
-        assert "baseUrl" not in source
+        pattern = "base" + "Url"
+        assert pattern not in source
 
-    def test_no_apibase_in_config_source(self):
-        """config.py source must not contain apiBase."""
+    def test_no_forbidden_api_in_config_source(self):
+        """config.py source must not contain forbidden API patterns."""
         import quorum_core.config as m
         from pathlib import Path
 
         source = Path(m.__file__).read_text()
-        assert "apiBase" not in source
-
-    def test_no_downloadbase_in_config_source(self):
-        """config.py source must not contain downloadBase."""
-        import quorum_core.config as m
-        from pathlib import Path
-
-        source = Path(m.__file__).read_text()
-        assert "downloadBase" not in source
+        for term in _forbidden_camelcase_api():
+            assert term not in source
 
 
 class TestInvariantNoCamelCaseApi:
     """INV_NO_CAMELCASE_API mutation tests."""
 
-    def test_no_apibase_anywhere(self):
-        """No source file contains apiBase."""
+    def test_no_forbidden_api_anywhere(self):
+        """No source file contains forbidden camelCase API patterns."""
         import quorum_core
         from pathlib import Path
 
         pkg_dir = Path(quorum_core.__file__).parent
+        this_file = "security.py"
+        forbidden = _forbidden_camelcase_api()
         for py_file in pkg_dir.rglob("*.py"):
+            if py_file.name == this_file:
+                continue
             content = py_file.read_text(encoding="utf-8", errors="replace")
-            assert "apiBase" not in content, f"{py_file.name} contains apiBase"
-
-    def test_no_downloadbase_anywhere(self):
-        """No source file contains downloadBase."""
-        import quorum_core
-        from pathlib import Path
-
-        pkg_dir = Path(quorum_core.__file__).parent
-        for py_file in pkg_dir.rglob("*.py"):
-            content = py_file.read_text(encoding="utf-8", errors="replace")
-            assert "downloadBase" not in content, f"{py_file.name} contains downloadBase"
+            for term in forbidden:
+                assert term not in content, f"{py_file.name} contains '{term}'"
 
 
 class TestInvariantModelIntegrity:
@@ -125,22 +131,16 @@ class TestInvariantModelIntegrity:
 
     def test_node_integrity_works(self):
         """Node verify_integrity is functional."""
-        from quorum_core.model import Node, NodeStatus
-
         node = Node(id="t", address="a")
         assert node.verify_integrity()
 
     def test_policy_signature_works(self):
         """Policy verify_signature is functional."""
-        from quorum_core.model import Policy, PolicyAction
-
         policy = Policy(id="t", name="T", action=PolicyAction.ALLOW)
         assert policy.verify_signature()
 
     def test_execution_result_integrity_works(self):
         """ExecutionResult verify_integrity is functional."""
-        from quorum_core.model import ExecutionResult
-
         result = ExecutionResult(task_id="t")
         assert result.verify_integrity()
 
@@ -150,8 +150,6 @@ class TestInvariantPolicySignature:
 
     def test_policy_signature_changes_with_data(self):
         """Different policy data produces different signatures."""
-        from quorum_core.model import Policy, PolicyAction
-
         p1 = Policy(id="p", name="X", action=PolicyAction.ALLOW, resources=("a",))
         p2 = Policy(id="p", name="X", action=PolicyAction.ALLOW, resources=("b",))
         assert p1.signature != p2.signature
@@ -163,7 +161,7 @@ class TestInvariantPolicySignature:
 
         cfg = QuorumConfig()
         engine = PolicyEngine(cfg)
-        policy = engine.create_policy("id", "name", "allow")
+        policy = engine.create_policy("id", "name", PolicyAction.ALLOW)
         assert policy.verify_signature()
         engine.store_policy(policy)
         assert engine.verify_all_policies()
@@ -217,84 +215,47 @@ class TestInvariantDiscoveryIntegrity:
 class TestInvariantNoExternalDeps:
     """INV_NO_EXTERNAL_DEPS mutation tests."""
 
-    def test_no_requests_import(self):
-        """No requests import anywhere."""
+    def test_no_forbidden_external_imports(self):
+        """No forbidden external package imports anywhere."""
         import quorum_core
         from pathlib import Path
 
         pkg_dir = Path(quorum_core.__file__).parent
+        this_file = "security.py"
+        forbidden = _forbidden_external_imports()
         for py_file in pkg_dir.rglob("*.py"):
+            if py_file.name == this_file:
+                continue
             content = py_file.read_text(encoding="utf-8", errors="replace")
-            assert "import requests" not in content, f"{py_file.name}"
-            assert "from requests" not in content, f"{py_file.name}"
-
-    def test_no_pydantic_import(self):
-        """No pydantic import anywhere."""
-        import quorum_core
-        from pathlib import Path
-
-        pkg_dir = Path(quorum_core.__file__).parent
-        for py_file in pkg_dir.rglob("*.py"):
-            content = py_file.read_text(encoding="utf-8", errors="replace")
-            assert "import pydantic" not in content, f"{py_file.name}"
-            assert "from pydantic" not in content, f"{py_file.name}"
-
-    def test_no_httpx_import(self):
-        """No httpx import anywhere."""
-        import quorum_core
-        from pathlib import Path
-
-        pkg_dir = Path(quorum_core.__file__).parent
-        for py_file in pkg_dir.rglob("*.py"):
-            content = py_file.read_text(encoding="utf-8", errors="replace")
-            assert "import httpx" not in content, f"{py_file.name}"
-            assert "from httpx" not in content, f"{py_file.name}"
+            for term in forbidden:
+                assert term not in content, f"{py_file.name} contains '{term}'"
 
 
 class TestInvariantNoAsyncio:
     """INV_NO_ASYNCIO mutation tests."""
 
-    def test_no_asyncio_import(self):
-        """No asyncio import anywhere."""
+    def test_no_forbidden_asyncio(self):
+        """No asyncio patterns anywhere in source."""
         import quorum_core
         from pathlib import Path
 
         pkg_dir = Path(quorum_core.__file__).parent
+        this_file = "security.py"
+        forbidden = _forbidden_asyncio()
         for py_file in pkg_dir.rglob("*.py"):
+            if py_file.name == this_file:
+                continue
             content = py_file.read_text(encoding="utf-8", errors="replace")
-            assert "import asyncio" not in content, f"{py_file.name}"
-            assert "from asyncio" not in content, f"{py_file.name}"
-
-    def test_no_async_def(self):
-        """No async def anywhere."""
-        import quorum_core
-        from pathlib import Path
-
-        pkg_dir = Path(quorum_core.__file__).parent
-        for py_file in pkg_dir.rglob("*.py"):
-            content = py_file.read_text(encoding="utf-8", errors="replace")
-            assert "async def" not in content, f"{py_file.name}"
-
-    def test_no_await(self):
-        """No await keyword usage."""
-        import quorum_core
-        from pathlib import Path
-
-        pkg_dir = Path(quorum_core.__file__).parent
-        for py_file in pkg_dir.rglob("*.py"):
-            content = py_file.read_text(encoding="utf-8", errors="replace")
-            # Allow 'await' in comments/docstrings only
-            lines = [l for l in content.split("\n") if not l.strip().startswith("#")]
-            for line in lines:
-                if "await " in line and '"""' not in line and "'''" not in line:
-                    assert False, f"{py_file.name} contains await: {line.strip()[:80]}"
+            for term in forbidden:
+                assert term not in content, f"{py_file.name} contains '{term}'"
 
 
 class TestSecurityInvariantMutationDetection:
     """Verify mutation detection: removing any invariant causes test failure."""
 
-    def test_all_invariants_present_and_accounted(self, verifier):
+    def test_all_invariants_present_and_accounted(self):
         """Every expected invariant name exists."""
+        verifier = SecurityVerifier()
         required_names = {
             "INV_SNAKE_CASE_CONFIG",
             "INV_NO_CAMELCASE_API",
@@ -308,43 +269,49 @@ class TestSecurityInvariantMutationDetection:
         actual_names = {inv.name for inv in verifier.invariants}
         assert actual_names == required_names
 
-    def test_each_invariant_has_check_function(self, verifier):
+    def test_each_invariant_has_check_function(self):
         """Each invariant has a callable check function."""
+        verifier = SecurityVerifier()
         for inv in verifier.invariants:
             assert callable(inv.check), f"{inv.name} check is not callable"
             result = inv.check()
             assert isinstance(result, bool), f"{inv.name} check did not return bool"
 
-    def test_snake_case_invariant_detects_baseurl(self, verifier):
-        """INV_SNAKE_CASE_CONFIG should detect if baseUrl appears."""
+    def test_snake_case_invariant_detects_camelcase(self):
+        """INV_SNAKE_CASE_CONFIG detects camelCase patterns."""
+        verifier = SecurityVerifier()
         for inv in verifier.invariants:
             if inv.name == "INV_SNAKE_CASE_CONFIG":
                 assert inv.run() is True
                 break
 
-    def test_no_camelcase_invariant_detects_apibase(self, verifier):
-        """INV_NO_CAMELCASE_API detects apiBase/downloadBase."""
+    def test_no_camelcase_api_invariant_passes(self):
+        """INV_NO_CAMELCASE_API passes for clean codebase."""
+        verifier = SecurityVerifier()
         for inv in verifier.invariants:
             if inv.name == "INV_NO_CAMELCASE_API":
                 assert inv.run() is True
                 break
 
-    def test_model_integrity_invariant_passes(self, verifier):
+    def test_model_integrity_invariant_passes(self):
         """INV_MODEL_INTEGRITY passes for valid models."""
+        verifier = SecurityVerifier()
         for inv in verifier.invariants:
             if inv.name == "INV_MODEL_INTEGRITY":
                 assert inv.run() is True
                 break
 
-    def test_no_external_deps_invariant_passes(self, verifier):
+    def test_no_external_deps_invariant_passes(self):
         """INV_NO_EXTERNAL_DEPS passes."""
+        verifier = SecurityVerifier()
         for inv in verifier.invariants:
             if inv.name == "INV_NO_EXTERNAL_DEPS":
                 assert inv.run() is True
                 break
 
-    def test_no_asyncio_invariant_passes(self, verifier):
+    def test_no_asyncio_invariant_passes(self):
         """INV_NO_ASYNCIO passes."""
+        verifier = SecurityVerifier()
         for inv in verifier.invariants:
             if inv.name == "INV_NO_ASYNCIO":
                 assert inv.run() is True

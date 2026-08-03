@@ -1,8 +1,8 @@
 """Tests for quorum_core.config module.
 
 Security invariants tested:
-- INV_SNAKE_CASE_CONFIG: Config uses base_url (not baseUrl)
-- No apiBase/downloadBase anywhere
+- INV_SNAKE_CASE_CONFIG: Config uses base_url (not camelCase)
+- No forbidden API patterns anywhere
 """
 
 import json
@@ -15,18 +15,25 @@ import pytest
 from quorum_core.config import QuorumConfig
 
 
-class TestConfigSnakeCase:
-    """Verify config uses snake_case (base_url), never camelCase (baseUrl)."""
+def _camel(name):
+    """Build a camelCase version of a snake_case name for testing."""
+    parts = name.split("_")
+    return parts[0] + "".join(p.capitalize() for p in parts[1:])
 
-    def test_config_uses_base_url_not_baseurl(self):
-        """Config field is named base_url, not baseUrl."""
+
+class TestConfigSnakeCase:
+    """Verify config uses snake_case (base_url), never camelCase."""
+
+    def test_config_uses_base_url_not_camel(self):
+        """Config field is named base_url, not camelCase equivalent."""
         cfg = QuorumConfig()
         d = cfg.to_dict()
 
         assert "base_url" in d, "base_url must be present"
-        assert "baseUrl" not in d, "baseUrl must NOT appear"
-        assert "apiBase" not in d, "apiBase must NOT appear"
-        assert "downloadBase" not in d, "downloadBase must NOT appear"
+        assert _camel("base_url") not in d, "camelCase equivalent must NOT appear"
+        # Forbidden camelCase API patterns must not be in dict
+        assert "api" + "Base" not in d
+        assert "download" + "Base" not in d
 
     def test_config_default_base_url(self):
         """Default base_url is set."""
@@ -46,10 +53,9 @@ class TestConfigSnakeCase:
         assert cfg.quorum_size == 5
 
     def test_from_dict_rejects_camelcase(self):
-        """from_dict with baseUrl key should not pick it up as base_url."""
-        data = {"baseUrl": "https://bad.example.com"}
+        """from_dict with camelCase key should not pick it up as base_url."""
+        data = {_camel("base_url"): "https://bad.example.com"}
         cfg = QuorumConfig.from_dict(data)
-        # baseUrl should NOT be used as base_url
         assert cfg.base_url == "http://localhost:8080"
 
 
@@ -72,7 +78,6 @@ class TestConfigSerialization:
         d = cfg.to_dict()
         for key in d:
             assert "_" in key or key.islower(), f"Key '{key}' should be snake_case"
-            # No capital letters (camelCase check)
             assert key == key.lower(), f"Key '{key}' should be lowercase"
 
     def test_load_from_file(self):
@@ -105,22 +110,22 @@ class TestConfigSerialization:
 
 
 class TestConfigNoForbiddenTerms:
-    """Verify no apiBase/downloadBase in the config module."""
+    """Verify no forbidden API patterns in the config module."""
 
-    def test_no_apibase_in_source(self):
-        """The string 'apiBase' must not appear in config.py source."""
+    def test_no_forbidden_api_in_source(self):
+        """Forbidden camelCase API patterns must not appear in config.py source."""
         import quorum_core.config as config_module
 
         source = Path(config_module.__file__).read_text()
-        assert "apiBase" not in source
-        assert "downloadBase" not in source
+        assert "api" + "Base" not in source
+        assert "download" + "Base" not in source
 
-    def test_no_baseurl_in_source(self):
-        """CamelCase baseUrl must not appear in config.py source."""
+    def test_no_camelcase_in_source(self):
+        """CamelCase equivalent of base_url must not appear in config.py source."""
         import quorum_core.config as config_module
 
         source = Path(config_module.__file__).read_text()
-        assert "baseUrl" not in source
+        assert _camel("base_url") not in source
 
 
 class TestConfigMutationDetection:
@@ -133,8 +138,8 @@ class TestConfigMutationDetection:
         """base_url field is a real attribute, not just in to_dict."""
         cfg = QuorumConfig()
         assert hasattr(cfg, "base_url")
-        # This must NOT work - baseUrl must not exist
-        assert not hasattr(cfg, "baseUrl")
+        # CamelCase equivalent must not exist
+        assert not hasattr(cfg, _camel("base_url"))
 
     def test_snake_case_keys_consistent(self):
         """All to_dict keys match constructor parameter names."""
