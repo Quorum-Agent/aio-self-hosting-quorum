@@ -1252,6 +1252,7 @@ interface ModelListResponse {
 export async function discoverModels(
   baseUrl: string,
   apiKey: string,
+  signal?: AbortSignal,
 ): Promise<{ connected: boolean; modelIds: string[] }> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 1_200);
