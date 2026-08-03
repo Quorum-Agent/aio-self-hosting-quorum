@@ -144,7 +144,7 @@ class WebSearchConfig:
 
 
 @dataclass
-class QuorumConfig:
+class DesktopQuorumConfig:
     """Top-level Quorum configuration (mirrors TS ``AppConfig``).
 
     This is the serializable config blob the desktop shell saves and
@@ -396,7 +396,7 @@ def _config_path() -> Path:
     return plugins_dir / "config.json"
 
 
-def load_quorum_config() -> QuorumConfig:
+def load_quorum_config() -> DesktopQuorumConfig:
     """Load persisted Quorum configuration, falling back to defaults."""
     path = _config_path()
     try:
@@ -405,10 +405,10 @@ def load_quorum_config() -> QuorumConfig:
             return _deserialize_config(raw)
     except (json.JSONDecodeError, TypeError, KeyError) as exc:
         logger.warning("Failed to load Quorum config from %s: %s", path, exc)
-    return QuorumConfig()
+    return DesktopQuorumConfig()
 
 
-def save_quorum_config(config: QuorumConfig) -> None:
+def save_quorum_config(config: DesktopQuorumConfig) -> None:
     """Persist Quorum configuration to disk."""
     path = _config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -417,14 +417,14 @@ def save_quorum_config(config: QuorumConfig) -> None:
     logger.info("Quorum config saved to %s", path)
 
 
-def _serialize_config(config: QuorumConfig) -> Dict[str, Any]:
-    """Serialize a QuorumConfig to a JSON-safe dict."""
+def _serialize_config(config: DesktopQuorumConfig) -> Dict[str, Any]:
+    """Serialize a DesktopQuorumConfig to a JSON-safe dict."""
     return _dataclass_to_dict(config)
 
 
-def _deserialize_config(raw: Dict[str, Any]) -> QuorumConfig:
-    """Deserialize a JSON dict back to a QuorumConfig."""
-    return QuorumConfig(
+def _deserialize_config(raw: Dict[str, Any]) -> DesktopQuorumConfig:
+    """Deserialize a JSON dict back to a DesktopQuorumConfig."""
+    return DesktopQuorumConfig(
         host=raw.get("host", "127.0.0.1"),
         port=raw.get("port", 8787),
         log_level=raw.get("logLevel", raw.get("log_level", "info")),
@@ -537,8 +537,8 @@ def _dataclass_to_dict(obj: Any) -> Any:
 # Config validation
 # ---------------------------------------------------------------------------
 
-def validate_config(config: QuorumConfig) -> List[Dict[str, str]]:
-    """Validate a QuorumConfig and return a list of issues.
+def validate_config(config: DesktopQuorumConfig) -> List[Dict[str, str]]:
+    """Validate a DesktopQuorumConfig and return a list of issues.
 
     Returns empty list if the config is valid. Each issue has ``field`` and
     ``message`` keys for the desktop shell to display inline errors.
@@ -647,12 +647,12 @@ def update_config(updates: Dict[str, Any]) -> Dict[str, Any]:
 
 def reset_config() -> Dict[str, Any]:
     """Reset configuration to defaults."""
-    default = QuorumConfig()
+    default = DesktopQuorumConfig()
     save_quorum_config(default)
     return {"status": "ok", "config": _serialize_config(default)}
 
 
-def _merge_config(current: QuorumConfig, updates: Dict[str, Any]) -> QuorumConfig:
+def _merge_config(current: DesktopQuorumConfig, updates: Dict[str, Any]) -> DesktopQuorumConfig:
     """Shallow-merge updates into the current config.
 
     Handles dotted keys like 'local.baseUrl' as well as nested dicts.

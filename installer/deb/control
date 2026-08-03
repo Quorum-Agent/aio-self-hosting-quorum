@@ -1,0 +1,25 @@
+Package: quorum
+Version: 0.1.0
+Section: utils
+Priority: optional
+Architecture: amd64
+Depends: libc6 (>= 2.28), libstdc++6 (>= 8), ca-certificates
+Recommends: libcuda-12-4 | libcuda-11-8
+Maintainer: Quorum <dev@quorum.example.com>
+Homepage: https://github.com/quorum/Quorum
+Description: Quorum — AI Model Router & Orchestration Engine
+ Quorum is a self-hosted AI orchestration engine that routes model requests
+ across local, cloud, and network providers with policy-based quorum
+ verification. It runs as a single binary with an embedded Hermes desktop
+ framework for tray-based management.
+ .
+ Features:
+  - Policy-based model routing with quorum verification
+  - Local LLM inference via bundled llama-server (supports CUDA, AVX2, CPU)
+  - Cloud provider integration (OpenAI, Anthropic, etc.)
+  - Hermes desktop tray integration for zero-ops management
+  - Auto-update via Hermes updater channel
+  - Zero external dependencies — all bundled in a single executable
+ .
+ This package installs the Quorum binary and desktop integration.
+ An AppImage alternative is also available for portable use.

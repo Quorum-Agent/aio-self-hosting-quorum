@@ -1,0 +1,72 @@
+#!/bin/sh
+# postrm — post-removal / purge script for Quorum .deb package
+# F5-UR-002: Cleans up leftover files on `apt purge quorum`.
+set -e
+
+PACKAGE_NAME="quorum"
+INSTALL_DIR="/opt/quorum"
+CONFIG_DIR="/etc/quorum"
+DATA_DIR="/var/lib/quorum"
+LOG_DIR="/var/log/quorum"
+
+case "$1" in
+    remove)
+        # Normal removal: clean up the install directory and symlinks.
+        # Config and data are preserved for re-installation.
+        echo "Removing Quorum files..."
+        rm -rf "${INSTALL_DIR:?}"
+        rm -f /usr/bin/quorum
+        rm -f /usr/share/applications/quorum.desktop
+        rm -f /usr/share/icons/hicolor/256x256/apps/quorum.png
+
+        # Update desktop database and icon cache
+        if command -v update-desktop-database >/dev/null 2>&1; then
+            update-desktop-database /usr/share/applications || true
+        fi
+        if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+            gtk-update-icon-cache /usr/share/icons/hicolor || true
+        fi
+        ;;
+
+    purge)
+        # Full purge: remove config, data, and logs as well.
+        echo "Purging Quorum configuration and data..."
+        rm -rf "${INSTALL_DIR:?}"
+        rm -rf "${CONFIG_DIR:?}"
+        rm -rf "${DATA_DIR:?}"
+        rm -rf "${LOG_DIR:?}"
+        rm -f /usr/bin/quorum
+        rm -f /usr/share/applications/quorum.desktop
+        rm -f /usr/share/icons/hicolor/256x256/apps/quorum.png
+
+        # Update desktop database and icon cache
+        if command -v update-desktop-database >/dev/null 2>&1; then
+            update-desktop-database /usr/share/applications || true
+        fi
+        if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+            gtk-update-icon-cache /usr/share/icons/hicolor || true
+        fi
+        ;;
+
+    upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
+        # No special action needed for upgrades.
+        ;;
+
+    *)
+        echo "postrm called with unknown argument '$1'" >&2
+        ;;
+esac
+
+# Remove the system user if it exists (purge only)
+if [ "$1" = "purge" ]; then
+    if id -u quorum >/dev/null 2>&1; then
+        userdel quorum 2>/dev/null || true
+    fi
+    if getent group quorum >/dev/null 2>&1; then
+        groupdel quorum 2>/dev/null || true
+    fi
+fi
+
+echo "Quorum post-removal cleanup complete."
+
+exit 0

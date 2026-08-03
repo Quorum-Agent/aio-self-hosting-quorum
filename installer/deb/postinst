@@ -1,0 +1,60 @@
+#!/bin/sh
+# postinst — post-installation script for Quorum .deb package
+set -e
+
+APP_NAME="Quorum"
+BIN_PATH="/usr/bin/quorum"
+INSTALL_DIR="/opt/quorum"
+DESKTOP_FILE="/usr/share/applications/quorum.desktop"
+ICON_DIR="/usr/share/icons/hicolor/256x256/apps"
+
+echo "Setting up Quorum..."
+
+# --- Create symlink from /opt/quorum/Quorum to /usr/bin/quorum ---
+if [ -f "${INSTALL_DIR}/Quorum" ]; then
+    ln -sf "${INSTALL_DIR}/Quorum" "${BIN_PATH}"
+    chmod 755 "${INSTALL_DIR}/Quorum"
+fi
+
+# --- Install desktop entry ---
+if [ -f "${INSTALL_DIR}/quorum.desktop" ]; then
+    mkdir -p /usr/share/applications
+    cp "${INSTALL_DIR}/quorum.desktop" "${DESKTOP_FILE}"
+    chmod 644 "${DESKTOP_FILE}"
+fi
+
+# --- Install icon (if present) ---
+if [ -f "${INSTALL_DIR}/quorum.png" ]; then
+    mkdir -p "${ICON_DIR}"
+    cp "${INSTALL_DIR}/quorum.png" "${ICON_DIR}/quorum.png"
+    chmod 644 "${ICON_DIR}/quorum.png"
+fi
+
+# --- Update desktop database ---
+if command -v update-desktop-database >/dev/null 2>&1; then
+    update-desktop-database /usr/share/applications || true
+fi
+
+# --- Update icon cache ---
+if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+    gtk-update-icon-cache /usr/share/icons/hicolor || true
+fi
+
+# --- Create config directory ---
+mkdir -p /etc/quorum
+if [ ! -f /etc/quorum/config.json ]; then
+    cat > /etc/quorum/config.json << 'EOF'
+{
+    "base_url": "http://localhost:8080",
+    "quorum_size": 3,
+    "timeout_seconds": 30.0,
+    "discovery_interval_seconds": 60.0,
+    "max_retries": 3,
+    "verify_ssl": true
+}
+EOF
+    chmod 644 /etc/quorum/config.json
+fi
+
+echo "Quorum installation complete."
+echo "Run 'quorum --help' to get started, or launch from your application menu."
