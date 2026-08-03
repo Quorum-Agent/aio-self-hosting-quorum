@@ -15,3 +15,10 @@ __pycache__/
 # Assistant tooling that writes into the working tree; unrelated to Quorum
 .blender-toolkit/
 .codex-remote-attachments/
+
+# Session-bus secrets: live Hermes session keys used by the N-to-N
+# coordination feature (docs/intended-features.md, IF-001). These are
+# runtime secrets, not config — never commit them. Template in
+# hermes-session-keys.env.example.
+hermes-session-keys.env
+hermes-session-keys.local.env

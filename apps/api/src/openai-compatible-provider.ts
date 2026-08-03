@@ -40,8 +40,7 @@ interface OpenAICompatibleOptions {
   role?: LocalModelRole;
   /** Matches ModelDescriptor: a provider serves a model, and no model is on "the web". */
   location: Exclude<ExecutionLocation, "device" | "web">;
-  apiBase: string;
-  downloadBase?: string;
+  baseUrl: string;
   apiKey: string;
   model: string;
   contextWindow: number;
@@ -1251,7 +1250,7 @@ interface ModelListResponse {
 }
 
 export async function discoverModels(
-  apiBase: string,
+  baseUrl: string,
   apiKey: string,
   signal?: AbortSignal,
 ): Promise<{ connected: boolean; modelIds: string[] }> {
@@ -1259,7 +1258,7 @@ export async function discoverModels(
   const timeout = setTimeout(() => controller.abort(), 1_200);
 
   try {
-    const response = await fetch(`${apiBase}/models`, {
+    const response = await fetch(`${baseUrl}/models`, {
       headers: { authorization: `Bearer ${apiKey}` },
       signal: controller.signal,
       redirect: "error",

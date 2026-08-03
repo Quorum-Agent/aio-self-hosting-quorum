@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 
 import fastifyStatic from "@fastify/static";
 import {
@@ -23,6 +23,19 @@ import { QuorumDatabase } from "./database.js";
 import { isLoopbackHostname } from "./outbound-url.js";
 import type { QuorumRuntime } from "./runtime.js";
 import type { WebSearchSettingsUpdate } from "./web-search-provider.js";
+
+
+// Constant-time comparison for bearer tokens. Plain `===` leaks timing
+// information that lets an attacker recover the key byte-by-byte over a LAN
+// (the local client is a desktop, so the attacker and the endpoint share the
+// loopback/network). Length is checked first because timingSafeEqual throws
+// on mismatched buffers, and that length check is not the secret.
+function safeEqual(a: string, b: string): boolean {
+  const left = Buffer.from(a);
+  const right = Buffer.from(b);
+  if (left.length !== right.length) return false;
+  return timingSafeEqual(left, right);
+}
 
 const messageSchema = z.object({
   id: z.string().min(1),
@@ -119,6 +132,23 @@ export async function buildServer(config: AppConfig, runtime: QuorumRuntime) {
 
   app.addHook("onRequest", async (request, reply) => {
     if (!request.url.startsWith("/api/")) return;
+
+    if (config.quorumLocalApiKey) {
+      // Health check is always public. Strip any query string so
+      // /api/health?x=1 is still exempt (and /api/healthX is not, because
+      // we compare the stripped path only to the exact endpoint).
+      if (request.url.split("?")[0] === "/api/health") return;
+
+      const authHeader = request.headers.authorization;
+      if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        return reply.code(401).send({ message: "Unauthorized: Bearer token required." });
+      }
+      const token = authHeader.substring(7);
+      if (!safeEqual(token, config.quorumLocalApiKey)) {
+        return reply.code(401).send({ message: "Unauthorized: Invalid token." });
+      }
+    }
+
     if (!isLoopbackHostname(request.hostname)) {
       return reply.code(403).send({ message: "Untrusted request host." });
     }

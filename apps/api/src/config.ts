@@ -92,8 +92,7 @@ export interface AppConfig {
   dataDirectory: string;
   quorumLocalApiKey?: string;
   local: {
-    apiBase: string;
-    downloadBase?: string;
+    baseUrl: string;
     apiKey: string;
     transport: "ollama" | "openai-compatible";
     models: LocalModelConfig[];
@@ -102,8 +101,7 @@ export interface AppConfig {
   };
   managedLlama?: ManagedLlamaConfig;
   cloud?: {
-    apiBase: string;
-    downloadBase?: string;
+    baseUrl: string;
     model: string;
     apiKey: string;
     contextWindow: number;
@@ -117,8 +115,7 @@ export interface AppConfig {
    * ends. Configured by hand; discovery and pairing are deliberately not built.
    */
   network?: {
-    apiBase: string;
-    downloadBase?: string;
+    baseUrl: string;
     model: string;
     apiKey: string;
     contextWindow: number;
@@ -240,6 +237,7 @@ export function loadConfig(): AppConfig {
     process.env["QUORUM_DATA_DIR"] ?? "./var",
   );
   const quorumLocalApiKey = process.env["QUORUM_LOCAL_API_KEY"]?.trim();
+  const quorumLocalModelApiKey = process.env["QUORUM_LOCAL_MODEL_API_KEY"]?.trim();
   // Operator-saved slot assignments, consulted only where the environment is
   // silent. Every `??` below reads left to right as: environment, then saved
   // setting, then built-in default. Reversing any of those pairs would change
@@ -312,17 +310,13 @@ export function loadConfig(): AppConfig {
     port: Number(process.env["PORT"] ?? 8787),
     logLevel: process.env["LOG_LEVEL"] ?? "info",
     dataDirectory,
-    quorumLocalApiKey,
+    ...(quorumLocalApiKey ? { quorumLocalApiKey } : {}),
     local: {
-      apiBase: normalizeLoopbackBaseUrl(
+      baseUrl: normalizeLoopbackBaseUrl(
         process.env["QUORUM_LOCAL_BASE_URL"] ??
           "http://127.0.0.1:11434/v1",
       ),
-      downloadBase: normalizeLoopbackBaseUrl(
-        process.env["QUORUM_LOCAL_BASE_URL"] ??
-          "http://127.0.0.1:11434/v1",
-      ),
-      apiKey: process.env["QUORUM_LOCAL_API_KEY"] ?? "ollama",
+      apiKey: quorumLocalModelApiKey ?? "ollama",
       transport: configuredLocalTransport,
       models: localModels,
       promptAnalyzer: {
@@ -362,10 +356,7 @@ export function loadConfig(): AppConfig {
     process.env["QUORUM_NETWORK_MODEL"]?.trim()
       ? {
           network: {
-            apiBase: normalizeNetworkBaseUrl(
-              process.env["QUORUM_NETWORK_BASE_URL"]!.trim(),
-            ),
-            downloadBase: normalizeNetworkBaseUrl(
+            baseUrl: normalizeNetworkBaseUrl(
               process.env["QUORUM_NETWORK_BASE_URL"]!.trim(),
             ),
             model: process.env["QUORUM_NETWORK_MODEL"]!.trim(),
@@ -384,11 +375,7 @@ export function loadConfig(): AppConfig {
     ...(cloudApiKey
       ? {
           cloud: {
-            apiBase: normalizeCloudBaseUrl(
-              process.env["QUORUM_CLOUD_BASE_URL"] ??
-                "https://api.openai.com/v1",
-            ),
-            downloadBase: normalizeCloudBaseUrl(
+            baseUrl: normalizeCloudBaseUrl(
               process.env["QUORUM_CLOUD_BASE_URL"] ??
                 "https://api.openai.com/v1",
             ),
