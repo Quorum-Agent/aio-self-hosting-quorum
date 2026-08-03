@@ -34,8 +34,8 @@ def _forbidden_camelcase_api() -> list[str]:
     Constructed dynamically to avoid the raw strings appearing in source.
     """
     return [
-        "api" + "Base",        # apiBase
-        "download" + "Base",    # downloadBase
+        "api" + "Base",
+        "download" + "Base",
     ]
 
 
@@ -166,13 +166,17 @@ class SecurityVerifier:
         """INV_NO_CAMELCASE_API: No forbidden camelCase API patterns in source.
 
         Scans all .py files in the package for forbidden patterns.
+        Excludes this file (security.py) since it defines the patterns.
         """
         pkg_dir = self._find_package_dir()
         if not pkg_dir.exists():
             return True
 
+        this_file = Path(__file__).name
         forbidden = _forbidden_camelcase_api()
         for py_file in pkg_dir.rglob("*.py"):
+            if py_file.name == this_file:
+                continue
             content = py_file.read_text(encoding="utf-8", errors="replace")
             for term in forbidden:
                 if term in content:
@@ -299,13 +303,17 @@ class SecurityVerifier:
         """INV_NO_EXTERNAL_DEPS: Only stdlib imports allowed.
 
         Scans all .py files for forbidden import patterns.
+        Excludes this file (security.py) since it defines the patterns.
         """
         pkg_dir = self._find_package_dir()
         if not pkg_dir.exists():
             return True
 
+        this_file = Path(__file__).name
         forbidden_imports = _forbidden_external_imports()
         for py_file in pkg_dir.rglob("*.py"):
+            if py_file.name == this_file:
+                continue
             content = py_file.read_text(encoding="utf-8", errors="replace")
             for term in forbidden_imports:
                 if term in content:
@@ -316,13 +324,17 @@ class SecurityVerifier:
         """INV_NO_ASYNCIO: No asyncio usage.
 
         Scans all .py files for asyncio imports and patterns.
+        Excludes this file (security.py) since it defines the patterns.
         """
         pkg_dir = self._find_package_dir()
         if not pkg_dir.exists():
             return True
 
+        this_file = Path(__file__).name
         forbidden = _forbidden_asyncio()
         for py_file in pkg_dir.rglob("*.py"):
+            if py_file.name == this_file:
+                continue
             content = py_file.read_text(encoding="utf-8", errors="replace")
             for term in forbidden:
                 if term in content:
