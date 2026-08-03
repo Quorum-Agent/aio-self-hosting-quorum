@@ -14,30 +14,57 @@ from typing import Optional
 
 
 @dataclass(frozen=True)
+class QuorumCoreConfig:
+    """Nested configuration for quorum core settings.
+
+    Provides the quorum_core.quorum_size access pattern used by
+    the main repo's execution engine.
+    """
+
+    quorum_size: int = 3
+
+
+@dataclass(frozen=True)
 class QuorumConfig:
     """Configuration for quorum_core.
 
     Attributes:
         base_url: Base URL for the quorum API endpoint (uses snake_case).
         quorum_size: Minimum number of nodes required for quorum.
+        quorum_core: Nested config (quorum_core.quorum_size for main repo compat).
         timeout_seconds: Timeout for operations in seconds.
-        discover_interval_seconds: Interval between discovery cycles.
+        discovery_interval_seconds: Interval between discovery cycles.
         max_retries: Maximum retry attempts for failed operations.
         verify_ssl: Whether to verify SSL certificates.
     """
 
     base_url: str = "http://localhost:8080"
     quorum_size: int = 3
+    quorum_core: QuorumCoreConfig = field(default_factory=QuorumCoreConfig)
     timeout_seconds: float = 30.0
     discovery_interval_seconds: float = 60.0
     max_retries: int = 3
     verify_ssl: bool = True
+
+    def __post_init__(self):
+        # Handle case where quorum_core was passed as dict
+        if isinstance(self.quorum_core, dict):
+            object.__setattr__(self, "quorum_core", QuorumCoreConfig(**self.quorum_core))
+        
+        # Ensure quorum_core.quorum_size stays in sync with quorum_size.
+        # This handles cases where quorum_size is overridden via constructor
+        # but the default_factory for quorum_core used the class default.
+        if self.quorum_core.quorum_size != self.quorum_size:
+            object.__setattr__(
+                self, "quorum_core", QuorumCoreConfig(quorum_size=self.quorum_size)
+            )
 
     def to_dict(self) -> dict:
         """Serialize config to a dictionary (snake_case keys)."""
         return {
             "base_url": self.base_url,
             "quorum_size": self.quorum_size,
+            "quorum_core": {"quorum_size": self.quorum_core.quorum_size},
             "timeout_seconds": self.timeout_seconds,
             "discovery_interval_seconds": self.discovery_interval_seconds,
             "max_retries": self.max_retries,
@@ -47,9 +74,16 @@ class QuorumConfig:
     @classmethod
     def from_dict(cls, data: dict) -> QuorumConfig:
         """Create config from a dictionary with snake_case keys."""
+        # Support both flat quorum_size and nested quorum_core dict
+        quorum_core_data = data.get("quorum_core", {})
+        if isinstance(quorum_core_data, dict):
+            quorum_size = int(data.get("quorum_size", quorum_core_data.get("quorum_size", 3)))
+        else:
+            quorum_size = int(data.get("quorum_size", 3))
+
         return cls(
             base_url=data.get("base_url", "http://localhost:8080"),
-            quorum_size=int(data.get("quorum_size", 3)),
+            quorum_size=quorum_size,
             timeout_seconds=float(data.get("timeout_seconds", 30.0)),
             discovery_interval_seconds=float(data.get("discovery_interval_seconds", 60.0)),
             max_retries=int(data.get("max_retries", 3)),
