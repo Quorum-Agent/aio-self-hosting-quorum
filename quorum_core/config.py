@@ -47,6 +47,10 @@ class QuorumConfig:
     verify_ssl: bool = True
 
     def __post_init__(self):
+        # Handle case where quorum_core was passed as dict
+        if isinstance(self.quorum_core, dict):
+            object.__setattr__(self, "quorum_core", QuorumCoreConfig(**self.quorum_core))
+        
         # Ensure quorum_core.quorum_size stays in sync with quorum_size.
         # This handles cases where quorum_size is overridden via constructor
         # but the default_factory for quorum_core used the class default.
